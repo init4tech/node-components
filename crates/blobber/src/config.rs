@@ -19,6 +19,26 @@ pub struct BlockExtractorConfig {
 }
 
 impl BlockExtractorConfig {
+    /// Create a new `BlockExtractorConfig` with default values.
+    pub const fn new(blob_explorer_url: Cow<'static, str>) -> Self {
+        Self { blob_explorer_url, cl_url: None, pylon_url: None }
+    }
+
+    /// Get the blob explorer URL.
+    pub fn set_blob_explorer_url(&mut self, blob_explorer_url: Cow<'static, str>) {
+        self.blob_explorer_url = blob_explorer_url;
+    }
+
+    /// Get the blob explorer URL.
+    pub fn set_cl_url(&mut self, cl_url: Cow<'static, str>) {
+        self.cl_url = Some(cl_url);
+    }
+
+    /// Set the Pylon URL.
+    pub fn set_pylon_url(&mut self, pylon_url: Cow<'static, str>) {
+        self.pylon_url = Some(pylon_url);
+    }
+
     /// Create a new `BlockExtractorConfig` with the provided CL URL, Pylon URL,
     pub fn cl_url(&self) -> Option<&str> {
         self.cl_url.as_deref()
