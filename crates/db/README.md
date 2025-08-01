@@ -15,3 +15,5 @@ This library contains the following:
   headers, etc.
 - `DbProviderExt` - Extends the reth `DatabaseProviderRW` with a scope-guarded
   `update` method.
+- `DataCompat` - Provides methods for converting between Signet and reth data
+  structures, such as `ExecutionOutcome` and `Receipt`.
