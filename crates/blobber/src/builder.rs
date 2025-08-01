@@ -1,4 +1,4 @@
-use crate::block_data::BlockExtractor;
+use crate::{block_data::BlockExtractor, BlockExtractorConfig};
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::transaction_pool::TransactionPool;
 use url::Url;
@@ -57,6 +57,20 @@ impl<Pool> BlockExtractorBuilder<Pool> {
         self,
     ) -> BlockExtractorBuilder<reth_transaction_pool::test_utils::TestPool> {
         self.with_pool(reth_transaction_pool::test_utils::testing_pool())
+    }
+
+    /// Set the configuration for the CL url, pylon url, from the provided
+    /// [`BlockExtractorConfig`].
+    pub fn with_config(self, config: &BlockExtractorConfig) -> Result<Self, BuilderError> {
+        let this = self.with_explorer_url(config.blob_explorer_url());
+        let this =
+            if let Some(cl_url) = config.cl_url() { this.with_cl_url(cl_url)? } else { this };
+
+        if let Some(pylon_url) = config.pylon_url() {
+            this.with_pylon_url(pylon_url)
+        } else {
+            Ok(this)
+        }
     }
 
     /// Set the blob explorer URL to use for the extractor. This will be used

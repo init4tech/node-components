@@ -20,6 +20,7 @@ reth.workspace = true
 reth-chainspec.workspace = true
 reth-transaction-pool = { workspace = true, optional = true }
 
+serde.workspace = true
 smallvec.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -17,6 +17,9 @@ pub use block_data::{Blobs, BlockExtractor};
 mod builder;
 pub use builder::BlockExtractorBuilder;
 
+mod config;
+pub use config::BlockExtractorConfig;
+
 mod error;
 pub use error::{BlockExtractionError, ExtractionResult};
 
