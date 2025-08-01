@@ -10,27 +10,8 @@ use signet_evm::BlockResult;
 use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
 use signet_types::primitives::RecoveredBlock;
 use signet_zenith::{Passage, Transactor, Zenith};
-use std::{
-    collections::BTreeMap,
-    ops::{RangeBounds, RangeInclusive},
-};
+use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::trace;
-
-/// Reader for [`Passage::Enter`] events stored in the DB.
-pub trait RuEnterReader {
-    /// Get an enter by height and index.
-    fn enter_by_height_and_index(
-        &self,
-        height: u64,
-        index: u64,
-    ) -> ProviderResult<Option<Passage::Enter>>;
-
-    /// Get enters by height.
-    fn get_enters_by_height(
-        &self,
-        height: impl RangeBounds<u64> + Clone,
-    ) -> ProviderResult<Vec<Passage::Enter>>;
-}
 
 /// Writer for [`Passage::Enter`] events.
 pub trait RuWriter {

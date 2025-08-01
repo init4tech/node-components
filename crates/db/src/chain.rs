@@ -16,7 +16,7 @@ pub struct DbExtractionResults {
     pub enter_tokens: Vec<Passage::EnterToken>,
 }
 
-/// Equivalent of [`Chain`] but also containing zenith headers.
+/// Equivalent of [`Chain`] but also containing zenith events and information.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuChain {
     /// Inner chain of RU blocks.
