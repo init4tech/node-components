@@ -1,6 +1,6 @@
 use crate::{
     error::UnrecoverableBlobError, shim::ExtractableChainShim, BlockExtractionError,
-    ExtractionResult,
+    BlockExtractorBuilder, ExtractionResult,
 };
 use alloy::{
     consensus::{Blob, SidecarCoder, SimpleCoder},
@@ -15,7 +15,7 @@ use reth::{
 use signet_extract::{ExtractedEvent, Extracts};
 use signet_zenith::{Zenith::BlockSubmitted, ZenithBlock};
 use smallvec::SmallVec;
-use std::{borrow::Cow, ops::Deref, sync::Arc};
+use std::{ops::Deref, sync::Arc};
 use tokio::select;
 use tracing::{error, instrument, trace};
 
@@ -94,7 +94,7 @@ impl From<Vec<Blob>> for Blobs {
 /// queries an explorer if it can't find the blob. When Decoder does find a
 /// blob, it decodes it and returns the decoded transactions.
 #[derive(Debug)]
-pub struct BlockExtractor<Pool: TransactionPool> {
+pub struct BlockExtractor<Pool> {
     pool: Pool,
     explorer: foundry_blob_explorers::Client,
     client: reqwest::Client,
@@ -103,26 +103,27 @@ pub struct BlockExtractor<Pool: TransactionPool> {
     slot_calculator: SlotCalculator,
 }
 
+impl BlockExtractor<()> {
+    /// Returns a new [`BlockExtractorBuilder`].
+    pub fn builder() -> BlockExtractorBuilder<()> {
+        BlockExtractorBuilder::default()
+    }
+}
+
 impl<Pool> BlockExtractor<Pool>
 where
     Pool: TransactionPool,
 {
     /// new returns a new `Decoder` generic over a `Pool`
-    pub fn new(
+    pub const fn new(
         pool: Pool,
         explorer: foundry_blob_explorers::Client,
         cl_client: reqwest::Client,
-        cl_url: Option<Cow<'static, str>>,
-        pylon_url: Option<Cow<'static, str>>,
+        cl_url: Option<url::Url>,
+        pylon_url: Option<url::Url>,
         slot_calculator: SlotCalculator,
-    ) -> Result<Self, url::ParseError> {
-        let cl_url =
-            if let Some(url) = cl_url { Some(url::Url::parse(url.as_ref())?) } else { None };
-
-        let pylon_url =
-            if let Some(url) = pylon_url { Some(url::Url::parse(url.as_ref())?) } else { None };
-
-        Ok(Self { pool, explorer, client: cl_client, cl_url, pylon_url, slot_calculator })
+    ) -> Self {
+        Self { pool, explorer, client: cl_client, cl_url, pylon_url, slot_calculator }
     }
 
     /// Get blobs from either the pool or the network and decode them,
@@ -412,13 +413,16 @@ mod tests {
         let constants: SignetSystemConstants = test.try_into().unwrap();
         let calc = SlotCalculator::new(0, 0, 12);
 
-        let explorer_url = Cow::Borrowed("https://api.holesky.blobscan.com/");
-        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
-        let explorer =
-            foundry_blob_explorers::Client::new_with_client(explorer_url.as_ref(), client.clone());
+        let explorer_url = "https://api.holesky.blobscan.com/";
+        let client = reqwest::Client::builder().use_rustls_tls();
 
-        let extractor =
-            BlockExtractor::new(pool.clone(), explorer, client.clone(), None, None, calc)?;
+        let extractor = BlockExtractor::builder()
+            .with_pool(pool.clone())
+            .with_explorer_url(explorer_url)
+            .with_client_builder(client)
+            .unwrap()
+            .with_slot_calculator(calc)
+            .build()?;
 
         let tx = Transaction::Eip2930(TxEip2930 {
             chain_id: 17001,

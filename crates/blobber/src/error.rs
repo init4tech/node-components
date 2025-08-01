@@ -61,12 +61,12 @@ pub enum BlockExtractionError {
 
 impl BlockExtractionError {
     /// Returns true if the error is ignorable
-    pub fn is_ignorable(&self) -> bool {
+    pub const fn is_ignorable(&self) -> bool {
         matches!(self, Self::Ignorable(_))
     }
 
     /// Returns true if the error is unrecoverable
-    pub fn is_unrecoverable(&self) -> bool {
+    pub const fn is_unrecoverable(&self) -> bool {
         matches!(self, Self::Unrecoverable(_))
     }
 

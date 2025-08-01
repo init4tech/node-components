@@ -138,22 +138,26 @@ where
     }
 
     /// Inserts the zenith block into the database, always modifying the following tables:
-    /// * [`JournalHashes`](crate::db::JournalHashes)
+    /// * [`JournalHashes`]
     /// * [`CanonicalHeaders`](tables::CanonicalHeaders)
     /// * [`Headers`](tables::Headers)
     /// * [`HeaderTerminalDifficulties`](tables::HeaderTerminalDifficulties)
     /// * [`HeaderNumbers`](tables::HeaderNumbers)
-    /// * [`BlockBodyIndices`](tables::BlockBodyIndices) (through [`RuWriter::append_signet_block_body`])
+    /// * [`BlockBodyIndices`](tables::BlockBodyIndices) (through
+    ///   [`RuWriter::append_signet_block_body`])
     ///
-    /// If there are transactions in the block, the following tables will be modified:
-    /// * [`Transactions`](tables::Transactions) (through [`RuWriter::append_signet_block_body`])
-    /// * [`TransactionBlocks`](tables::TransactionBlocks) (through [`RuWriter::append_signet_block_body`])
+    /// If there are transactions in the block, the following tables will be
+    /// modified:
+    /// * [`Transactions`](tables::Transactions) (through
+    ///   [`RuWriter::append_signet_block_body`])
+    /// * [`TransactionBlocks`](tables::TransactionBlocks) (through
+    ///   [`RuWriter::append_signet_block_body`])
     ///
-    /// If the provider has __not__ configured full sender pruning, this will modify
-    /// [`TransactionSenders`](tables::TransactionSenders).
+    /// If the provider has __not__ configured full sender pruning, this will
+    /// modify [`TransactionSenders`](tables::TransactionSenders).
     ///
-    /// If the provider has __not__ configured full transaction lookup pruning, this will modify
-    /// [`TransactionHashNumbers`](tables::TransactionHashNumbers).
+    /// If the provider has __not__ configured full transaction lookup pruning,
+    /// this will modify [`TransactionHashNumbers`](tables::TransactionHashNumbers).
     ///
     /// Ommers and withdrawals are not inserted, as Signet does not use them.
     fn insert_signet_block(
@@ -371,6 +375,8 @@ where
 
     /// Get [`Passage::EnterToken`], [`Passage::Enter`] and
     /// [`Transactor::Transact`] events.
+    ///
+    /// [`Transactor::Transact`]: signet_zenith::Transactor::Transact
     fn get_signet_events(
         &self,
         range: RangeInclusive<BlockNumber>,
@@ -394,6 +400,8 @@ where
 
     /// Remove [`Passage::EnterToken`], [`Passage::Enter`] and
     /// [`Transactor::Transact`] events above the specified height from the DB.
+    ///
+    /// [`Transactor::Transact`]: signet_zenith::Transactor::Transact
     fn remove_signet_events_above(
         &self,
         target: BlockNumber,

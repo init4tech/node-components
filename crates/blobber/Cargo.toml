@@ -18,11 +18,11 @@ signet-zenith.workspace = true
 
 reth.workspace = true
 reth-chainspec.workspace = true
+reth-transaction-pool = { workspace = true, optional = true }
 
 smallvec.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-eyre.workspace = true
 reqwest.workspace = true
 url.workspace = true
 foundry-blob-explorers.workspace = true
@@ -33,5 +33,9 @@ signet-constants = { workspace = true, features = ["test-utils"] }
 
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
+eyre.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+
+[features]
+test-utils = ["signet-constants/test-utils", "dep:reth-transaction-pool", "reth-transaction-pool?/test-utils"]
