@@ -1,11 +1,4 @@
-//! Database access for Signet Node.
-//!
-//! This library contains the following:
-//!
-//! - Traits for reading and writing Signet events
-//! - Table definitions for Signet Events and Headers
-//! - Helpers for reading and writing Signet EVM blocks and headers
-
+#![doc = include_str!("../README.md")]
 #![warn(
     missing_copy_implementations,
     missing_debug_implementations,
@@ -33,4 +26,4 @@ pub use tables::{
 };
 
 mod traits;
-pub use traits::{DbProviderExt, RuEnterReader, RuWriter};
+pub use traits::{DbProviderExt, RuWriter};
