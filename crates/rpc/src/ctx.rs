@@ -758,7 +758,7 @@ where
     ///  - underlying database error
     ///  - amount of matches exceeds configured limit
     ///
-    /// https://github.com/paradigmxyz/reth/blob/d01658e516abbf2a1a76855a26d7123286865f22/crates/rpc/rpc/src/eth/filter.rs#L506
+    // https://github.com/paradigmxyz/reth/blob/d01658e516abbf2a1a76855a26d7123286865f22/crates/rpc/rpc/src/eth/filter.rs#L506
     async fn get_logs_in_block_range(
         &self,
         filter: &Filter,

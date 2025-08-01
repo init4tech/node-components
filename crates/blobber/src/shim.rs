@@ -18,12 +18,12 @@ pub struct ExtractableChainShim<'a> {
 
 impl<'a> ExtractableChainShim<'a> {
     /// Create a new shim around the given Reth chain.
-    pub fn new(chain: &'a Chain) -> Self {
+    pub const fn new(chain: &'a Chain) -> Self {
         Self { chain }
     }
 
     /// Get a reference to the underlying Reth chain.
-    pub fn chain(&self) -> &'a Chain {
+    pub const fn chain(&self) -> &'a Chain {
         self.chain
     }
 }
