@@ -1,0 +1,120 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.8.2"
+edition = "2021"
+rust-version = "1.82"
+authors = ["init4"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/init4tech/signet-sdk"
+repository = "https://github.com/init4tech/signet-sdk"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "line-tables-only"
+strip = true
+panic = "unwind"
+codegen-units = 16
+
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false
+
+[profile.bench]
+inherits = "profiling"
+
+[profile.ci-rust]
+inherits = "dev"
+strip = true
+debug = false
+incremental = false
+
+[workspace.dependencies]
+signet-node-types = { version = "0.8.0", path = "crates/node-types" }
+signet-rpc = { version = "0.8.0", path = "crates/rpc" }
+signet-db = { version = "0.8.0", path = "crates/db" }
+
+init4-bin-base = { version = "0.7.1", features = ["alloy"] }
+
+signet-bundle = "0.8.0"
+signet-constants = "0.8.0"
+signet-evm = "0.8.0"
+signet-extract = "0.8.0"
+signet-node = "0.8.0"
+signet-sim = "0.8.0"
+signet-types = "0.8.0"
+signet-tx-cache = "0.8.0"
+signet-zenith = "0.8.0"
+
+# ajj
+ajj = { version = "0.3.4" }
+
+# trevm
+trevm = { version = "0.27.0", features = ["full_env_cfg"] }
+
+# Alloy periphery crates
+alloy = { version = "1.0.19", features = [
+    "full",
+    "rpc-types-beacon",
+    "rpc-types-mev",
+    "genesis",
+    "arbitrary",
+] }
+alloy-contract = { version = "1.0.19", features = ["pubsub"] }
+
+# Reth
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+
+# Foundry periphery
+foundry-blob-explorers = "0.17"
+
+# Async
+tokio = { version = "1.43.0", features = ["macros"] }
+async-trait = "0.1.87"
+
+# Pinned for compatibility with reth
+parking_lot = "0.12"
+
+# Misc
+chrono = "0.4.38"
+clap = "4"
+eyre = "0.6.12"
+hex = { package = "const-hex", version = "1.10", default-features = false, features = [
+    "alloc",
+] }
+itertools = "0.14.0"
+openssl = { version = "0.10", features = ["vendored"] }
+proptest = "1.6.0"
+reqwest = "0.12.9"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.137"
+smallvec = "1.15.1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+thiserror = "2.0.12"
+url = "2.5.4"
+uuid = "1.16.0"
+
+# Test Utils
+alloy-rlp = "0.3.11"
+tempfile = "3.17.0"

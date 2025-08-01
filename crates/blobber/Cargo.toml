@@ -1,0 +1,37 @@
+[package]
+name = "signet-blobber"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+
+init4-bin-base.workspace = true
+signet-extract.workspace = true
+signet-types.workspace = true
+signet-zenith.workspace = true
+
+reth.workspace = true
+reth-chainspec.workspace = true
+
+smallvec.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+eyre.workspace = true
+reqwest.workspace = true
+url.workspace = true
+foundry-blob-explorers.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+signet-constants = { workspace = true, features = ["test-utils"] }
+
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+serde_json.workspace = true
+tempfile.workspace = true

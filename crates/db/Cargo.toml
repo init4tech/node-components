@@ -1,0 +1,27 @@
+[package]
+name = "signet-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+signet-node-types.workspace = true
+
+
+signet-evm.workspace = true
+signet-types.workspace = true
+signet-zenith.workspace = true
+
+alloy.workspace = true
+
+reth.workspace = true
+reth-db.workspace = true
+reth-prune-types.workspace = true
+
+itertools.workspace = true
+serde.workspace = true
+tracing.workspace = true
