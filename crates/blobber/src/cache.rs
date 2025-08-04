@@ -54,11 +54,12 @@ impl CacheHandle {
     }
 
     /// Fetch the blobs using [`Self::fetch_blobs`] and decode them to get the
-    /// Zenith block data.
-    pub async fn fetch_and_decode(
+    /// Zenith block data using the provided coder.
+    pub async fn fetch_and_decode_with_coder<C: SidecarCoder>(
         &self,
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+        mut coder: C,
     ) -> FetchResult<Bytes> {
         let tx_hash = extract.tx_hash();
         let versioned_hashes = extract
@@ -70,7 +71,7 @@ impl CacheHandle {
 
         let blobs = self.fetch_blobs(slot, tx_hash, versioned_hashes.to_owned()).await?;
 
-        SimpleCoder::default()
+        coder
             .decode_all(blobs.as_ref())
             .ok_or_else(BlobFetcherError::blob_decode_error)?
             .into_iter()
@@ -79,18 +80,40 @@ impl CacheHandle {
             .ok_or_else(|| BlobFetcherError::block_data_not_found(tx_hash))
     }
 
-    /// Fetch the blobs, decode them, and construct a Zenith block from the
-    /// header and data.
+    /// Fetch the blobs using [`Self::fetch_blobs`] and decode them using
+    /// [`SimpleCoder`] to get the Zenith block data.
+    pub async fn fech_and_decode(
+        &self,
+        slot: usize,
+        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+    ) -> FetchResult<Bytes> {
+        self.fetch_and_decode_with_coder(slot, extract, SimpleCoder::default()).await
+    }
+
+    /// Fetch the blobs, decode them using the provided coder, and construct a
+    /// Zenith block from the header and data.
+    pub async fn signet_block_with_coder<C: SidecarCoder>(
+        &self,
+        host_block_number: u64,
+        slot: usize,
+        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+        coder: C,
+    ) -> FetchResult<ZenithBlock> {
+        let header = extract.ru_header(host_block_number);
+        self.fetch_and_decode_with_coder(slot, extract, coder)
+            .await
+            .map(|buf| ZenithBlock::from_header_and_data(header, buf))
+    }
+
+    /// Fetch the blobs, decode them using [`SimpleCoder`], and construct a
+    /// Zenith block from the header and data.
     pub async fn signet_block(
         &self,
         host_block_number: u64,
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
     ) -> FetchResult<ZenithBlock> {
-        let header = extract.ru_header(host_block_number);
-        self.fetch_and_decode(slot, extract)
-            .await
-            .map(|buf| ZenithBlock::from_header_and_data(header, buf))
+        self.signet_block_with_coder(host_block_number, slot, extract, SimpleCoder::default()).await
     }
 }
 
