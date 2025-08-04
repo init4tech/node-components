@@ -1,7 +1,11 @@
 use crate::{BlobFetcherError, Blobs, FetchResult};
-use alloy::primitives::B256;
-use reth::network::cache::LruMap;
+use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
+use alloy::primitives::{keccak256, Bytes, B256};
 use reth::transaction_pool::TransactionPool;
+use reth::{network::cache::LruMap, primitives::Receipt};
+use signet_extract::ExtractedEvent;
+use signet_zenith::Zenith::BlockSubmitted;
+use signet_zenith::ZenithBlock;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -19,7 +23,7 @@ const BETWEEN_RETRIES: Duration = Duration::from_millis(250);
 /// retrieving blobs.
 #[derive(Debug)]
 enum CacheInst {
-    Retrieve { slot: u64, tx_hash: B256, version_hashes: Vec<B256>, resp: oneshot::Sender<Blobs> },
+    Retrieve { slot: usize, tx_hash: B256, version_hashes: Vec<B256>, resp: oneshot::Sender<Blobs> },
 }
 
 /// Handle for the cache.
@@ -38,7 +42,7 @@ impl CacheHandle {
     /// fetch blobs if they are not found in the cache.
     pub async fn fetch_blobs(
         &self,
-        slot: u64,
+        slot: usize,
         tx_hash: B256,
         version_hashes: Vec<B256>,
     ) -> FetchResult<Blobs> {
@@ -48,13 +52,53 @@ impl CacheHandle {
 
         receiver.await.map_err(|_| BlobFetcherError::missing_sidecar(tx_hash))
     }
+
+    /// Fetch the blobs using [`Self::fetch_blobs`] and decode them to get the
+    /// Zenith block data.
+    pub async fn fetch_and_decode(
+        &self,
+        slot: usize,
+        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+    ) -> FetchResult<Bytes> {
+        let tx_hash = extract.tx_hash();
+        let versioned_hashes = extract
+            .tx
+            .as_eip4844()
+            .ok_or_else(BlobFetcherError::non_4844_transaction)?
+            .blob_versioned_hashes()
+            .expect("tx is eip4844");
+
+        let blobs = self.fetch_blobs(slot, tx_hash, versioned_hashes.to_owned()).await?;
+
+        SimpleCoder::default()
+            .decode_all(blobs.as_ref())
+            .ok_or_else(BlobFetcherError::blob_decode_error)?
+            .into_iter()
+            .find(|data| keccak256(data) == extract.block_data_hash())
+            .map(Into::into)
+            .ok_or_else(|| BlobFetcherError::block_data_not_found(tx_hash))
+    }
+
+    /// Fetch the blobs, decode them, and construct a Zenith block from the
+    /// header and data.
+    pub async fn signet_block(
+        &self,
+        host_block_number: u64,
+        slot: usize,
+        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+    ) -> FetchResult<ZenithBlock> {
+        let header = extract.ru_header(host_block_number);
+        self.fetch_and_decode(slot, extract)
+            .await
+            .map(|buf| ZenithBlock::from_header_and_data(header, buf))
+    }
 }
 
 /// Retrieves blobs and stores them in a cache for later use.
 pub struct BlobCacher<Pool> {
     fetcher: crate::BlobFetcher<Pool>,
 
-    cache: Mutex<LruMap<(u64, B256), Blobs>>,
+    cache: Mutex<LruMap<(usize, B256), Blobs>>,
 }
 
 impl<Pool: core::fmt::Debug> core::fmt::Debug for BlobCacher<Pool> {
@@ -73,7 +117,7 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     #[instrument(skip(self), target = "signet_blobber::BlobCacher", fields(retries = FETCH_RETRIES))]
     async fn fetch_blobs(
         &self,
-        slot: u64,
+        slot: usize,
         tx_hash: B256,
         versioned_hashes: Vec<B256>,
     ) -> FetchResult<Blobs> {

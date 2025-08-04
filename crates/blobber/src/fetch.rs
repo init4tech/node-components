@@ -140,8 +140,8 @@ where
     /// searching for the expected hash
     async fn get_and_decode_blobs(
         &self,
+        slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-        slot: u64,
     ) -> FetchResult<Vec<u8>> {
         debug_assert!(extract.tx.is_eip4844(), "Transaction must be of type EIP-4844");
         let hash = extract.tx.tx_hash();
@@ -165,7 +165,7 @@ where
     #[instrument(skip(self, versioned_hashes))]
     pub(crate) async fn fetch_blobs(
         &self,
-        slot: u64,
+        slot: usize,
         tx_hash: B256,
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
@@ -224,7 +224,11 @@ where
 
     /// Queries the connected consensus client for the blob transaction
     #[instrument(skip_all, err)]
-    async fn get_blobs_from_cl(&self, slot: u64, versioned_hashes: &[B256]) -> FetchResult<Blobs> {
+    async fn get_blobs_from_cl(
+        &self,
+        slot: usize,
+        versioned_hashes: &[B256],
+    ) -> FetchResult<Blobs> {
         if let Some(url) = &self.cl_url {
             let url = url.join(&format!("/eth/v1/beacon/blob_sidecars/{slot}")).map_err(|err| {
                 BlobFetcherError::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
@@ -261,7 +265,7 @@ where
             .slot_ending_at(host_block_timestamp)
             .expect("host chain has started");
 
-        let block_data = self.get_and_decode_blobs(extract, slot as u64).await?;
+        let block_data = self.get_and_decode_blobs(slot, extract).await?;
         Ok(ZenithBlock::from_header_and_data(header, block_data))
     }
 
