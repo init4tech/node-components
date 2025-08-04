@@ -1,8 +1,12 @@
 # Block Extractor
 
-The [`BlockExtractor`] retrieves blobs from host chain blocks and parses them
+The [`BlobFetcher`] retrieves blobs from host chain blocks and parses them
 into [`ZenithBlock`]s. It is used by the node during notification processing
 when a [`Zenith::BlockSubmitted`] event is extracted from a host chain block.
+
+The [`BlobCacher`] is a wrapper around the [`BlobFetcher`] that caches
+blobs in an in-memory cache. It is used to avoid fetching the same blob and to
+manage retry logic during fetching.
 
 ## Data Sources
 
