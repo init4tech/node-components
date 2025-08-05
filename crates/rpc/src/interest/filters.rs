@@ -3,12 +3,12 @@ use alloy::{
     primitives::{B256, U64},
     rpc::types::{Filter, Log},
 };
-use dashmap::{mapref::one::RefMut, DashMap};
+use dashmap::{DashMap, mapref::one::RefMut};
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -71,9 +71,9 @@ impl FilterOutput {
     pub fn extend(&mut self, other: Self) {
         match (self, other) {
             // If we're a log, we can extend with other logs
-            (Self::Log(ref mut logs), Self::Log(other_logs)) => logs.extend(other_logs),
+            (Self::Log(logs), Self::Log(other_logs)) => logs.extend(other_logs),
             // If we're a block, we can extend with other blocks
-            (Self::Block(ref mut blocks), Self::Block(other_blocks)) => blocks.extend(other_blocks),
+            (Self::Block(blocks), Self::Block(other_blocks)) => blocks.extend(other_blocks),
             // Extending with empty is a noop
             (_, Self::Empty(_)) => (),
             // If we're empty, just take the other value
@@ -108,22 +108,14 @@ impl From<Vec<Log>> for FilterOutput {
 impl FromIterator<Log> for FilterOutput {
     fn from_iter<T: IntoIterator<Item = Log>>(iter: T) -> Self {
         let inner: VecDeque<_> = iter.into_iter().collect();
-        if inner.is_empty() {
-            Self::empty()
-        } else {
-            Self::Log(inner)
-        }
+        if inner.is_empty() { Self::empty() } else { Self::Log(inner) }
     }
 }
 
 impl FromIterator<B256> for FilterOutput {
     fn from_iter<T: IntoIterator<Item = B256>>(iter: T) -> Self {
         let inner: VecDeque<_> = iter.into_iter().collect();
-        if inner.is_empty() {
-            Self::empty()
-        } else {
-            Self::Block(inner)
-        }
+        if inner.is_empty() { Self::empty() } else { Self::Block(inner) }
     }
 }
 
@@ -294,12 +286,14 @@ impl FilterCleanTask {
     /// [`DashMap::retain`]'s deadlock condition is not met. See [`DashMap`]
     /// documentation for more information.
     fn spawn(self) {
-        std::thread::spawn(move || loop {
-            std::thread::sleep(self.sleep);
-            trace!("cleaning stale filters");
-            match self.manager.upgrade() {
-                Some(manager) => manager.clean_stale(self.age_limit),
-                None => break,
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(self.sleep);
+                trace!("cleaning stale filters");
+                match self.manager.upgrade() {
+                    Some(manager) => manager.clean_stale(self.age_limit),
+                    None => break,
+                }
             }
         });
     }

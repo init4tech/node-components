@@ -5,7 +5,7 @@ use endpoints::*;
 
 pub(crate) mod error;
 
-use crate::{ctx::RpcCtx, Pnt};
+use crate::{Pnt, ctx::RpcCtx};
 use reth_node_api::FullNodeComponents;
 
 /// Instantiate a `signet` API router.

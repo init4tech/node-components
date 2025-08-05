@@ -1,11 +1,11 @@
 use crate::{
+    DataCompat, DbZenithHeader, RuChain, ZenithHeaders,
     tables::{DbSignetEvent, JournalHashes, SignetEvents},
     traits::RuWriter,
-    DataCompat, DbZenithHeader, RuChain, ZenithHeaders,
 };
 use alloy::{
     consensus::{BlockHeader, TxReceipt},
-    primitives::{map::HashSet, Address, BlockNumber, B256, U256},
+    primitives::{Address, B256, BlockNumber, U256, map::HashSet},
 };
 use reth::{
     primitives::{Account, StaticFileSegment},
@@ -17,13 +17,13 @@ use reth::{
     },
 };
 use reth_db::{
+    PlainAccountState,
     cursor::{DbCursorRO, DbCursorRW},
     models::{BlockNumberAddress, StoredBlockBodyIndices},
     tables,
     transaction::{DbTx, DbTxMut},
-    PlainAccountState,
 };
-use reth_prune_types::{PruneMode, MINIMUM_PRUNING_DISTANCE};
+use reth_prune_types::{MINIMUM_PRUNING_DISTANCE, PruneMode};
 use signet_evm::BlockResult;
 use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
 use signet_types::primitives::RecoveredBlock;

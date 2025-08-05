@@ -1,10 +1,11 @@
 use alloy::{
-    primitives::{bytes::BufMut, Address, BlockNumber, Bytes, B256, U256},
+    primitives::{Address, B256, BlockNumber, Bytes, U256, bytes::BufMut},
     rlp::Buf,
 };
 use reth_db::{
+    DatabaseError,
     table::{Compress, Decompress, DupSort, Table},
-    tables, DatabaseError,
+    tables,
 };
 use signet_zenith::{
     Passage::{Enter, EnterToken},

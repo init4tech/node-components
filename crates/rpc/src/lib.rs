@@ -55,7 +55,7 @@ mod ctx;
 pub use ctx::{RpcCtx, RuRevmState};
 
 mod eth;
-pub use eth::{eth, CallErrorData, EthError};
+pub use eth::{CallErrorData, EthError, eth};
 
 mod signet;
 pub use signet::{error::SignetError, signet};

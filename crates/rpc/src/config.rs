@@ -1,4 +1,4 @@
-use ajj::{pubsub::ServerShutdown, Router};
+use ajj::{Router, pubsub::ServerShutdown};
 use reth::{args::RpcServerArgs, tasks::TaskExecutor};
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;

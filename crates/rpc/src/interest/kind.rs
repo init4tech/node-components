@@ -96,11 +96,7 @@ impl InterestKind {
         &self,
         notif: &CanonStateNotification,
     ) -> SubscriptionBuffer {
-        if self.is_block() {
-            self.apply_block(notif)
-        } else {
-            self.apply_filter(notif)
-        }
+        if self.is_block() { self.apply_block(notif) } else { self.apply_filter(notif) }
     }
 
     /// Return an empty output of the same kind as this filter.
