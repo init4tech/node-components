@@ -2,7 +2,7 @@ use crate::{BlobFetcherError, Blobs, FetchResult};
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
 use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
-use alloy::primitives::{keccak256, Bytes, B256};
+use alloy::primitives::{B256, Bytes, keccak256};
 use reth::transaction_pool::TransactionPool;
 use reth::{network::cache::LruMap, primitives::Receipt};
 use signet_extract::ExtractedEvent;
@@ -204,5 +204,94 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         let (sender, inst) = mpsc::channel(CACHE_REQUEST_CHANNEL_SIZE);
         tokio::spawn(Arc::new(self).task_future(inst));
         CacheHandle { sender }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::BlobFetcher;
+
+    use super::*;
+    use alloy::{
+        consensus::{SidecarBuilder, SignableTransaction as _, TxEip2930},
+        eips::Encodable2718,
+        primitives::{TxKind, U256, bytes},
+        rlp::encode,
+        signers::{SignerSync, local::PrivateKeySigner},
+    };
+    use init4_bin_base::utils::calc::SlotCalculator;
+    use reth::primitives::Transaction;
+    use reth_transaction_pool::{
+        PoolTransaction, TransactionOrigin,
+        test_utils::{MockTransaction, testing_pool},
+    };
+    use signet_types::{constants::SignetSystemConstants, primitives::TransactionSigned};
+
+    #[tokio::test]
+    async fn test_fetch_from_pool() -> eyre::Result<()> {
+        let wallet = PrivateKeySigner::random();
+        let pool = testing_pool();
+
+        let test = signet_constants::KnownChains::Test;
+
+        let constants: SignetSystemConstants = test.try_into().unwrap();
+        let calc = SlotCalculator::new(0, 0, 12);
+
+        let explorer_url = "https://api.holesky.blobscan.com/";
+        let client = reqwest::Client::builder().use_rustls_tls();
+
+        let tx = Transaction::Eip2930(TxEip2930 {
+            chain_id: 17001,
+            nonce: 2,
+            gas_limit: 50000,
+            gas_price: 1_500_000_000,
+            to: TxKind::Call(constants.host_zenith()),
+            value: U256::from(1_f64),
+            input: bytes!(""),
+            ..Default::default()
+        });
+
+        let encoded_transactions =
+            encode(vec![sign_tx_with_key_pair(wallet.clone(), tx).encoded_2718()]);
+
+        let result = SidecarBuilder::<SimpleCoder>::from_slice(&encoded_transactions).build();
+        assert!(result.is_ok());
+
+        let mut mock_transaction = MockTransaction::eip4844_with_sidecar(result.unwrap().into());
+        let transaction =
+            sign_tx_with_key_pair(wallet, Transaction::from(mock_transaction.clone()));
+
+        mock_transaction.set_hash(*transaction.hash());
+
+        pool.add_transaction(TransactionOrigin::Local, mock_transaction.clone()).await?;
+
+        // Spawn the cache
+        let cache = BlobFetcher::builder()
+            .with_pool(pool.clone())
+            .with_explorer_url(explorer_url)
+            .with_client_builder(client)
+            .unwrap()
+            .with_slot_calculator(calc)
+            .build_cache()?;
+        let handle = cache.spawn();
+
+        let got = handle
+            .fetch_blobs(
+                0, // this is ignored by the pool
+                *mock_transaction.hash(),
+                mock_transaction.blob_versioned_hashes().unwrap().to_owned(),
+            )
+            .await;
+        assert!(got.is_ok());
+
+        let got_blobs = got.unwrap();
+        assert!(got_blobs.len() == 1);
+
+        Ok(())
+    }
+
+    fn sign_tx_with_key_pair(wallet: PrivateKeySigner, tx: Transaction) -> TransactionSigned {
+        let signature = wallet.sign_hash_sync(&tx.signature_hash()).unwrap();
+        TransactionSigned::new_unhashed(tx, signature)
     }
 }

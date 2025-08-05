@@ -28,3 +28,17 @@ pub use fetch::{BlobFetcher, Blobs};
 
 mod shim;
 pub use shim::ExtractableChainShim;
+
+pub(crate) mod utils;
+
+#[cfg(test)]
+mod test {
+    use crate::utils::tests::BLOBSCAN_BLOB_RESPONSE;
+    use foundry_blob_explorers::TransactionDetails;
+
+    // Sanity check on dependency compatibility.
+    #[test]
+    fn test_deser_blob() {
+        let _: TransactionDetails = serde_json::from_str(BLOBSCAN_BLOB_RESPONSE).unwrap();
+    }
+}
