@@ -1,4 +1,4 @@
-use crate::{block_data::BlockExtractor, BlockExtractorConfig};
+use crate::{BlockExtractorConfig, block_data::BlockExtractor};
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::transaction_pool::TransactionPool;
 use url::Url;
