@@ -7,7 +7,7 @@ pub use error::EthError;
 mod helpers;
 pub use helpers::CallErrorData;
 
-use crate::{ctx::RpcCtx, Pnt};
+use crate::{Pnt, ctx::RpcCtx};
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
 use reth_node_api::FullNodeComponents;
 

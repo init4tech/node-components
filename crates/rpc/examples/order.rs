@@ -1,11 +1,11 @@
 use alloy::{
     consensus::constants::GWEI_TO_WEI,
-    primitives::{uint, U256},
+    primitives::{U256, uint},
     signers::Signer,
 };
 use chrono::Utc;
 use eyre::Error;
-use signet_constants::{SignetConstants, NATIVE_TOKEN_ADDRESS};
+use signet_constants::{NATIVE_TOKEN_ADDRESS, SignetConstants};
 use signet_tx_cache::client::TxCache;
 use signet_types::UnsignedOrder;
 use signet_zenith::RollupOrders::{Input, Order, Output};

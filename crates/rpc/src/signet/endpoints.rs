@@ -1,8 +1,8 @@
 use crate::{
+    Pnt,
     ctx::RpcCtx,
     signet::error::SignetError,
     util::{await_jh_option, await_jh_option_response, response_tri},
-    Pnt,
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use reth_node_api::FullNodeComponents;
@@ -76,7 +76,7 @@ where
                 return ResponsePayload::internal_error_with_message_and_obj(
                     "error while loading block cfg".into(),
                     e.to_string(),
-                )
+                );
             }
         };
 

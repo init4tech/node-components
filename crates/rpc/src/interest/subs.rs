@@ -1,9 +1,9 @@
-use crate::{interest::InterestKind, Pnt};
-use ajj::{serde_json, HandlerCtx};
+use crate::{Pnt, interest::InterestKind};
+use ajj::{HandlerCtx, serde_json};
 use alloy::{primitives::U64, rpc::types::Log};
 use dashmap::DashMap;
 use reth::{
-    providers::{providers::BlockchainProvider, CanonStateNotifications, CanonStateSubscriptions},
+    providers::{CanonStateNotifications, CanonStateSubscriptions, providers::BlockchainProvider},
     rpc::types::Header,
 };
 use std::{
@@ -11,14 +11,14 @@ use std::{
     collections::VecDeque,
     future::pending,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{debug, debug_span, enabled, trace, Instrument};
+use tracing::{Instrument, debug, debug_span, enabled, trace};
 
 /// Either type for subscription outputs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -350,10 +350,12 @@ impl<N: Pnt> SubCleanerTask<N> {
     /// [`DashMap::retain`]'s deadlock condition is not met. See [`DashMap`]
     /// documentation for more information.
     pub(super) fn spawn(self) {
-        std::thread::spawn(move || loop {
-            std::thread::sleep(self.interval);
-            if let Some(inner) = self.inner.upgrade() {
-                inner.tasks.retain(|_, task| !task.is_cancelled());
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(self.interval);
+                if let Some(inner) = self.inner.upgrade() {
+                    inner.tasks.retain(|_, task| !task.is_cancelled());
+                }
             }
         });
     }

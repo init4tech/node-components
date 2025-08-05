@@ -1,11 +1,11 @@
 use crate::{
-    error::UnrecoverableBlobError, shim::ExtractableChainShim, BlockExtractionError,
-    BlockExtractorBuilder, ExtractionResult,
+    BlockExtractionError, BlockExtractorBuilder, ExtractionResult, error::UnrecoverableBlobError,
+    shim::ExtractableChainShim,
 };
 use alloy::{
     consensus::{Blob, SidecarCoder, SimpleCoder},
     eips::eip7594::BlobTransactionSidecarVariant,
-    primitives::{keccak256, TxHash, B256},
+    primitives::{B256, TxHash, keccak256},
 };
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::{
@@ -334,15 +334,15 @@ mod tests {
             BlobTransactionSidecar, SidecarBuilder, SignableTransaction, TxEip2930, TxEnvelope,
         },
         eips::Encodable2718,
-        primitives::{bytes, Address, TxKind, U256},
+        primitives::{Address, TxKind, U256, bytes},
         rlp::encode,
-        signers::{local::PrivateKeySigner, SignerSync},
+        signers::{SignerSync, local::PrivateKeySigner},
     };
     use foundry_blob_explorers::TransactionDetails;
     use reth::primitives::{Transaction, TransactionSigned};
     use reth_transaction_pool::{
-        test_utils::{testing_pool, MockTransaction},
         PoolTransaction, TransactionOrigin,
+        test_utils::{MockTransaction, testing_pool},
     };
     use signet_types::constants::SignetSystemConstants;
 

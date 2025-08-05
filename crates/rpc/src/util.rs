@@ -1,6 +1,6 @@
 use ajj::{
-    pubsub::{Connect, ServerShutdown},
     Router,
+    pubsub::{Connect, ServerShutdown},
 };
 use axum::http::HeaderValue;
 use interprocess::local_socket as ls;

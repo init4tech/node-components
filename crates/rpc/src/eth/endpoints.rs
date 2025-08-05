@@ -1,22 +1,22 @@
 use crate::{
+    Pnt,
     ctx::RpcCtx,
     eth::{CallErrorData, EthError},
     interest::{FilterOutput, InterestKind},
     receipts::build_signet_receipt,
     util::{await_jh_option, await_jh_option_response, response_tri},
-    Pnt,
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
     consensus::{BlockHeader, TxEnvelope},
     eips::{
-        eip2718::{Decodable2718, Encodable2718},
         BlockId, BlockNumberOrTag,
+        eip2718::{Decodable2718, Encodable2718},
     },
     network::Ethereum,
-    primitives::{Address, B256, U256, U64},
+    primitives::{Address, B256, U64, U256},
     rpc::types::{
-        pubsub::SubscriptionKind, state::StateOverride, BlockOverrides, Filter, TransactionRequest,
+        BlockOverrides, Filter, TransactionRequest, pubsub::SubscriptionKind, state::StateOverride,
     },
 };
 use reth::{
@@ -29,7 +29,7 @@ use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
 use serde::Deserialize;
 use signet_evm::EvmErrored;
 use std::borrow::Cow;
-use tracing::{debug, trace_span, Instrument};
+use tracing::{Instrument, debug, trace_span};
 use trevm::revm::context::result::ExecutionResult;
 
 /// Args for `eth_estimateGas` and `eth_call`.
@@ -405,7 +405,7 @@ where
 /// - If the gas is below `MIN_TRANSACTION_GAS`, set it to `None`
 /// - If the gas is above the `rpc_gas_cap`, set it to the `rpc_gas_cap`
 /// - Otherwise, do nothing
-fn normalize_gas_stateless(request: &mut TransactionRequest, max_gas: u64) {
+const fn normalize_gas_stateless(request: &mut TransactionRequest, max_gas: u64) {
     match request.gas {
         Some(..trevm::MIN_TRANSACTION_GAS) => request.gas = None,
         Some(val) if val > max_gas => request.gas = Some(max_gas),
@@ -443,7 +443,7 @@ where
                 return ResponsePayload::internal_error_with_message_and_obj(
                     "error while loading block cfg".into(),
                     e.to_string().into(),
-                )
+                );
             }
         };
 
@@ -550,7 +550,7 @@ where
                 return ResponsePayload::internal_error_with_message_and_obj(
                     "error while loading block cfg".into(),
                     e.to_string().into(),
-                )
+                );
             }
         };
 
@@ -599,13 +599,13 @@ where
     Signet: Pnt,
 {
     let task = async move {
-        let (block, suggested) = tokio::try_join!(
-            ctx.signet().raw_block(BlockId::latest()),
+        let (header, suggested) = tokio::try_join!(
+            ctx.signet().raw_header(BlockId::latest()),
             ctx.signet().gas_oracle().suggest_tip_cap(),
         )
         .map_err(|e| e.to_string())?;
 
-        let base_fee = block.and_then(|b| b.1.header().base_fee_per_gas()).unwrap_or_default();
+        let base_fee = header.and_then(|h| h.1.base_fee_per_gas()).unwrap_or_default();
         Ok(suggested + U256::from(base_fee))
     };
 

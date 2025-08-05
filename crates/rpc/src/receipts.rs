@@ -1,7 +1,7 @@
 //! Signet RPC receipt response builder.
 
 use alloy::consensus::Transaction;
-use alloy::consensus::{transaction::TransactionMeta, ReceiptEnvelope, TxReceipt};
+use alloy::consensus::{ReceiptEnvelope, TxReceipt, transaction::TransactionMeta};
 use alloy::primitives::{Address, TxKind};
 use alloy::rpc::types::eth::{Log, ReceiptWithBloom, TransactionReceipt};
 use reth::core::primitives::SignerRecoverable;

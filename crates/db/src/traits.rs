@@ -1,5 +1,5 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain};
-use alloy::primitives::{Address, BlockNumber, B256, U256};
+use alloy::primitives::{Address, B256, BlockNumber, U256};
 use itertools::Itertools;
 use reth::{
     primitives::Account,

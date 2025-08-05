@@ -1,9 +1,9 @@
 use crate::{
+    Pnt,
     eth::EthError,
     interest::{ActiveFilter, FilterManager, FilterOutput, SubscriptionManager},
     receipts::build_signet_receipt,
     util::BlockRangeInclusiveIter,
-    Pnt,
 };
 use alloy::{
     consensus::{BlockHeader, Header, Signed, Transaction, TxEnvelope},
@@ -16,21 +16,21 @@ use reth::{
     core::primitives::SignerRecoverable,
     primitives::{Block, EthPrimitives, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
-        providers::{BlockchainProvider, ProviderNodeTypes},
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
         ProviderBlock, ProviderError, ProviderReceipt, ReceiptProvider, StateProviderFactory,
         TransactionsProvider,
+        providers::{BlockchainProvider, ProviderNodeTypes},
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
     rpc::{
         eth::{filter::EthFilterError, helpers::types::EthRpcConverter},
         server_types::eth::{
+            EthApiError, EthConfig, EthStateCache, FeeHistoryCache, FeeHistoryEntry,
+            GasPriceOracle,
             fee_history::{
                 calculate_reward_percentiles_for_block, fee_history_cache_new_blocks_task,
             },
-            logs_utils::{self, append_matching_block_logs, ProviderOrBlock},
-            EthApiError, EthConfig, EthStateCache, FeeHistoryCache, FeeHistoryEntry,
-            GasPriceOracle,
+            logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
         },
         types::{FilterBlockOption, FilteredParams},
     },
@@ -41,12 +41,12 @@ use reth_node_api::{BlockBody, FullNodeComponents};
 use reth_rpc_eth_api::{RpcBlock, RpcConvert, RpcReceipt, RpcTransaction};
 use signet_evm::EvmNeedsTx;
 use signet_tx_cache::client::TxCache;
-use signet_types::{constants::SignetSystemConstants, MagicSig};
+use signet_types::{MagicSig, constants::SignetSystemConstants};
 use std::{marker::PhantomData, sync::Arc};
-use tracing::{instrument, trace, Level};
+use tracing::{Level, instrument, trace};
 use trevm::{
-    revm::{context::CfgEnv, database::StateBuilder},
     Cfg,
+    revm::{context::CfgEnv, database::StateBuilder},
 };
 
 /// Type alias for EVMs using a [`StateProviderBox`] as the `DB` type for
@@ -312,6 +312,20 @@ where
         Ok(builder.build())
     }
 
+    /// Get the [`Header`] for a given block.
+    pub async fn raw_header(
+        &self,
+        t: impl Into<BlockId>,
+    ) -> Result<Option<(B256, Header)>, EthApiError> {
+        let Some(hash) = self.provider.block_hash_for_id(t.into())? else {
+            return Ok(None);
+        };
+
+        let header = self.cache.get_header(hash).await.map_err(EthApiError::from)?;
+
+        Ok(Some((hash, header)))
+    }
+
     /// Get the block for a given block, returning the block hash and
     /// the block itself.
     pub async fn raw_block(
@@ -513,7 +527,7 @@ where
         build_signet_receipt(tx, meta, receipt, all_receipts.to_vec()).map(Some)
     }
 
-    /// Create the [`Block`] object for a specific [`BlockId`].
+    /// Create the [`Header`] object for a specific [`BlockId`].
     pub async fn block_cfg(&self, mut block_id: BlockId) -> Result<Header, EthApiError> {
         // If the block is pending, we'll load the latest and
         let pending = block_id.is_pending();
@@ -521,11 +535,9 @@ where
             block_id = BlockId::latest();
         }
 
-        let Some((_, block)) = self.raw_block(block_id).await? else {
+        let Some((_, mut header)) = self.raw_header(block_id).await? else {
             return Err(EthApiError::HeaderNotFound(block_id));
         };
-
-        let mut header = block.clone_header();
 
         // Modify the header for pending blocks, to simulate the next block.
         if pending {

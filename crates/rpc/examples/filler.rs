@@ -3,16 +3,16 @@ use alloy::{
     network::{Ethereum, EthereumWallet, TransactionBuilder},
     primitives::Bytes,
     providers::{
+        Identity, Provider as _, RootProvider, SendableTx,
         fillers::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        Identity, Provider as _, RootProvider, SendableTx,
     },
-    rpc::types::{mev::EthSendBundle, TransactionRequest},
+    rpc::types::{TransactionRequest, mev::EthSendBundle},
     signers::Signer,
 };
-use eyre::{eyre, Error};
+use eyre::{Error, eyre};
 use signet_bundle::SignetEthBundle;
 use signet_constants::SignetConstants;
 use signet_tx_cache::{client::TxCache, types::TxCacheSendBundleResponse};
