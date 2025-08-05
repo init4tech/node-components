@@ -1,10 +1,10 @@
-use crate::{BlockExtractorConfig, block_data::BlockExtractor};
+use crate::{BlobCacher, BlobFetcher, BlobFetcherConfig};
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::transaction_pool::TransactionPool;
 use url::Url;
 
-/// Errors that can occur while building the [`BlockExtractor`] with a
-/// [`BlockExtractorBuilder`].
+/// Errors that can occur while building the [`BlobFetcher`] with a
+/// [`BlobFetcherBuilder`].
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderError {
     /// The transaction pool was not provided.
@@ -27,9 +27,9 @@ pub enum BuilderError {
     MissingSlotCalculator,
 }
 
-/// Builder for the [`BlockExtractor`].
+/// Builder for the [`BlobFetcher`].
 #[derive(Debug, Default, Clone)]
-pub struct BlockExtractorBuilder<Pool> {
+pub struct BlobFetcherBuilder<Pool> {
     pool: Option<Pool>,
     explorer_url: Option<String>,
     client: Option<reqwest::Client>,
@@ -38,10 +38,10 @@ pub struct BlockExtractorBuilder<Pool> {
     slot_calculator: Option<SlotCalculator>,
 }
 
-impl<Pool> BlockExtractorBuilder<Pool> {
+impl<Pool> BlobFetcherBuilder<Pool> {
     /// Set the transaction pool to use for the extractor.
-    pub fn with_pool<P2>(self, pool: P2) -> BlockExtractorBuilder<P2> {
-        BlockExtractorBuilder {
+    pub fn with_pool<P2>(self, pool: P2) -> BlobFetcherBuilder<P2> {
+        BlobFetcherBuilder {
             pool: Some(pool),
             explorer_url: self.explorer_url,
             client: self.client,
@@ -53,15 +53,13 @@ impl<Pool> BlockExtractorBuilder<Pool> {
 
     /// Set the transaction pool to use a mock test pool.
     #[cfg(feature = "test-utils")]
-    pub fn with_test_pool(
-        self,
-    ) -> BlockExtractorBuilder<reth_transaction_pool::test_utils::TestPool> {
+    pub fn with_test_pool(self) -> BlobFetcherBuilder<reth_transaction_pool::test_utils::TestPool> {
         self.with_pool(reth_transaction_pool::test_utils::testing_pool())
     }
 
     /// Set the configuration for the CL url, pylon url, from the provided
-    /// [`BlockExtractorConfig`].
-    pub fn with_config(self, config: &BlockExtractorConfig) -> Result<Self, BuilderError> {
+    /// [`BlobFetcherConfig`].
+    pub fn with_config(self, config: &BlobFetcherConfig) -> Result<Self, BuilderError> {
         let this = self.with_explorer_url(config.blob_explorer_url());
         let this =
             if let Some(cl_url) = config.cl_url() { this.with_cl_url(cl_url)? } else { this };
@@ -114,22 +112,22 @@ impl<Pool> BlockExtractorBuilder<Pool> {
     pub const fn with_slot_calculator(
         mut self,
         slot_calculator: SlotCalculator,
-    ) -> BlockExtractorBuilder<Pool> {
+    ) -> BlobFetcherBuilder<Pool> {
         self.slot_calculator = Some(slot_calculator);
         self
     }
 
     /// Set the slot calculator to use for the extractor, using the Pecornino
     /// host configuration.
-    pub const fn with_pecornino_slots(mut self) -> BlockExtractorBuilder<Pool> {
+    pub const fn with_pecornino_slots(mut self) -> BlobFetcherBuilder<Pool> {
         self.slot_calculator = Some(SlotCalculator::pecorino_host());
         self
     }
 }
 
-impl<Pool: TransactionPool> BlockExtractorBuilder<Pool> {
-    /// Build the [`BlockExtractor`] with the provided parameters.
-    pub fn build(self) -> Result<BlockExtractor<Pool>, BuilderError> {
+impl<Pool: TransactionPool> BlobFetcherBuilder<Pool> {
+    /// Build the [`BlobFetcher`] with the provided parameters.
+    pub fn build(self) -> Result<BlobFetcher<Pool>, BuilderError> {
         let pool = self.pool.ok_or(BuilderError::MissingPool)?;
 
         let explorer_url = self.explorer_url.ok_or(BuilderError::MissingExplorerUrl)?;
@@ -145,7 +143,16 @@ impl<Pool: TransactionPool> BlockExtractorBuilder<Pool> {
 
         let slot_calculator = self.slot_calculator.ok_or(BuilderError::MissingSlotCalculator)?;
 
-        Ok(BlockExtractor::new(pool, explorer, client, cl_url, pylon_url, slot_calculator))
+        Ok(BlobFetcher::new(pool, explorer, client, cl_url, pylon_url, slot_calculator))
+    }
+
+    /// Build a [`BlobCacher`] with the provided parameters.
+    pub fn build_cache(self) -> Result<BlobCacher<Pool>, BuilderError>
+    where
+        Pool: 'static,
+    {
+        let fetcher = self.build()?;
+        Ok(BlobCacher::new(fetcher))
     }
 }
 

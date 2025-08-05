@@ -4,7 +4,7 @@ use std::borrow::Cow;
 /// Configuration for the block extractor.
 #[derive(Debug, Clone, serde::Deserialize, FromEnv)]
 #[serde(rename_all = "camelCase")]
-pub struct BlockExtractorConfig {
+pub struct BlobFetcherConfig {
     /// URL of the blob explorer.
     #[from_env(var = "BLOB_EXPLORER_URL", desc = "URL of the blob explorer", infallible)]
     blob_explorer_url: Cow<'static, str>,
@@ -18,8 +18,8 @@ pub struct BlockExtractorConfig {
     pylon_url: Option<Cow<'static, str>>,
 }
 
-impl BlockExtractorConfig {
-    /// Create a new `BlockExtractorConfig` with default values.
+impl BlobFetcherConfig {
+    /// Create a new `BlobFetcherConfig` with default values.
     pub const fn new(blob_explorer_url: Cow<'static, str>) -> Self {
         Self { blob_explorer_url, cl_url: None, pylon_url: None }
     }
@@ -39,7 +39,7 @@ impl BlockExtractorConfig {
         self.pylon_url = Some(pylon_url);
     }
 
-    /// Create a new `BlockExtractorConfig` with the provided CL URL, Pylon URL,
+    /// Create a new `BlobFetcherConfig` with the provided CL URL, Pylon URL,
     pub fn cl_url(&self) -> Option<&str> {
         self.cl_url.as_deref()
     }

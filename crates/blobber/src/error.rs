@@ -1,10 +1,10 @@
 use alloy::{eips::eip2718::Eip2718Error, primitives::B256};
 use reth::transaction_pool::BlobStoreError;
 
-/// Extraction Result
-pub type ExtractionResult<T, E = BlockExtractionError> = std::result::Result<T, E>;
+/// Fetch Result
+pub type FetchResult<T, E = BlobFetcherError> = std::result::Result<T, E>;
 
-/// Unrecoverable blob extraction errors. These result in the node shutting
+/// Unrecoverable blob fetching errors. These result in the node shutting
 /// down. They occur when the blobstore is down or the sidecar is unretrievable.
 #[derive(Debug, thiserror::Error)]
 pub enum UnrecoverableBlobError {
@@ -28,7 +28,7 @@ pub enum UnrecoverableBlobError {
     PylonClientUrlNotSet,
 }
 
-/// Ignorable blob extraction errors. These result in the block being skipped.
+/// Ignorable blob fetching errors. These result in the block being skipped.
 #[derive(Debug, thiserror::Error, Copy, Clone)]
 pub enum IgnorableBlobError {
     /// Incorrect transaction type error
@@ -48,18 +48,18 @@ pub enum IgnorableBlobError {
     BlockDecodeError(#[from] Eip2718Error),
 }
 
-/// Blob extraction errors
+/// Blob fetching errors
 #[derive(Debug, thiserror::Error)]
-pub enum BlockExtractionError {
-    /// Unrecoverable blob extraction error
+pub enum BlobFetcherError {
+    /// Unrecoverable blob fetching error
     #[error(transparent)]
     Unrecoverable(#[from] UnrecoverableBlobError),
-    /// Ignorable blob extraction error
+    /// Ignorable blob fetching error
     #[error(transparent)]
     Ignorable(#[from] IgnorableBlobError),
 }
 
-impl BlockExtractionError {
+impl BlobFetcherError {
     /// Returns true if the error is ignorable
     pub const fn is_ignorable(&self) -> bool {
         matches!(self, Self::Ignorable(_))
@@ -110,20 +110,26 @@ impl From<BlobStoreError> for UnrecoverableBlobError {
     }
 }
 
-impl From<BlobStoreError> for BlockExtractionError {
+impl From<BlobStoreError> for BlobFetcherError {
     fn from(err: BlobStoreError) -> Self {
         Self::Unrecoverable(err.into())
     }
 }
 
-impl From<reqwest::Error> for BlockExtractionError {
+impl From<reqwest::Error> for BlobFetcherError {
     fn from(err: reqwest::Error) -> Self {
         Self::Unrecoverable(err.into())
     }
 }
 
-impl From<Eip2718Error> for BlockExtractionError {
+impl From<Eip2718Error> for BlobFetcherError {
     fn from(err: Eip2718Error) -> Self {
         Self::Ignorable(err.into())
+    }
+}
+
+impl From<url::ParseError> for BlobFetcherError {
+    fn from(err: url::ParseError) -> Self {
+        Self::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
     }
 }
