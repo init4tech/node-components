@@ -339,13 +339,16 @@ mod tests {
         },
         eips::Encodable2718,
         primitives::{TxKind, U256, bytes},
+        rlp::encode,
+        signers::{SignerSync, local::PrivateKeySigner},
     };
     use foundry_blob_explorers::TransactionDetails;
+    use reth::primitives::Transaction;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
     };
-    use signet_types::constants::SignetSystemConstants;
+    use signet_types::{constants::SignetSystemConstants, primitives::TransactionSigned};
 
     const BLOBSCAN_BLOB_RESPONSE: &str = include_str!("../../../tests/artifacts/blob.json");
     /// Blob from Slot 2277733, corresponding to block 277722 on Pecorino host.

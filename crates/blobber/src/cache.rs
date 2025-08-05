@@ -1,5 +1,7 @@
 use crate::{BlobFetcherError, Blobs, FetchResult};
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
+use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
+use alloy::eips::merge::EPOCH_SLOTS;
 use alloy::primitives::{keccak256, Bytes, B256};
 use reth::transaction_pool::TransactionPool;
 use reth::{network::cache::LruMap, primitives::Receipt};
@@ -13,7 +15,8 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, instrument, warn};
 
-const BLOB_CACHE_SIZE: u32 = 144;
+const BLOB_CACHE_SIZE: u32 = (MAX_BLOBS_PER_BLOCK_ELECTRA * EPOCH_SLOTS) as u32;
+const CACHE_REQUEST_CHANNEL_SIZE: usize = (MAX_BLOBS_PER_BLOCK_ELECTRA * 2) as usize;
 const FETCH_RETRIES: usize = 3;
 const BETWEEN_RETRIES: Duration = Duration::from_millis(250);
 
@@ -198,7 +201,7 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     /// # Panics
     /// This function will panic if the cache task fails to spawn.
     pub fn spawn(self) -> CacheHandle {
-        let (sender, inst) = mpsc::channel(12);
+        let (sender, inst) = mpsc::channel(CACHE_REQUEST_CHANNEL_SIZE);
         tokio::spawn(Arc::new(self).task_future(inst));
         CacheHandle { sender }
     }
