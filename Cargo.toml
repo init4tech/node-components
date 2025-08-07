@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.8.3"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,21 +34,20 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.8.0", path = "crates/blobber" }
-signet-db = { version = "0.8.0", path = "crates/db" }
-signet-node-types = { version = "0.8.0", path = "crates/node-types" }
-signet-rpc = { version = "0.8.0", path = "crates/rpc" }
+signet-blobber = { version = "0.9.0", path = "crates/blobber" }
+signet-db = { version = "0.9.0", path = "crates/db" }
+signet-node-types = { version = "0.9.0", path = "crates/node-types" }
+signet-rpc = { version = "0.9.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.9.0", features = ["alloy"] }
+init4-bin-base = { version = "0.10.0", features = ["alloy"] }
 
-signet-bundle = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-constants = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-evm = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-extract = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-tx-cache = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-types = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-signet-zenith = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
-
+signet-bundle = "0.9.0"
+signet-constants = "0.9.0"
+signet-evm = "0.9.0"
+signet-extract = "0.9.0"
+signet-tx-cache = "0.9.0"
+signet-types = "0.9.0"
+signet-zenith = "0.9.0"
 
 # ajj
 ajj = { version = "0.3.4" }
