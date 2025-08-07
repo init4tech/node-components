@@ -5,11 +5,7 @@ use ajj::{
 use axum::http::HeaderValue;
 use interprocess::local_socket as ls;
 use reqwest::Method;
-use reth::{
-    primitives::EthPrimitives, providers::providers::ProviderNodeTypes,
-    rpc::builder::CorsDomainError, tasks::TaskExecutor,
-};
-use reth_chainspec::ChainSpec;
+use reth::{rpc::builder::CorsDomainError, tasks::TaskExecutor};
 use std::{future::IntoFuture, iter::StepBy, net::SocketAddr, ops::RangeInclusive};
 use tokio::task::JoinHandle;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -73,13 +69,8 @@ macro_rules! response_tri {
         }
     };
 }
+
 pub(crate) use response_tri;
-
-/// Convenience trait for specifying the [`ProviderNodeTypes`] implementation
-/// required for Signet RPC functionality.
-pub trait Pnt: ProviderNodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives> {}
-
-impl<T> Pnt for T where T: ProviderNodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives> {}
 
 /// An iterator that yields _inclusive_ block ranges of a given step size
 #[derive(Debug)]

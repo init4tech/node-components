@@ -7,9 +7,10 @@ pub use error::EthError;
 mod helpers;
 pub use helpers::CallErrorData;
 
-use crate::{Pnt, ctx::RpcCtx};
+use crate::ctx::RpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
 use reth_node_api::FullNodeComponents;
+use signet_node_types::Pnt;
 
 /// Instantiate the `eth` API router.
 pub fn eth<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>

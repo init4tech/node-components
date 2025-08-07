@@ -1,9 +1,8 @@
 use crate::{
-    Pnt,
     eth::EthError,
     interest::{ActiveFilter, FilterManager, FilterOutput, SubscriptionManager},
     receipts::build_signet_receipt,
-    util::BlockRangeInclusiveIter,
+    utils::BlockRangeInclusiveIter,
 };
 use alloy::{
     consensus::{BlockHeader, Header, Signed, Transaction, TxEnvelope},
@@ -14,12 +13,11 @@ use alloy::{
 };
 use reth::{
     core::primitives::SignerRecoverable,
-    primitives::{Block, EthPrimitives, Receipt, Recovered, RecoveredBlock, TransactionSigned},
+    primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
-        ProviderBlock, ProviderError, ProviderReceipt, ReceiptProvider, StateProviderFactory,
-        TransactionsProvider,
-        providers::{BlockchainProvider, ProviderNodeTypes},
+        ProviderBlock, ProviderError, ProviderFactory, ProviderReceipt, ProviderResult,
+        ReceiptProvider, StateProviderFactory, TransactionsProvider, providers::BlockchainProvider,
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
     rpc::{
@@ -40,6 +38,7 @@ use reth_chainspec::{BaseFeeParams, ChainSpec, ChainSpecProvider};
 use reth_node_api::{BlockBody, FullNodeComponents};
 use reth_rpc_eth_api::{RpcBlock, RpcConvert, RpcReceipt, RpcTransaction};
 use signet_evm::EvmNeedsTx;
+use signet_node_types::Pnt;
 use signet_tx_cache::client::TxCache;
 use signet_types::{MagicSig, constants::SignetSystemConstants};
 use std::{marker::PhantomData, sync::Arc};
@@ -80,17 +79,16 @@ where
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
-        provider: BlockchainProvider<Signet>,
+        factory: ProviderFactory<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
-    ) -> Self
+    ) -> ProviderResult<Self>
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        let inner = RpcCtxInner::new(host, constants, provider, eth_config, tx_cache, spawner);
-
-        Self { inner: Arc::new(inner) }
+        RpcCtxInner::new(host, constants, factory, eth_config, tx_cache, spawner)
+            .map(|inner| Self { inner: Arc::new(inner) })
     }
 }
 
@@ -136,16 +134,16 @@ where
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
-        provider: BlockchainProvider<Signet>,
+        factory: ProviderFactory<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
-    ) -> Self
+    ) -> ProviderResult<Self>
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        let signet = SignetCtx::new(constants, provider, eth_config, tx_cache, spawner);
-        Self { host, signet }
+        SignetCtx::new(constants, factory, eth_config, tx_cache, spawner)
+            .map(|signet| Self { host, signet })
     }
 
     pub const fn host(&self) -> &Host {
@@ -194,6 +192,7 @@ where
     eth_config: EthConfig,
 
     // State stuff
+    factory: ProviderFactory<Inner>,
     provider: BlockchainProvider<Inner>,
     cache: EthStateCache<
         ProviderBlock<BlockchainProvider<Inner>>,
@@ -217,20 +216,22 @@ where
 
 impl<Inner> SignetCtx<Inner>
 where
-    Inner: ProviderNodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>,
+    Inner: Pnt,
 {
     /// Instantiate a new `SignetCtx`, spawning necessary tasks to keep the
     /// relevant caches up to date.
     pub fn new<Tasks>(
         constants: SignetSystemConstants,
-        provider: BlockchainProvider<Inner>,
+        factory: ProviderFactory<Inner>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
-    ) -> Self
+    ) -> ProviderResult<Self>
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
+        let provider = BlockchainProvider::new(factory.clone())?;
+
         let cache = EthStateCache::spawn_with(provider.clone(), eth_config.cache, spawner.clone());
         let gas_oracle =
             GasPriceOracle::new(provider.clone(), eth_config.gas_oracle, cache.clone());
@@ -249,8 +250,9 @@ where
 
         let subs = SubscriptionManager::new(provider.clone(), eth_config.stale_filter_ttl);
 
-        Self {
+        Ok(Self {
             constants,
+            factory,
             provider,
             eth_config,
             cache,
@@ -260,12 +262,17 @@ where
             filters,
             subs,
             _pd: PhantomData,
-        }
+        })
     }
 
     /// Access the signet constants
     pub const fn constants(&self) -> &SignetSystemConstants {
         &self.constants
+    }
+
+    /// Access the signet [`ProviderFactory`].
+    pub const fn factory(&self) -> &ProviderFactory<Inner> {
+        &self.factory
     }
 
     /// Access the signet DB

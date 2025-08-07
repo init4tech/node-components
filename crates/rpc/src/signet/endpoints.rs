@@ -1,14 +1,14 @@
 use crate::{
-    Pnt,
     ctx::RpcCtx,
     signet::error::SignetError,
-    util::{await_jh_option, await_jh_option_response, response_tri},
+    utils::{await_jh_option, await_jh_option_response, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use reth_node_api::FullNodeComponents;
 use signet_bundle::{
     SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse, SignetEthBundle,
 };
+use signet_node_types::Pnt;
 use signet_types::SignedOrder;
 use std::time::Duration;
 use tokio::select;

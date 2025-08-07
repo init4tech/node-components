@@ -1,9 +1,8 @@
+use crate::utils::{serve_axum, serve_ipc, serve_ws};
 use ajj::{Router, pubsub::ServerShutdown};
 use reth::{args::RpcServerArgs, tasks::TaskExecutor};
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;
-
-use crate::util::{serve_axum, serve_ipc, serve_ws};
 
 /// Guard to shutdown the RPC servers. When dropped, this will shutdown all
 /// running servers

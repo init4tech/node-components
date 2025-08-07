@@ -49,7 +49,6 @@ signet-tx-cache = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8
 signet-types = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
 signet-zenith = { git = "https://github.com/init4tech/signet-sdk", tag = "v0.8.4" }
 
-
 # ajj
 ajj = { version = "0.3.4" }
 
