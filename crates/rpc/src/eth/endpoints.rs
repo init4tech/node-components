@@ -1,10 +1,9 @@
 use crate::{
-    Pnt,
     ctx::RpcCtx,
     eth::{CallErrorData, EthError},
     interest::{FilterOutput, InterestKind},
     receipts::build_signet_receipt,
-    util::{await_jh_option, await_jh_option_response, response_tri},
+    utils::{await_jh_option, await_jh_option_response, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
@@ -28,6 +27,7 @@ use reth_node_api::FullNodeComponents;
 use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
 use serde::Deserialize;
 use signet_evm::EvmErrored;
+use signet_node_types::Pnt;
 use std::borrow::Cow;
 use tracing::{Instrument, debug, trace_span};
 use trevm::revm::context::result::ExecutionResult;
