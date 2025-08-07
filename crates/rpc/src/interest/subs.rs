@@ -1,4 +1,4 @@
-use crate::{Pnt, interest::InterestKind};
+use crate::interest::InterestKind;
 use ajj::{HandlerCtx, serde_json};
 use alloy::{primitives::U64, rpc::types::Log};
 use dashmap::DashMap;
@@ -6,6 +6,7 @@ use reth::{
     providers::{CanonStateNotifications, CanonStateSubscriptions, providers::BlockchainProvider},
     rpc::types::Header,
 };
+use signet_node_types::Pnt;
 use std::{
     cmp::min,
     collections::VecDeque,

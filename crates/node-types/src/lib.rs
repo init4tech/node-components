@@ -11,6 +11,9 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod utils;
+pub use utils::{NodeTypesDbTrait, Pnt};
+
 use reth::{
     primitives::EthPrimitives,
     providers::{
@@ -96,21 +99,6 @@ where
     type DB = Db;
 }
 
-/// Convenience trait to aggregate the DB requirements
-pub trait NodeTypesDbTrait:
-    reth_db::database::Database + reth_db::database_metrics::DatabaseMetrics + Clone + Unpin + 'static
-{
-}
-
-impl<T> NodeTypesDbTrait for T where
-    T: reth_db::database::Database
-        + reth_db::database_metrics::DatabaseMetrics
-        + Clone
-        + Unpin
-        + 'static
-{
-}
-
 /// Shim to impl [`CanonStateSubscriptions`]
 #[derive(Debug, Clone)]
 pub struct SharedCanonState<Db> {
@@ -170,5 +158,17 @@ where
 {
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
         self.sender.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[allow(dead_code)]
+    fn compile_check() {
+        fn inner<P: Pnt>() {}
+
+        inner::<SignetNodeTypes<std::sync::Arc<reth_db::mdbx::DatabaseEnv>>>();
     }
 }
