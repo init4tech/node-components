@@ -82,14 +82,20 @@ where
         index: u64,
         enter_token: EnterToken,
     ) -> ProviderResult<()> {
-        self.tx_ref().put::<SignetEvents>(ru_height, DbSignetEvent::EnterToken(index, enter_token))?;
+        self.tx_ref()
+            .put::<SignetEvents>(ru_height, DbSignetEvent::EnterToken(index, enter_token))?;
         Ok(())
     }
 
     /// Insert a Transact into the DB
     /// This is a signet-specific function that inserts a transact event into the
     /// [`SignetEvents`] table.
-    fn insert_transact(&self, ru_height: u64, index: u64, transact: &Transact) -> ProviderResult<()> {
+    fn insert_transact(
+        &self,
+        ru_height: u64,
+        index: u64,
+        transact: &Transact,
+    ) -> ProviderResult<()> {
         // this is unfortunate, but probably fine because the large part is the
         // shared Bytes object.
         let t = transact.clone();
