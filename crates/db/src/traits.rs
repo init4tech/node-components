@@ -254,7 +254,6 @@ pub trait RuWriter {
     #[allow(clippy::too_many_arguments)]
     fn append_host_block(
         &self,
-        host_height: u64,
         header: Option<Zenith::BlockHeader>,
         transacts: impl IntoIterator<Item = Transactor::Transact>,
         enters: impl IntoIterator<Item = Passage::Enter>,

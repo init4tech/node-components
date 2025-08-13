@@ -17,6 +17,8 @@ pub use chain::{DbExtractionResults, RuChain};
 mod convert;
 pub use convert::DataCompat;
 
+pub mod journal;
+
 mod provider;
 
 mod tables;
