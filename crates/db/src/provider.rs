@@ -453,20 +453,20 @@ where
 
         let mut index: u64 = 0;
         for enter in enters.into_iter() {
-            self.insert_enter(host_height, index, enter)?;
-            debug!(host_height, index, "inserted enter");
+            self.insert_enter(ru_height, index, enter)?;
+            debug!(ru_height, index, "inserted enter");
             index += 1;
         }
 
         for enter_token in enter_tokens.into_iter() {
-            self.insert_enter_token(host_height, index, enter_token)?;
-            debug!(host_height, index, "inserted enter token");
+            self.insert_enter_token(ru_height, index, enter_token)?;
+            debug!(ru_height, index, "inserted enter token");
             index += 1;
         }
 
         for transact in transacts.into_iter() {
-            self.insert_transact(host_height, index, &transact)?;
-            debug!(host_height, index, "inserted transact");
+            self.insert_transact(ru_height, index, &transact)?;
+            debug!(ru_height, index, "inserted transact");
             index += 1;
         }
 
