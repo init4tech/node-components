@@ -470,7 +470,7 @@ where
             index += 1;
         }
 
-        self.update_history_indices(host_height..=host_height)?;
+        self.update_history_indices(ru_height..=ru_height)?;
 
         self.update_pipeline_stages(ru_height, false)?;
 
