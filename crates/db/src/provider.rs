@@ -43,18 +43,18 @@ where
         BlockNumReader::last_block_number(&self.0)
     }
 
-    fn insert_journal_hash(&self, rollup_height: u64, hash: B256) -> ProviderResult<()> {
-        self.tx_ref().put::<JournalHashes>(rollup_height, hash)?;
+    fn insert_journal_hash(&self, ru_height: u64, hash: B256) -> ProviderResult<()> {
+        self.tx_ref().put::<JournalHashes>(ru_height, hash)?;
         Ok(())
     }
 
-    fn remove_journal_hash(&self, rollup_height: u64) -> ProviderResult<()> {
-        self.tx_ref().delete::<JournalHashes>(rollup_height, None)?;
+    fn remove_journal_hash(&self, ru_height: u64) -> ProviderResult<()> {
+        self.tx_ref().delete::<JournalHashes>(ru_height, None)?;
         Ok(())
     }
 
-    fn get_journal_hash(&self, rollup_height: u64) -> ProviderResult<Option<B256>> {
-        self.tx_ref().get::<JournalHashes>(rollup_height).map_err(Into::into)
+    fn get_journal_hash(&self, ru_height: u64) -> ProviderResult<Option<B256>> {
+        self.tx_ref().get::<JournalHashes>(ru_height).map_err(Into::into)
     }
 
     fn latest_journal_hash(&self) -> ProviderResult<B256> {
@@ -67,9 +67,9 @@ where
     /// Insert an enter into the DB
     /// This is a signet-specific function that inserts an enter event into the
     /// [`SignetEvents`] table.
-    fn insert_enter(&self, height: u64, index: u64, enter: Enter) -> ProviderResult<()> {
+    fn insert_enter(&self, ru_height: u64, index: u64, enter: Enter) -> ProviderResult<()> {
         self.tx_ref()
-            .put::<SignetEvents>(height, DbSignetEvent::Enter(index, enter))
+            .put::<SignetEvents>(ru_height, DbSignetEvent::Enter(index, enter))
             .map_err(Into::into)
     }
 
@@ -78,23 +78,29 @@ where
     /// into the [`SignetEvents`] table.
     fn insert_enter_token(
         &self,
-        height: u64,
+        ru_height: u64,
         index: u64,
         enter_token: EnterToken,
     ) -> ProviderResult<()> {
-        self.tx_ref().put::<SignetEvents>(height, DbSignetEvent::EnterToken(index, enter_token))?;
+        self.tx_ref()
+            .put::<SignetEvents>(ru_height, DbSignetEvent::EnterToken(index, enter_token))?;
         Ok(())
     }
 
     /// Insert a Transact into the DB
     /// This is a signet-specific function that inserts a transact event into the
     /// [`SignetEvents`] table.
-    fn insert_transact(&self, height: u64, index: u64, transact: &Transact) -> ProviderResult<()> {
+    fn insert_transact(
+        &self,
+        ru_height: u64,
+        index: u64,
+        transact: &Transact,
+    ) -> ProviderResult<()> {
         // this is unfortunate, but probably fine because the large part is the
         // shared Bytes object.
         let t = transact.clone();
         self.tx_ref()
-            .put::<SignetEvents>(height, DbSignetEvent::Transact(index, t))
+            .put::<SignetEvents>(ru_height, DbSignetEvent::Transact(index, t))
             .map_err(Into::into)
     }
 
@@ -453,24 +459,24 @@ where
 
         let mut index: u64 = 0;
         for enter in enters.into_iter() {
-            self.insert_enter(host_height, index, enter)?;
-            debug!(host_height, index, "inserted enter");
+            self.insert_enter(ru_height, index, enter)?;
+            debug!(ru_height, index, "inserted enter");
             index += 1;
         }
 
         for enter_token in enter_tokens.into_iter() {
-            self.insert_enter_token(host_height, index, enter_token)?;
-            debug!(host_height, index, "inserted enter token");
+            self.insert_enter_token(ru_height, index, enter_token)?;
+            debug!(ru_height, index, "inserted enter token");
             index += 1;
         }
 
         for transact in transacts.into_iter() {
-            self.insert_transact(host_height, index, &transact)?;
-            debug!(host_height, index, "inserted transact");
+            self.insert_transact(ru_height, index, &transact)?;
+            debug!(ru_height, index, "inserted transact");
             index += 1;
         }
 
-        self.update_history_indices(host_height..=host_height)?;
+        self.update_history_indices(ru_height..=ru_height)?;
 
         self.update_pipeline_stages(ru_height, false)?;
 
