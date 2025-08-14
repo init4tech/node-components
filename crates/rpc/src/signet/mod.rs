@@ -5,8 +5,9 @@ use endpoints::*;
 
 pub(crate) mod error;
 
-use crate::{Pnt, ctx::RpcCtx};
+use crate::ctx::RpcCtx;
 use reth_node_api::FullNodeComponents;
+use signet_node_types::Pnt;
 
 /// Instantiate a `signet` API router.
 pub fn signet<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>

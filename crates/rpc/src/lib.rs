@@ -9,7 +9,8 @@
 //! ## Usage Example
 //!
 //! ```rust
-//! # use signet_rpc::{Pnt, RpcCtx};
+//! # use signet_rpc::{RpcCtx};
+//! # use signet_node_types::Pnt;
 //! # use reth_node_api::FullNodeComponents;
 //! # use reth::tasks::TaskExecutor;
 //! use signet_rpc::{router, ServeConfig};
@@ -60,19 +61,22 @@ pub use eth::{CallErrorData, EthError, eth};
 mod signet;
 pub use signet::{error::SignetError, signet};
 
+mod inspect;
+pub use inspect::inspect;
+
 mod interest;
 
 pub mod receipts;
 
 /// Utils and simple serve functions.
-pub mod util;
-pub use util::Pnt;
+pub mod utils;
 
 /// Re-exported for convenience
 pub use ::ajj;
 
 use ajj::Router;
 use reth_node_api::FullNodeComponents;
+use signet_node_types::Pnt;
 
 /// Create a new router with the given host and signet types.
 pub fn router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
@@ -81,4 +85,13 @@ where
     Signet: Pnt,
 {
     ajj::Router::new().nest("eth", eth::<Host, Signet>()).nest("signet", signet::<Host, Signet>())
+}
+
+/// Create a new hazmat router that exposes the `inspect` API.
+pub fn hazmat_router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
+where
+    Host: FullNodeComponents,
+    Signet: Pnt,
+{
+    ajj::Router::new().nest("inspect", inspect::inspect::<Host, Signet>())
 }
