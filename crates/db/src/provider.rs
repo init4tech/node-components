@@ -430,7 +430,6 @@ where
     /// see the documentation for each function.
     fn append_host_block(
         &self,
-        host_height: u64,
         header: Option<Zenith::BlockHeader>,
         transacts: impl IntoIterator<Item = Transact>,
         enters: impl IntoIterator<Item = Passage::Enter>,
@@ -480,7 +479,7 @@ where
 
         self.update_pipeline_stages(ru_height, false)?;
 
-        debug!(target: "signet_db_lifecycle", host_height, ru_height, "Appended blocks");
+        debug!(target: "signet_db_lifecycle", ru_height, "Appended blocks");
 
         Ok(())
     }
