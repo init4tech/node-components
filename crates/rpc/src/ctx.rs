@@ -21,7 +21,7 @@ use reth::{
         TransactionsProvider,
         providers::{BlockchainProvider, ProviderNodeTypes},
     },
-    revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
+    revm::{database::StateProviderDatabase, db::CacheDB, primitives::hardfork::SpecId},
     rpc::{
         eth::{filter::EthFilterError, helpers::types::EthRpcConverter},
         server_types::eth::{
@@ -54,7 +54,9 @@ use trevm::{
 ///
 /// [`StateProviderBox`]: reth::providers::StateProviderBox
 pub type RuRevmState = trevm::revm::database::State<
-    reth::revm::database::StateProviderDatabase<reth::providers::StateProviderBox>,
+    reth::revm::db::CacheDB<
+        reth::revm::database::StateProviderDatabase<reth::providers::StateProviderBox>,
+    >,
 >;
 
 /// The maximum number of headers we read at once when handling a range filter.
@@ -305,7 +307,7 @@ where
         let sp = self.provider.history_by_block_number(height)?;
 
         // Wrap in Revm compatibility layer
-        let spd = StateProviderDatabase::new(sp);
+        let spd = CacheDB::new(StateProviderDatabase::new(sp));
 
         let builder = StateBuilder::new_with_database(spd);
 
