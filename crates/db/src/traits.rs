@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::trace;
 
 /// Writer for [`Passage::Enter`] events.
+#[auto_impl::auto_impl(&, Arc, Box)]
 pub trait RuWriter {
     /// Get the last block number
     fn last_block_number(&self) -> ProviderResult<BlockNumber>;
