@@ -3,9 +3,10 @@
 mod r#trait;
 pub use r#trait::JournalDb;
 
+use crate::SignetDbRw;
 use futures_util::{Stream, StreamExt};
-use reth::providers::{DatabaseProviderRW, ProviderResult};
-use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
+use reth::providers::ProviderResult;
+use signet_node_types::NodeTypesDbTrait;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use trevm::journal::BlockUpdate;
@@ -13,28 +14,24 @@ use trevm::journal::BlockUpdate;
 /// A task that ingests journals into a reth database.
 #[derive(Debug)]
 pub struct JournalIngestor<Db: NodeTypesDbTrait> {
-    db: Arc<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>,
+    db: Arc<SignetDbRw<Db>>,
 }
 
-impl<Db: NodeTypesDbTrait> From<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>
-    for JournalIngestor<Db>
-{
-    fn from(value: DatabaseProviderRW<Db, SignetNodeTypes<Db>>) -> Self {
+impl<Db: NodeTypesDbTrait> From<SignetDbRw<Db>> for JournalIngestor<Db> {
+    fn from(value: SignetDbRw<Db>) -> Self {
         Self::new(value.into())
     }
 }
 
-impl<Db: NodeTypesDbTrait> From<Arc<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>>
-    for JournalIngestor<Db>
-{
-    fn from(value: Arc<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>) -> Self {
+impl<Db: NodeTypesDbTrait> From<Arc<SignetDbRw<Db>>> for JournalIngestor<Db> {
+    fn from(value: Arc<SignetDbRw<Db>>) -> Self {
         Self::new(value)
     }
 }
 
 impl<Db: NodeTypesDbTrait> JournalIngestor<Db> {
     /// Create a new `JournalIngestor` with the given database provider.
-    pub const fn new(db: Arc<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>) -> Self {
+    pub const fn new(db: Arc<SignetDbRw<Db>>) -> Self {
         Self { db }
     }
 
@@ -71,10 +68,7 @@ impl<Db: NodeTypesDbTrait> JournalIngestor<Db> {
 }
 
 /// Ingest journals from a stream into a reth database.
-pub async fn ingest_journals<Db, S>(
-    db: Arc<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>,
-    stream: S,
-) -> ProviderResult<()>
+pub async fn ingest_journals<Db, S>(db: Arc<SignetDbRw<Db>>, stream: S) -> ProviderResult<()>
 where
     Db: NodeTypesDbTrait,
     S: Stream<Item = (alloy::consensus::Header, BlockUpdate<'static>)> + Send + Unpin + 'static,

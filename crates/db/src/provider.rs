@@ -1,5 +1,5 @@
 use crate::{
-    DataCompat, DbZenithHeader, RuChain, ZenithHeaders,
+    DataCompat, DbZenithHeader, RuChain, SignetDbRw, ZenithHeaders,
     tables::{DbSignetEvent, JournalHashes, SignetEvents},
     traits::RuWriter,
 };
@@ -11,9 +11,9 @@ use reth::{
     primitives::{Account, StaticFileSegment},
     providers::{
         AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain,
-        DBProvider, DatabaseProviderRW, HistoryWriter, OriginalValuesKnown, ProviderError,
-        ProviderResult, StageCheckpointWriter, StateWriter, StaticFileProviderFactory,
-        StaticFileWriter, StorageLocation,
+        DBProvider, HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult,
+        StageCheckpointWriter, StateWriter, StaticFileProviderFactory, StaticFileWriter,
+        StorageLocation,
     },
 };
 use reth_db::{
@@ -25,7 +25,7 @@ use reth_db::{
 };
 use reth_prune_types::{MINIMUM_PRUNING_DISTANCE, PruneMode};
 use signet_evm::BlockResult;
-use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
+use signet_node_types::NodeTypesDbTrait;
 use signet_types::primitives::RecoveredBlock;
 use signet_zenith::{
     Passage::{self, Enter, EnterToken},
@@ -35,7 +35,7 @@ use signet_zenith::{
 use std::ops::RangeInclusive;
 use tracing::{debug, instrument, trace, warn};
 
-impl<Db> RuWriter for DatabaseProviderRW<Db, SignetNodeTypes<Db>>
+impl<Db> RuWriter for SignetDbRw<Db>
 where
     Db: NodeTypesDbTrait,
 {

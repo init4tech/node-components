@@ -11,6 +11,9 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod aliases;
+pub use aliases::SignetDbRw;
+
 mod chain;
 pub use chain::{DbExtractionResults, RuChain};
 
