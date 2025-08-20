@@ -1,5 +1,6 @@
 use crate::{
     RuRevmState,
+    ctx::strip_signet_system_txns,
     eth::EthError,
     interest::{ActiveFilter, FilterManager, FilterOutput, SubscriptionManager},
     receipts::build_signet_receipt,
@@ -12,6 +13,7 @@ use alloy::{
     primitives::{B256, U64},
     rpc::types::{FeeHistory, Filter, Log},
 };
+use futures_util::StreamExt;
 use reth::{
     core::primitives::SignerRecoverable,
     primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
@@ -106,11 +108,14 @@ where
         let cache = EthStateCache::spawn_with(provider.clone(), eth_config.cache, spawner.clone());
         let gas_oracle =
             GasPriceOracle::new(provider.clone(), eth_config.gas_oracle, cache.clone());
+
         let fee_history = FeeHistoryCache::new(eth_config.fee_history_cache);
 
+        // The fee task pre-calculates and caches common percentiles for the
+        // `eth_feeHistory` RPC method.
         let fee_task = fee_history_cache_new_blocks_task(
             fee_history.clone(),
-            provider.canonical_state_stream(),
+            provider.canonical_state_stream().map(strip_signet_system_txns),
             provider.clone(),
             cache.clone(),
         );
