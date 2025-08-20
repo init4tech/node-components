@@ -5,6 +5,7 @@ mod full;
 pub use full::RpcCtx;
 
 mod fee_hist;
+pub(crate) use fee_hist::strip_signet_system_txns;
 
 /// Type alias for EVMs using a [`StateProviderBox`] as the `DB` type for
 /// trevm.
