@@ -1,4 +1,5 @@
 use crate::{
+    RuRevmState,
     eth::EthError,
     interest::{ActiveFilter, FilterManager, FilterOutput, SubscriptionManager},
     receipts::build_signet_receipt,
@@ -32,12 +33,11 @@ use reth::{
         },
         types::{FilterBlockOption, FilteredParams},
     },
-    tasks::{TaskExecutor, TaskSpawner},
+    tasks::TaskSpawner,
 };
 use reth_chainspec::{BaseFeeParams, ChainSpec, ChainSpecProvider};
-use reth_node_api::{BlockBody, FullNodeComponents};
+use reth_node_api::BlockBody;
 use reth_rpc_eth_api::{RpcBlock, RpcConvert, RpcReceipt, RpcTransaction};
-use signet_evm::EvmNeedsTx;
 use signet_node_types::Pnt;
 use signet_tx_cache::client::TxCache;
 use signet_types::{MagicSig, constants::SignetSystemConstants};
@@ -48,137 +48,8 @@ use trevm::{
     revm::{context::CfgEnv, database::StateBuilder},
 };
 
-/// Type alias for EVMs using a [`StateProviderBox`] as the `DB` type for
-/// trevm.
-///
-/// [`StateProviderBox`]: reth::providers::StateProviderBox
-pub type RuRevmState = trevm::revm::database::State<
-    reth::revm::database::StateProviderDatabase<reth::providers::StateProviderBox>,
->;
-
 /// The maximum number of headers we read at once when handling a range filter.
 const MAX_HEADERS_RANGE: u64 = 1_000; // with ~530bytes per header this is ~500kb
-
-/// RPC context. Contains all necessary host and signet components for serving
-/// RPC requests.
-#[derive(Debug)]
-pub struct RpcCtx<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    inner: Arc<RpcCtxInner<Host, Signet>>,
-}
-
-impl<Host, Signet> RpcCtx<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    /// Create a new `RpcCtx`.
-    pub fn new<Tasks>(
-        host: Host,
-        constants: SignetSystemConstants,
-        factory: ProviderFactory<Signet>,
-        eth_config: EthConfig,
-        tx_cache: Option<TxCache>,
-        spawner: Tasks,
-    ) -> ProviderResult<Self>
-    where
-        Tasks: TaskSpawner + Clone + 'static,
-    {
-        RpcCtxInner::new(host, constants, factory, eth_config, tx_cache, spawner)
-            .map(|inner| Self { inner: Arc::new(inner) })
-    }
-}
-
-impl<Host, Signet> Clone for RpcCtx<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
-    }
-}
-
-impl<Host, Signet> core::ops::Deref for RpcCtx<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    type Target = RpcCtxInner<Host, Signet>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-/// Inner context for [`RpcCtx`].
-#[derive(Debug)]
-pub struct RpcCtxInner<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    host: Host,
-    signet: SignetCtx<Signet>,
-}
-
-impl<Host, Signet> RpcCtxInner<Host, Signet>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    /// Create a new `RpcCtxInner`.
-    pub fn new<Tasks>(
-        host: Host,
-        constants: SignetSystemConstants,
-        factory: ProviderFactory<Signet>,
-        eth_config: EthConfig,
-        tx_cache: Option<TxCache>,
-        spawner: Tasks,
-    ) -> ProviderResult<Self>
-    where
-        Tasks: TaskSpawner + Clone + 'static,
-    {
-        SignetCtx::new(constants, factory, eth_config, tx_cache, spawner)
-            .map(|signet| Self { host, signet })
-    }
-
-    pub const fn host(&self) -> &Host {
-        &self.host
-    }
-
-    pub const fn signet(&self) -> &SignetCtx<Signet> {
-        &self.signet
-    }
-
-    pub fn task_executor(&self) -> &TaskExecutor {
-        self.host.task_executor()
-    }
-
-    /// Create a trevm instance.
-    pub fn trevm(
-        &self,
-        block_id: BlockId,
-        block: &Header,
-    ) -> Result<EvmNeedsTx<RuRevmState>, EthApiError> {
-        // decrement if the id is pending, so that the state is on the latest block
-        let height = block.number() - block_id.is_pending() as u64;
-        let spec_id = self.signet.evm_spec_id(block);
-
-        let db = self.signet.state_provider_database(height)?;
-
-        let mut trevm = signet_evm::signet_evm(db, self.signet.constants.clone())
-            .fill_cfg(&self.signet)
-            .fill_block(block);
-
-        trevm.set_spec_id(spec_id);
-
-        Ok(trevm)
-    }
-}
 
 /// Signet context. This struct contains all the necessary components for
 /// accessing Signet node state, and serving RPC requests.
@@ -307,7 +178,7 @@ where
 
     /// Make a [`StateProviderDatabase`] from the read-write provider, suitable
     /// for use with Trevm.
-    fn state_provider_database(&self, height: u64) -> Result<RuRevmState, EthApiError> {
+    pub fn state_provider_database(&self, height: u64) -> Result<RuRevmState, EthApiError> {
         // Get the state provider for the block number
         let sp = self.provider.history_by_block_number(height)?;
 
