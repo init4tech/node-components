@@ -18,8 +18,8 @@ pub enum EthError {
 }
 
 impl EthError {
-    /// Turn into a string by value, allows for `.map_err(EthError::to_string)`
-    /// to be used.
+    /// Turn into a string by value, allows for
+    /// `.map_err(EthError::into_string)` to be used.
     pub fn into_string(self) -> String {
         ToString::to_string(&self)
     }
