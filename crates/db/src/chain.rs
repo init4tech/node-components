@@ -3,7 +3,14 @@ use reth::providers::Chain;
 use signet_zenith::{Passage, Transactor, Zenith};
 use std::collections::BTreeMap;
 
-/// The host extraction contents for a block.
+/// Host extraction contrents for a single block.
+///
+/// This is a container type for DB operations. It is held by the [`RuChain`]
+/// struct, and constructed during the [`RuWriter::get_extraction_results`]
+/// method.
+///
+/// [`RuWriter::get_extraction_results`]:
+/// crate::traits::RuWriter::get_extraction_results
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DbExtractionResults {
     /// The zenith header for the block.
@@ -16,7 +23,8 @@ pub struct DbExtractionResults {
     pub enter_tokens: Vec<Passage::EnterToken>,
 }
 
-/// Equivalent of [`Chain`] but also containing zenith events and information.
+/// Equivalent of [`Chain`] but also containing [`DbExtractionResults`] for
+/// each block.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuChain {
     /// Inner chain of RU blocks.

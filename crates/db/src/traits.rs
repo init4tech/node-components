@@ -1,19 +1,20 @@
-use crate::{DbExtractionResults, DbSignetEvent, RuChain};
+use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
 use alloy::primitives::{Address, B256, BlockNumber, U256};
 use itertools::Itertools;
 use reth::{
     primitives::Account,
-    providers::{DatabaseProviderRW, OriginalValuesKnown, ProviderResult, StorageLocation},
+    providers::{OriginalValuesKnown, ProviderResult, StorageLocation},
 };
 use reth_db::models::StoredBlockBodyIndices;
 use signet_evm::BlockResult;
-use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
+use signet_node_types::NodeTypesDbTrait;
 use signet_types::primitives::RecoveredBlock;
 use signet_zenith::{Passage, Transactor, Zenith};
 use std::{collections::BTreeMap, ops::RangeInclusive};
 use tracing::trace;
 
 /// Writer for [`Passage::Enter`] events.
+#[auto_impl::auto_impl(&, Arc, Box)]
 pub trait RuWriter {
     /// Get the last block number
     fn last_block_number(&self) -> ProviderResult<BlockNumber>;
@@ -254,7 +255,6 @@ pub trait RuWriter {
     #[allow(clippy::too_many_arguments)]
     fn append_host_block(
         &self,
-        host_height: u64,
         header: Option<Zenith::BlockHeader>,
         transacts: impl IntoIterator<Item = Transactor::Transact>,
         enters: impl IntoIterator<Item = Passage::Enter>,
@@ -293,7 +293,7 @@ pub trait RuWriter {
 }
 
 /// Extend the [`DatabaseProviderRW`] with a guarded commit function.
-pub trait DbProviderExt<Db>: Into<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>
+pub trait DbProviderExt<Db>: Into<SignetDbRw<Db>>
 where
     Db: NodeTypesDbTrait,
 {
@@ -302,18 +302,18 @@ where
     /// transaction is rolled back.
     fn update(
         self,
-        f: impl FnOnce(&mut DatabaseProviderRW<Db, SignetNodeTypes<Db>>) -> ProviderResult<()>,
+        f: impl FnOnce(&mut SignetDbRw<Db>) -> ProviderResult<()>,
     ) -> ProviderResult<()>;
 }
 
 impl<T, Db> DbProviderExt<Db> for T
 where
     Db: NodeTypesDbTrait,
-    T: Into<DatabaseProviderRW<Db, SignetNodeTypes<Db>>>,
+    T: Into<SignetDbRw<Db>>,
 {
     fn update(
         self,
-        f: impl FnOnce(&mut DatabaseProviderRW<Db, SignetNodeTypes<Db>>) -> ProviderResult<()>,
+        f: impl FnOnce(&mut SignetDbRw<Db>) -> ProviderResult<()>,
     ) -> ProviderResult<()> {
         let mut this = self.into();
         f(&mut this)?;
