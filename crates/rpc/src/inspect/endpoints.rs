@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     RpcCtx,
     inspect::db::{DbArgs, ListTableViewer},
-    utils::{await_jh_option_response, response_tri},
+    utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use reth::providers::providers::ProviderNodeTypes;
@@ -37,5 +37,5 @@ where
         ResponsePayload::Success(output)
     };
 
-    await_jh_option_response!(hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn_blocking(task))
 }

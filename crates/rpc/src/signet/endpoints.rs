@@ -1,7 +1,7 @@
 use crate::{
     ctx::RpcCtx,
     signet::error::SignetError,
-    utils::{await_jh_option, await_jh_option_response, response_tri},
+    utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use reth_node_api::FullNodeComponents;
@@ -32,7 +32,7 @@ where
         Ok(())
     };
 
-    await_jh_option!(hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
 pub(super) async fn send_order<Host, Signet>(
@@ -54,7 +54,7 @@ where
         Ok(())
     };
 
-    await_jh_option!(hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
 pub(super) async fn call_bundle<Host, Signet>(
@@ -102,5 +102,5 @@ where
         }
     };
 
-    await_jh_option_response!(hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn_blocking(task))
 }

@@ -54,10 +54,10 @@ mod config;
 pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
-pub use ctx::{RpcCtx, RuRevmState, SignetCtx};
+pub use ctx::{LoadState, RpcCtx, RuRevmState, SignetCtx};
 
 mod debug;
-pub use debug::{TraceError, debug};
+pub use debug::{DebugError, debug};
 
 mod eth;
 pub use eth::{CallErrorData, EthError, eth};

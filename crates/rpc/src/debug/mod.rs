@@ -2,7 +2,9 @@ mod endpoints;
 use endpoints::*;
 
 mod error;
-pub use error::TraceError;
+pub use error::DebugError;
+
+mod tracer;
 
 use crate::ctx::RpcCtx;
 use alloy::primitives::{B256, U64};
@@ -16,6 +18,7 @@ where
     Signet: Pnt,
 {
     ajj::Router::new()
-        .route("traceBlockByNumber", trace_block::<U64, _, _>)
-        .route("traceBlockByHash", trace_block::<B256, _, _>)
+        // .route("traceBlockByNumber", trace_block::<U64, _, _>)
+        // .route("traceBlockByHash", trace_block::<B256, _, _>)
+        .route("traceTransaction", trace_transaction)
 }
