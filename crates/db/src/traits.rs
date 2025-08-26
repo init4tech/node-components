@@ -31,12 +31,6 @@ pub trait RuWriter {
     /// Get the latest journal hash from the DB.
     fn latest_journal_hash(&self) -> ProviderResult<B256>;
 
-    /// Increase the balance of an account.
-    fn mint_eth(&self, address: Address, amount: U256) -> ProviderResult<Account>;
-
-    /// Decrease the balance of an account.
-    fn burn_eth(&self, address: Address, amount: U256) -> ProviderResult<Account>;
-
     /// Store a zenith header in the DB
     fn insert_signet_header(
         &self,

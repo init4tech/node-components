@@ -104,31 +104,6 @@ where
             .map_err(Into::into)
     }
 
-    /// Increase the balance of an account.
-    fn mint_eth(&self, address: Address, amount: U256) -> ProviderResult<Account> {
-        let mut account = self.basic_account(&address)?.unwrap_or_default();
-        account.balance = account.balance.saturating_add(amount);
-        self.tx_ref().put::<PlainAccountState>(address, account)?;
-        trace!(%address, balance = %account.balance, "minting ETH");
-        Ok(account)
-    }
-
-    /// Decrease the balance of an account.
-    fn burn_eth(&self, address: Address, amount: U256) -> ProviderResult<Account> {
-        let mut account = self.basic_account(&address)?.unwrap_or_default();
-        if amount > account.balance {
-            warn!(
-                balance = %account.balance,
-                amount = %amount,
-                "burning more than balance"
-            );
-        }
-        account.balance = account.balance.saturating_sub(amount);
-        self.tx_ref().put::<PlainAccountState>(address, account)?;
-        trace!(%address, balance = %account.balance, "burning ETH");
-        Ok(account)
-    }
-
     fn insert_signet_header(
         &self,
         header: Zenith::BlockHeader,
