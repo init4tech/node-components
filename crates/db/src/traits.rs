@@ -1,10 +1,7 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
-use alloy::primitives::{Address, B256, BlockNumber, U256};
+use alloy::primitives::{B256, BlockNumber};
 use itertools::Itertools;
-use reth::{
-    primitives::Account,
-    providers::{OriginalValuesKnown, ProviderResult, StorageLocation},
-};
+use reth::providers::{OriginalValuesKnown, ProviderResult, StorageLocation};
 use reth_db::models::StoredBlockBodyIndices;
 use signet_evm::BlockResult;
 use signet_node_types::NodeTypesDbTrait;

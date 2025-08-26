@@ -8,16 +8,14 @@ use alloy::{
     primitives::{Address, B256, BlockNumber, U256, map::HashSet},
 };
 use reth::{
-    primitives::{Account, StaticFileSegment},
+    primitives::StaticFileSegment,
     providers::{
-        AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain,
-        DBProvider, HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult,
-        StageCheckpointWriter, StateWriter, StaticFileProviderFactory, StaticFileWriter,
-        StorageLocation,
+        BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain, DBProvider,
+        HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult, StageCheckpointWriter,
+        StateWriter, StaticFileProviderFactory, StaticFileWriter, StorageLocation,
     },
 };
 use reth_db::{
-    PlainAccountState,
     cursor::{DbCursorRO, DbCursorRW},
     models::{BlockNumberAddress, StoredBlockBodyIndices},
     tables,
