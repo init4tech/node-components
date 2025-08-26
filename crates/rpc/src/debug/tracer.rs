@@ -1,3 +1,7 @@
+//! This file is largely adapted from reth: `crates/rpc/rpc/src/debug.rs`
+//!
+//! In particular the `debug_trace_call` function.
+
 use crate::DebugError;
 use reth::{
     revm::{DatabaseRef, context::ContextTr},
@@ -7,18 +11,21 @@ use reth::{
             TransactionInfo,
             trace::geth::{
                 FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
-                GethDebugTracerType, GethDebugTracingOptions, GethTrace,
+                GethDebugTracerType, GethDebugTracingOptions, GethTrace, NoopFrame,
             },
         },
     },
 };
-use revm_inspectors::tracing::{FourByteInspector, TracingInspector, TracingInspectorConfig};
+use revm_inspectors::tracing::{
+    FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
+};
 use signet_evm::{EvmNeedsTx, EvmReady};
 use trevm::{
     helpers::Ctx,
     revm::{Database, DatabaseCommit, Inspector},
 };
 
+/// Trace a transaction using the provided EVM and tracing options.
 pub(super) fn trace<Db, Insp>(
     trevm: EvmReady<Db, Insp>,
     config: &GethDebugTracingOptions,
@@ -28,7 +35,7 @@ where
     Db: Database + DatabaseCommit + DatabaseRef,
     Insp: Inspector<Ctx<Db>>,
 {
-    let Some(tracer) = &config.tracer else { todo!() };
+    let Some(tracer) = &config.tracer else { return Err(EthApiError::InvalidTracerConfig.into()) };
 
     let GethDebugTracerType::BuiltInTracer(built_in) = tracer else {
         return Err(EthApiError::Unsupported("JS tracer").into());
@@ -46,13 +53,15 @@ where
             trace_pre_state(&config.tracer_config, trevm).map_err(Into::into)
         }
         GethDebugBuiltInTracerType::NoopTracer => Ok((
-            Default::default(),
+            NoopFrame::default().into(),
             trevm
                 .run()
                 .map_err(|err| EthApiError::EvmCustom(err.into_error().to_string()))?
                 .accept_state(),
         )),
-        GethDebugBuiltInTracerType::MuxTracer => todo!(),
+        GethDebugBuiltInTracerType::MuxTracer => {
+            trace_mux(&config.tracer_config, trevm, tx_info).map_err(Into::into)
+        }
     }
 }
 
@@ -166,6 +175,39 @@ where
         .into_localized_transaction_traces(tx_info);
 
     Ok((frame.into(), trevm.accept_state()))
+}
+
+fn trace_mux<Db, Insp>(
+    tracer_config: &GethDebugTracerConfig,
+    trevm: EvmReady<Db, Insp>,
+    tx_info: TransactionInfo,
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit + DatabaseRef,
+    Insp: Inspector<Ctx<Db>>,
+{
+    let mux_config =
+        tracer_config.clone().into_mux_config().map_err(|_| EthApiError::InvalidTracerConfig)?;
+
+    let mut inspector = MuxInspector::try_from_config(mux_config)
+        .map_err(|err| EthApiError::EvmCustom(err.to_string()))?;
+
+    let trevm = trevm.try_with_inspector(&mut inspector, |trevm| trevm.run());
+    let trevm = trevm.map_err(|e| EthApiError::EvmCustom(e.into_error().to_string()))?;
+
+    // NB: Normally we would call `trevm.accept_state()` here, but we need the
+    // state after execution to be UNCOMMITED when we compute the prestate
+    // diffs.
+    let (result, mut trevm) = trevm.take_result_and_state();
+
+    let frame = inspector
+        .try_into_mux_frame(&result, trevm.inner_mut_unchecked().db_mut(), tx_info)
+        .map_err(|err| EthApiError::EvmCustom(err.to_string()))?;
+
+    // This is equivalent to calling `trevm.accept_state()`.
+    trevm.inner_mut_unchecked().db_mut().commit(result.state);
+
+    Ok((frame.into(), trevm))
 }
 
 // Some code in this file has been copied and modified from reth

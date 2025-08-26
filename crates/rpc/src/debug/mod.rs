@@ -18,7 +18,7 @@ where
     Signet: Pnt,
 {
     ajj::Router::new()
-        // .route("traceBlockByNumber", trace_block::<U64, _, _>)
-        // .route("traceBlockByHash", trace_block::<B256, _, _>)
+        .route("traceBlockByNumber", trace_block::<U64, _, _>)
+        .route("traceBlockByHash", trace_block::<B256, _, _>)
         .route("traceTransaction", trace_transaction)
 }
