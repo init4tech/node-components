@@ -102,9 +102,7 @@ where
             response_tri!(res.ok_or_else(|| EthApiError::HeaderNotFound(meta.block_hash.into())));
 
         // Load trevm at the start of the block (i.e. before any transactions are applied)
-        let mut trevm = response_tri!(
-            ctx.trevm(crate::LoadState::Before, block.header()).map_err(EthApiError::from)
-        );
+        let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
 
         // Apply all transactions in the block up to (but not including) the
         // target one
