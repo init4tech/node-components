@@ -16,6 +16,7 @@ use reth_node_api::FullNodeComponents;
 use signet_evm::EvmErrored;
 use signet_node_types::Pnt;
 use signet_types::MagicSig;
+use tracing::Instrument;
 
 /// Params for the `debug_traceBlockByNumber` and `debug_traceBlockByHash`
 /// endpoints.
@@ -38,6 +39,8 @@ where
     Signet: Pnt,
 {
     let id = id.into();
+    let span = tracing::debug_span!("traceBlock", ?id, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
+
     let fut = async move {
         // Fetch the block by ID
         let Some((hash, block)) = response_tri!(ctx.signet().raw_block(id).await) else {
@@ -46,13 +49,19 @@ where
             );
         };
 
+        tracing::debug!(number = block.number(), "Loaded block");
+
         // Allocate space for the frames
         let mut frames = Vec::with_capacity(block.transaction_count());
+
         // Instantiate the EVM with the block
         let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
 
         // Apply all transactions in the block up, tracing each one
         let opts = opts.unwrap_or_default();
+
+        tracing::trace!(?opts, "Tracing block transactions");
+
         let mut txns = block.body().transactions().enumerate().peekable();
         for (idx, tx) in txns
             .by_ref()
@@ -71,10 +80,13 @@ where
             let frame;
             (frame, trevm) = response_tri!(crate::debug::tracer::trace(t, &opts, tx_info));
             frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.hash()) });
+
+            tracing::debug!(tx_index = idx, tx_hash = ?tx.hash(), "Traced transaction");
         }
 
         ResponsePayload::Success(frames)
-    };
+    }
+    .instrument(span);
 
     await_handler!(@response_option hctx.spawn_blocking(fut))
 }
@@ -89,6 +101,8 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
+
     let fut = async move {
         // Load the transaction by hash
         let (tx, meta) = response_tri!(
@@ -96,10 +110,14 @@ where
                 .ok_or(EthApiError::TransactionNotFound)
         );
 
+        tracing::debug!("Loaded transaction metadata");
+
         // Load the block containing the transaction
         let res = response_tri!(ctx.signet().raw_block(meta.block_hash).await);
         let (_, block) =
             response_tri!(res.ok_or_else(|| EthApiError::HeaderNotFound(meta.block_hash.into())));
+
+        tracing::debug!(number = block.number(), "Loaded containing block");
 
         // Load trevm at the start of the block (i.e. before any transactions are applied)
         let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
@@ -133,7 +151,8 @@ where
             response_tri!(crate::debug::tracer::trace(trevm, &opts.unwrap_or_default(), tx_info)).0;
 
         ResponsePayload::Success(res)
-    };
+    }
+    .instrument(span);
 
     await_handler!(@response_option hctx.spawn_blocking(fut))
 }

@@ -7,7 +7,7 @@ pub use error::DebugError;
 mod tracer;
 
 use crate::ctx::RpcCtx;
-use alloy::primitives::{B256, U64};
+use alloy::{eips::BlockNumberOrTag, primitives::B256};
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
 
@@ -18,7 +18,7 @@ where
     Signet: Pnt,
 {
     ajj::Router::new()
-        .route("traceBlockByNumber", trace_block::<U64, _, _>)
+        .route("traceBlockByNumber", trace_block::<BlockNumberOrTag, _, _>)
         .route("traceBlockByHash", trace_block::<B256, _, _>)
         .route("traceTransaction", trace_transaction)
 }

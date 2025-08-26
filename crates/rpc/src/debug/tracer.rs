@@ -20,12 +20,14 @@ use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig,
 };
 use signet_evm::{EvmNeedsTx, EvmReady};
+use tracing::instrument;
 use trevm::{
     helpers::Ctx,
     revm::{Database, DatabaseCommit, Inspector},
 };
 
 /// Trace a transaction using the provided EVM and tracing options.
+#[instrument(skip(trevm, config, tx_info), fields(tx_hash = ?tx_info.hash))]
 pub(super) fn trace<Db, Insp>(
     trevm: EvmReady<Db, Insp>,
     config: &GethDebugTracingOptions,
