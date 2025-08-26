@@ -1,10 +1,10 @@
 use ajj::serde_json;
 use eyre::WrapErr;
-use reth::providers::ProviderFactory;
-use reth_db::{Database, TableViewer, table::Table};
+use reth::providers::{ProviderFactory, providers::ProviderNodeTypes};
+use reth_db::{Database, TableViewer, mdbx, table::Table};
 use reth_db_common::{DbTool, ListFilter};
 use signet_node_types::Pnt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tracing::instrument;
 
 /// Modeled on the `Command` struct from `reth/crates/cli/commands/src/db/list.rs`
@@ -95,7 +95,9 @@ impl<'a, 'b, N: Pnt> ListTableViewer<'a, 'b, N> {
     }
 }
 
-impl<N: Pnt> TableViewer<()> for ListTableViewer<'_, '_, N> {
+impl<N: Pnt + ProviderNodeTypes<DB = Arc<mdbx::DatabaseEnv>>> TableViewer<()>
+    for ListTableViewer<'_, '_, N>
+{
     type Error = eyre::Report;
 
     #[instrument(skip(self), err)]
