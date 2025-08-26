@@ -18,7 +18,11 @@ use trevm::{helpers::Ctx, revm::Inspector};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i8)]
 pub enum LoadState {
+    /// Load the state before the block's transactions (i.e. at the start of
+    /// the block).
     Before = -1,
+    /// Load the state after the block's transactions (i.e. at the end of the
+    /// block).
     After = 0,
 }
 

@@ -3,15 +3,19 @@ use crate::{
     utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
-use alloy::primitives::B256;
+use alloy::{consensus::BlockHeader, primitives::B256};
 use itertools::Itertools;
 use reth::rpc::{
     server_types::eth::EthApiError,
-    types::trace::geth::{GethDebugTracingOptions, GethTrace},
+    types::{
+        TransactionInfo,
+        trace::geth::{GethDebugTracingOptions, GethTrace},
+    },
 };
 use reth_node_api::FullNodeComponents;
 use signet_evm::EvmErrored;
 use signet_node_types::Pnt;
+use signet_types::MagicSig;
 
 // /// Params for the `debug_traceBlockByNumber` and `debug_traceBlockByHash`
 // /// endpoints.
@@ -60,11 +64,13 @@ where
     Signet: Pnt,
 {
     let fut = async move {
+        // Load the transaction by hash
         let (tx, meta) = response_tri!(
             response_tri!(ctx.signet().raw_transaction_by_hash(tx_hash))
                 .ok_or(EthApiError::TransactionNotFound)
         );
 
+        // Load the block containing the transaction
         let res = response_tri!(ctx.signet().raw_block(meta.block_hash).await);
         let (_, block) =
             response_tri!(res.ok_or_else(|| EthApiError::HeaderNotFound(meta.block_hash.into())));
@@ -74,17 +80,34 @@ where
             ctx.trevm(crate::LoadState::Before, block.header()).map_err(EthApiError::from)
         );
 
-        let mut txns = block.body().transactions().peekable();
+        // Apply all transactions in the block up to (but not including) the
+        // target one
+        // TODO: check if the tx signature is a magic sig, and abort if so.
+        let mut txns = block.body().transactions().enumerate().peekable();
+        for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.hash() != tx.hash()) {
+            if MagicSig::try_from_signature(tx.signature()).is_some() {
+                return ResponsePayload::internal_error_message(
+                    EthApiError::TransactionNotFound.to_string().into(),
+                );
+            }
 
-        for tx in txns.by_ref().peeking_take_while(|t| t.hash() != tx.hash()) {
-            // Apply all transactions before the target one
             trevm = response_tri!(trevm.run_tx(tx).map_err(EvmErrored::into_error)).accept_state();
         }
 
-        let tx = response_tri!(txns.next().ok_or(EthApiError::TransactionNotFound));
+        let (index, tx) = response_tri!(txns.next().ok_or(EthApiError::TransactionNotFound));
+
         let trevm = trevm.fill_tx(tx);
 
-        let res = response_tri!(crate::debug::tracer::trace(trevm, &opts.unwrap_or_default()));
+        let tx_info = TransactionInfo {
+            hash: Some(*tx.hash()),
+            index: Some(index as u64),
+            block_hash: Some(block.hash()),
+            block_number: Some(block.header().number()),
+            base_fee: block.header().base_fee_per_gas(),
+        };
+
+        let res =
+            response_tri!(crate::debug::tracer::trace(trevm, &opts.unwrap_or_default(), tx_info)).0;
 
         ResponsePayload::Success(res)
     };

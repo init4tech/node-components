@@ -1,22 +1,33 @@
 use crate::DebugError;
-use reth::rpc::{
-    server_types::eth::EthApiError,
-    types::trace::geth::{
-        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig, GethDebugTracerType,
-        GethDebugTracingOptions, GethTrace,
+use reth::{
+    revm::{DatabaseRef, context::ContextTr},
+    rpc::{
+        server_types::eth::EthApiError,
+        types::{
+            TransactionInfo,
+            trace::geth::{
+                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
+                GethDebugTracerType, GethDebugTracingOptions, GethTrace,
+            },
+        },
     },
 };
 use revm_inspectors::tracing::{FourByteInspector, TracingInspector, TracingInspectorConfig};
-use signet_evm::EvmReady;
+use signet_evm::{EvmNeedsTx, EvmReady};
 use trevm::{
     helpers::Ctx,
     revm::{Database, DatabaseCommit, Inspector},
 };
 
-pub(super) fn trace<Db: Database, Insp: Inspector<Ctx<Db>>>(
+pub(super) fn trace<Db, Insp>(
     trevm: EvmReady<Db, Insp>,
     config: &GethDebugTracingOptions,
-) -> Result<GethTrace, DebugError> {
+    tx_info: TransactionInfo,
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), DebugError>
+where
+    Db: Database + DatabaseCommit + DatabaseRef,
+    Insp: Inspector<Ctx<Db>>,
+{
     let Some(tracer) = &config.tracer else { todo!() };
 
     let GethDebugTracerType::BuiltInTracer(built_in) = tracer else {
@@ -28,33 +39,52 @@ pub(super) fn trace<Db: Database, Insp: Inspector<Ctx<Db>>>(
         GethDebugBuiltInTracerType::CallTracer => {
             trace_call(&config.tracer_config, trevm).map_err(Into::into)
         }
-        GethDebugBuiltInTracerType::FlatCallTracer => todo!(),
-        GethDebugBuiltInTracerType::PreStateTracer => todo!(),
-        GethDebugBuiltInTracerType::NoopTracer => todo!(),
+        GethDebugBuiltInTracerType::FlatCallTracer => {
+            trace_flat_call(&config.tracer_config, trevm, tx_info).map_err(Into::into)
+        }
+        GethDebugBuiltInTracerType::PreStateTracer => {
+            trace_pre_state(&config.tracer_config, trevm).map_err(Into::into)
+        }
+        GethDebugBuiltInTracerType::NoopTracer => Ok((
+            Default::default(),
+            trevm
+                .run()
+                .map_err(|err| EthApiError::EvmCustom(err.into_error().to_string()))?
+                .accept_state(),
+        )),
         GethDebugBuiltInTracerType::MuxTracer => todo!(),
     }
 }
 
-fn trace_four_byte<Db: Database + DatabaseCommit, Insp: Inspector<Ctx<Db>>>(
+/// Traces a call using [`GethDebugBuiltInTracerType::FourByteTracer`].
+fn trace_four_byte<Db, Insp>(
     trevm: EvmReady<Db, Insp>,
-) -> Result<GethTrace, EthApiError> {
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit,
+    Insp: Inspector<Ctx<Db>>,
+{
     let mut four_byte = FourByteInspector::default();
 
     let trevm = trevm.try_with_inspector(&mut four_byte, |trevm| trevm.run());
 
     let trevm = trevm.map_err(|e| EthApiError::EvmCustom(e.into_error().to_string()))?;
 
-    trevm.accept_state();
-
-    Ok(FourByteFrame::from(four_byte).into())
+    Ok((FourByteFrame::from(four_byte).into(), trevm.accept_state()))
 }
 
-fn trace_call<Db: Database, Insp: Inspector<Ctx<Db>>>(
+/// Traces a call using [`GethDebugBuiltInTracerType::CallTracer`].
+fn trace_call<Db, Insp>(
     tracer_config: &GethDebugTracerConfig,
     trevm: EvmReady<Db, Insp>,
-) -> Result<GethTrace, EthApiError> {
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit,
+    Insp: Inspector<Ctx<Db>>,
+{
     let call_config =
         tracer_config.clone().into_call_config().map_err(|_| EthApiError::InvalidTracerConfig)?;
+
     let mut inspector =
         TracingInspector::new(TracingInspectorConfig::from_geth_call_config(&call_config));
 
@@ -62,7 +92,80 @@ fn trace_call<Db: Database, Insp: Inspector<Ctx<Db>>>(
 
     let trevm = trevm.map_err(|e| EthApiError::EvmCustom(e.into_error().to_string()))?;
 
-    inspector.set_transaction_gas_limit(trevm.gas_limit());
+    let frame = inspector
+        .with_transaction_gas_limit(trevm.gas_limit())
+        .into_geth_builder()
+        .geth_call_traces(call_config, trevm.gas_used());
+
+    Ok((frame.into(), trevm.accept_state()))
+}
+
+/// Traces a call using [`GethDebugBuiltInTracerType::PreStateTracer`]
+fn trace_pre_state<Db, Insp>(
+    tracer_config: &GethDebugTracerConfig,
+    trevm: EvmReady<Db, Insp>,
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit + DatabaseRef,
+    Insp: Inspector<Ctx<Db>>,
+{
+    let prestate_config = tracer_config
+        .clone()
+        .into_pre_state_config()
+        .map_err(|_| EthApiError::InvalidTracerConfig)?;
+
+    let mut inspector =
+        TracingInspector::new(TracingInspectorConfig::from_geth_prestate_config(&prestate_config));
+
+    let trevm = trevm.try_with_inspector(&mut inspector, |trevm| trevm.run());
+
+    let trevm = trevm.map_err(|e| EthApiError::EvmCustom(e.into_error().to_string()))?;
+    let gas_limit = trevm.gas_limit();
+
+    // NB: Normally we would call `trevm.accept_state()` here, but we need the
+    // state after execution to be UNCOMMITED when we compute the prestate
+    // diffs.
+    let (result, mut trevm) = trevm.take_result_and_state();
+
+    let frame = inspector
+        .with_transaction_gas_limit(gas_limit)
+        .into_geth_builder()
+        .geth_prestate_traces(&result, &prestate_config, trevm.inner_mut_unchecked().db_mut())
+        .map_err(|err| EthApiError::EvmCustom(err.to_string()))?;
+
+    // This is equivalent to calling `trevm.accept_state()`.
+    trevm.inner_mut_unchecked().db_mut().commit(result.state);
+
+    Ok((frame.into(), trevm))
+}
+
+fn trace_flat_call<Db, Insp>(
+    tracer_config: &GethDebugTracerConfig,
+    trevm: EvmReady<Db, Insp>,
+    tx_info: TransactionInfo,
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit,
+    Insp: Inspector<Ctx<Db>>,
+{
+    let flat_call_config = tracer_config
+        .clone()
+        .into_flat_call_config()
+        .map_err(|_| EthApiError::InvalidTracerConfig)?;
+
+    let mut inspector =
+        TracingInspector::new(TracingInspectorConfig::from_flat_call_config(&flat_call_config));
+
+    let trevm = trevm.try_with_inspector(&mut inspector, |trevm| trevm.run());
+
+    let trevm = trevm.map_err(|e| EthApiError::EvmCustom(e.into_error().to_string()))?;
+
+    let frame = inspector
+        .with_transaction_gas_limit(trevm.gas_limit())
+        .into_parity_builder()
+        .into_localized_transaction_traces(tx_info);
+
+    Ok((frame.into(), trevm.accept_state()))
 }
 
 // Some code in this file has been copied and modified from reth
