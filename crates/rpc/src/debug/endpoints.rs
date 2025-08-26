@@ -38,6 +38,12 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    let _permit = response_tri!(
+        ctx.acquire_tracing_permit()
+            .await
+            .map_err(|_| DebugError::rpc_error("Failed to acquire tracing permit".into()))
+    );
+
     let id = id.into();
     let span = tracing::debug_span!("traceBlock", ?id, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
 
@@ -101,6 +107,12 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    let _permit = response_tri!(
+        ctx.acquire_tracing_permit()
+            .await
+            .map_err(|_| DebugError::rpc_error("Failed to acquire tracing permit".into()))
+    );
+
     let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
 
     let fut = async move {

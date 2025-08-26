@@ -12,6 +12,7 @@ use signet_node_types::Pnt;
 use signet_tx_cache::client::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
 use trevm::{helpers::Ctx, revm::Inspector};
 
 /// State location when instantiating an EVM instance.
@@ -137,6 +138,12 @@ where
     }
 }
 
+/// Shared context between all RPC handlers.
+#[derive(Debug)]
+struct SharedContext {
+    tracing_semaphores: Arc<Semaphore>,
+}
+
 /// Inner context for [`RpcCtx`].
 #[derive(Debug)]
 pub struct RpcCtxInner<Host, Signet>
@@ -146,6 +153,8 @@ where
 {
     host: Host,
     signet: SignetCtx<Signet>,
+
+    shared: SharedContext,
 }
 
 impl<Host, Signet> RpcCtxInner<Host, Signet>
@@ -177,8 +186,20 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        SignetCtx::new(constants, factory, provider, eth_config, tx_cache, spawner)
-            .map(|signet| Self { host, signet })
+        SignetCtx::new(constants, factory, provider, eth_config, tx_cache, spawner).map(|signet| {
+            Self {
+                host,
+                signet,
+                shared: SharedContext {
+                    tracing_semaphores: Semaphore::new(eth_config.max_tracing_requests).into(),
+                },
+            }
+        })
+    }
+
+    /// Acquire a permit for tracing.
+    pub async fn acquire_tracing_permit(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
+        self.shared.tracing_semaphores.clone().acquire_owned().await
     }
 
     pub const fn host(&self) -> &Host {
