@@ -91,7 +91,10 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new().nest("eth", eth::<Host, Signet>()).nest("signet", signet::<Host, Signet>())
+    ajj::Router::new()
+        .nest("eth", eth::<Host, Signet>())
+        .nest("signet", signet::<Host, Signet>())
+        .nest("debug", debug::<Host, Signet>())
 }
 
 /// Create a new hazmat router that exposes the `inspect` API.
