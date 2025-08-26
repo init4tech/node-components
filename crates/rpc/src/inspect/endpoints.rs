@@ -1,9 +1,13 @@
+use std::sync::Arc;
+
 use crate::{
     RpcCtx,
     inspect::db::{DbArgs, ListTableViewer},
     utils::{await_jh_option_response, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
+use reth::providers::providers::ProviderNodeTypes;
+use reth_db::mdbx;
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
 
@@ -15,7 +19,7 @@ pub(super) async fn db<Host, Signet>(
 ) -> ResponsePayload<Box<serde_json::value::RawValue>, String>
 where
     Host: FullNodeComponents,
-    Signet: Pnt,
+    Signet: Pnt + ProviderNodeTypes<DB = Arc<mdbx::DatabaseEnv>>,
 {
     let task = async move {
         let table: reth_db::Tables = response_tri!(args.table(), "invalid table name");

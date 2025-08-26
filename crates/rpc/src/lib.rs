@@ -50,6 +50,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod config;
+
 pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
@@ -75,8 +76,11 @@ pub mod utils;
 pub use ::ajj;
 
 use ajj::Router;
+use reth::providers::providers::ProviderNodeTypes;
+use reth_db::mdbx::DatabaseEnv;
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
+use std::sync::Arc;
 
 /// Create a new router with the given host and signet types.
 pub fn router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
@@ -91,7 +95,7 @@ where
 pub fn hazmat_router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
 where
     Host: FullNodeComponents,
-    Signet: Pnt,
+    Signet: Pnt + ProviderNodeTypes<DB = Arc<DatabaseEnv>>,
 {
     ajj::Router::new().nest("inspect", inspect::inspect::<Host, Signet>())
 }
