@@ -54,7 +54,10 @@ mod config;
 pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
-pub use ctx::{RpcCtx, RuRevmState, SignetCtx};
+pub use ctx::{LoadState, RpcCtx, RuRevmState, SignetCtx};
+
+mod debug;
+pub use debug::{DebugError, debug};
 
 mod eth;
 pub use eth::{CallErrorData, EthError, eth};
@@ -88,7 +91,10 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new().nest("eth", eth::<Host, Signet>()).nest("signet", signet::<Host, Signet>())
+    ajj::Router::new()
+        .nest("eth", eth::<Host, Signet>())
+        .nest("signet", signet::<Host, Signet>())
+        .nest("debug", debug::<Host, Signet>())
 }
 
 /// Create a new hazmat router that exposes the `inspect` API.

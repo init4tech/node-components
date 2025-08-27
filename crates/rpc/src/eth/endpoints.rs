@@ -3,7 +3,7 @@ use crate::{
     eth::{CallErrorData, EthError},
     interest::{FilterOutput, InterestKind},
     receipts::build_signet_receipt,
-    utils::{await_jh_option, await_jh_option_response, response_tri},
+    utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
@@ -143,7 +143,7 @@ where
     let id = t.into();
     let task = async move { ctx.signet().block(id, full).await.map_err(|e| e.to_string()) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn block_tx_count<T, Host, Signet>(
@@ -159,7 +159,7 @@ where
     let id = t.into();
     let task = async move { ctx.signet().tx_count(id).await.map_err(|e| e.to_string()) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn block_receipts<Host, Signet>(
@@ -210,7 +210,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn raw_transaction_by_hash<Host, Signet>(
@@ -230,7 +230,7 @@ where
             .map(|tx| tx.as_ref().map(Encodable2718::encoded_2718).map(Into::into))
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn transaction_by_hash<Host, Signet>(
@@ -244,7 +244,7 @@ where
 {
     let task = async move { ctx.signet().rpc_transaction_by_hash(hash).map_err(|e| e.to_string()) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn raw_transaction_by_block_and_index<T, Host, Signet>(
@@ -266,7 +266,7 @@ where
         Ok(block.body().transactions.get(index.to::<usize>()).map(|tx| tx.encoded_2718().into()))
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn transaction_by_block_and_index<T, Host, Signet>(
@@ -288,7 +288,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn transaction_receipt<Host, Signet>(
@@ -303,7 +303,7 @@ where
     let task =
         async move { ctx.signet().rpc_receipt_by_hash(hash).await.map_err(|e| e.to_string()) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn balance<Host, Signet>(
@@ -322,7 +322,7 @@ where
         Ok(bal.unwrap_or_default())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn storage_at<Host, Signet>(
@@ -341,7 +341,7 @@ where
         Ok(val.unwrap_or_default().to_be_bytes().into())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn addr_tx_count<Host, Signet>(
@@ -360,7 +360,7 @@ where
         Ok(U64::from(count.unwrap_or_default()))
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn code_at<Host, Signet>(
@@ -379,7 +379,7 @@ where
         Ok(code.unwrap_or_default().original_bytes())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn header_by<T, Host, Signet>(
@@ -394,7 +394,7 @@ where
 {
     let id = t.into();
 
-    await_jh_option!(hctx.spawn_blocking_with_ctx(|hctx| async move {
+    await_handler!(@option hctx.spawn_blocking_with_ctx(|hctx| async move {
         Ok(block(hctx, BlockParams(id, None), ctx).await?.map(|block| block.header))
     }))
 }
@@ -448,7 +448,7 @@ where
         };
 
         // Set up trevm
-        let trevm = response_tri!(ctx.trevm(id, &block_cfg));
+        let trevm = response_tri!(ctx.trevm(id.into(), &block_cfg));
 
         let mut trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())
@@ -471,7 +471,7 @@ where
     }
     .instrument(span);
 
-    await_jh_option_response!(hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn call<Host, Signet>(
@@ -490,7 +490,7 @@ where
     let max_gas = ctx.signet().config().rpc_gas_cap;
     normalize_gas_stateless(&mut params.0, max_gas);
 
-    await_jh_option_response!(hctx.spawn_with_ctx(|hctx| async move {
+    await_handler!(@response_option hctx.spawn_with_ctx(|hctx| async move {
         let res = match run_call(hctx, params, ctx).await {
             ResponsePayload::Success(res) => res,
             ResponsePayload::Failure(err) => return ResponsePayload::Failure(err),
@@ -554,7 +554,7 @@ where
             }
         };
 
-        let trevm = response_tri!(ctx.trevm(id, &block_cfg));
+        let trevm = response_tri!(ctx.trevm(id.into(), &block_cfg));
 
         // Apply state and block overrides (state overrides are fallible as
         // they require DB access)
@@ -587,7 +587,7 @@ where
     }
     .instrument(span);
 
-    await_jh_option_response!(hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn gas_price<Host, Signet>(
@@ -609,7 +609,7 @@ where
         Ok(suggested + U256::from(base_fee))
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn max_priority_fee_per_gas<Host, Signet>(
@@ -623,7 +623,7 @@ where
     let task =
         async move { ctx.signet().gas_oracle().suggest_tip_cap().await.map_err(|e| e.to_string()) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn fee_history<Host, Signet>(
@@ -642,7 +642,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn send_raw_transaction<Host, Signet>(
@@ -672,7 +672,7 @@ where
         Ok(hash)
     };
 
-    await_jh_option!(hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
 pub(super) async fn get_logs<Host, Signet>(
@@ -686,7 +686,7 @@ where
 {
     let task = async move { ctx.signet().logs(&filter).await.map_err(EthError::into_string) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn new_filter<Host, Signet>(
@@ -701,7 +701,7 @@ where
     let task =
         async move { ctx.signet().install_log_filter(filter).map_err(EthError::into_string) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn new_block_filter<Host, Signet>(
@@ -714,7 +714,7 @@ where
 {
     let task = async move { ctx.signet().install_block_filter().map_err(EthError::into_string) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn uninstall_filter<Host, Signet>(
@@ -728,7 +728,7 @@ where
 {
     let task = async move { Ok(ctx.signet().uninstall_filter(id)) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn get_filter_changes<Host, Signet>(
@@ -742,7 +742,7 @@ where
 {
     let task = async move { ctx.signet().filter_changes(id).await.map_err(EthError::into_string) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(super) async fn subscribe<Host, Signet>(
@@ -763,7 +763,7 @@ where
             .ok_or_else(|| "pubsub not enabled".to_string())
     };
 
-    await_jh_option!(hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
 pub(super) async fn unsubscribe<Host, Signet>(
@@ -777,5 +777,5 @@ where
 {
     let task = async move { Ok(ctx.signet().subscriptions().unsubscribe(id)) };
 
-    await_jh_option!(hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn_blocking(task))
 }

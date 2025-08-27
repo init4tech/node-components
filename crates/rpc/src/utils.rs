@@ -11,18 +11,33 @@ use tokio::task::JoinHandle;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::error;
 
-macro_rules! await_jh_option {
+macro_rules! await_handler {
     ($h:expr) => {
+        match $h.await {
+            Ok(res) => res,
+            Err(_) => return Err("task panicked or cancelled".to_string()),
+        }
+    };
+
+    (@option $h:expr) => {
         match $h.await {
             Ok(Some(res)) => res,
             _ => return Err("task panicked or cancelled".to_string()),
         }
     };
-}
-pub(crate) use await_jh_option;
 
-macro_rules! await_jh_option_response {
-    ($h:expr) => {
+    (@response $h:expr) => {
+        match $h.await {
+            Ok(res) => res,
+            _ => {
+                return ResponsePayload::internal_error_message(std::borrow::Cow::Borrowed(
+                    "task panicked or cancelled",
+                ))
+            }
+        }
+    };
+
+    (@response_option $h:expr) => {
         match $h.await {
             Ok(Some(res)) => res,
             _ => {
@@ -33,7 +48,8 @@ macro_rules! await_jh_option_response {
         }
     };
 }
-pub(crate) use await_jh_option_response;
+
+pub(crate) use await_handler;
 
 macro_rules! response_tri {
     ($h:expr) => {
