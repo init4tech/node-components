@@ -39,20 +39,17 @@ fn test_insert_signet_block() {
         block: SealedBlock {
             header: SealedHeader::new(alloy::consensus::Header::default()),
             body: BlockBody {
-                transactions: std::iter::repeat(
-                    TxEnvelope::Eip1559(Signed::new_unhashed(
+                transactions: std::iter::repeat_n(TxEnvelope::Eip1559(Signed::new_unhashed(
                         TxEip1559::default(),
                         Signature::test_signature(),
                     ))
-                    .into(),
-                )
-                .take(10)
+                    .into(), 10)
                 .collect(),
                 ommers: vec![],
                 withdrawals: None,
             },
         },
-        senders: std::iter::repeat(Address::repeat_byte(0x33)).take(10).collect(),
+        senders: std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect(),
     };
 
     writer
