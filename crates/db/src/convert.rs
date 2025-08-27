@@ -1,7 +1,8 @@
 //! Type conversion traits and implementations for converting between Reth, Alloy, and Signet types.
 //!
-//! This module provides a set of conversion traits that enable seamless interoperability
-//! between different type systems used in the Ethereum ecosystem:
+//! This module provides a set of conversion traits that enable seamless
+//! interoperability between different type systems used in the Ethereum
+//! ecosystem:
 //!
 //! - **Reth types**: Core primitives from the Reth Ethereum client
 //! - **Alloy types**: Modern Ethereum types from the Alloy framework

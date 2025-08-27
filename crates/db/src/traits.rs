@@ -1,10 +1,7 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
-use alloy::primitives::{Address, B256, BlockNumber, U256};
+use alloy::primitives::{B256, BlockNumber};
 use itertools::Itertools;
-use reth::{
-    primitives::Account,
-    providers::{OriginalValuesKnown, ProviderResult, StorageLocation},
-};
+use reth::providers::{OriginalValuesKnown, ProviderResult, StorageLocation};
 use reth_db::models::StoredBlockBodyIndices;
 use signet_evm::BlockResult;
 use signet_node_types::NodeTypesDbTrait;
@@ -30,12 +27,6 @@ pub trait RuWriter {
 
     /// Get the latest journal hash from the DB.
     fn latest_journal_hash(&self) -> ProviderResult<B256>;
-
-    /// Increase the balance of an account.
-    fn mint_eth(&self, address: Address, amount: U256) -> ProviderResult<Account>;
-
-    /// Decrease the balance of an account.
-    fn burn_eth(&self, address: Address, amount: U256) -> ProviderResult<Account>;
 
     /// Store a zenith header in the DB
     fn insert_signet_header(
