@@ -93,9 +93,21 @@ where
 {
     /// Instantiate a new `SignetCtx`, spawning necessary tasks to keep the
     /// relevant caches up to date.
+    ///
+    /// ## WARNING
+    ///
+    /// The [`BlockchainProvider`] passed in MUST be receiving updates from the
+    /// node wrt canonical chain changes. Some task MUST be calling relevant
+    /// [`CanonChainTracker`] methods on a clone of this [`BlockchainProvider`],
+    ///
+    /// If this is not correctly set up, [`BlockId`] resolution for `latest`,
+    /// `safe,` finalized, etc will not work correctly.
+    ///
+    /// [`CanonChainTracker`]: reth::providers::CanonChainTracker
     pub fn new<Tasks>(
         constants: SignetSystemConstants,
         factory: ProviderFactory<Inner>,
+        provider: BlockchainProvider<Inner>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
@@ -103,8 +115,6 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        let provider = BlockchainProvider::new(factory.clone())?;
-
         let cache = EthStateCache::spawn_with(provider.clone(), eth_config.cache, spawner.clone());
         let gas_oracle =
             GasPriceOracle::new(provider.clone(), eth_config.gas_oracle, cache.clone());
