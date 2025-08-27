@@ -19,8 +19,8 @@ use reth::{
     primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
-        ProviderBlock, ProviderError, ProviderFactory, ProviderReceipt, ProviderResult,
-        ReceiptProvider, StateProviderFactory, TransactionsProvider, providers::BlockchainProvider,
+        ProviderBlock, ProviderError, ProviderReceipt, ProviderResult, ReceiptProvider,
+        StateProviderFactory, TransactionsProvider, providers::BlockchainProvider,
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
     rpc::{
@@ -65,7 +65,6 @@ where
     eth_config: EthConfig,
 
     // State stuff
-    factory: ProviderFactory<Inner>,
     provider: BlockchainProvider<Inner>,
     cache: EthStateCache<
         ProviderBlock<BlockchainProvider<Inner>>,
@@ -106,7 +105,6 @@ where
     /// [`CanonChainTracker`]: reth::providers::CanonChainTracker
     pub fn new<Tasks>(
         constants: SignetSystemConstants,
-        factory: ProviderFactory<Inner>,
         provider: BlockchainProvider<Inner>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
@@ -138,7 +136,6 @@ where
 
         Ok(Self {
             constants,
-            factory,
             provider,
             eth_config,
             cache,
@@ -154,11 +151,6 @@ where
     /// Access the signet constants
     pub const fn constants(&self) -> &SignetSystemConstants {
         &self.constants
-    }
-
-    /// Access the signet [`ProviderFactory`].
-    pub const fn factory(&self) -> &ProviderFactory<Inner> {
-        &self.factory
     }
 
     /// Access the signet DB

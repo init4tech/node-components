@@ -79,7 +79,7 @@ pub mod utils;
 pub use ::ajj;
 
 use ajj::Router;
-use reth::providers::providers::ProviderNodeTypes;
+use reth::providers::{ProviderFactory, providers::ProviderNodeTypes};
 use reth_db::mdbx::DatabaseEnv;
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
@@ -98,10 +98,9 @@ where
 }
 
 /// Create a new hazmat router that exposes the `inspect` API.
-pub fn hazmat_router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
+pub fn hazmat_router<Signet>() -> Router<ProviderFactory<Signet>>
 where
-    Host: FullNodeComponents,
     Signet: Pnt + ProviderNodeTypes<DB = Arc<DatabaseEnv>>,
 {
-    ajj::Router::new().nest("inspect", inspect::inspect::<Host, Signet>())
+    ajj::Router::new().nest("inspect", inspect::inspect::<Signet>())
 }
