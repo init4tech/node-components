@@ -4,7 +4,7 @@ use alloy::{
     eips::BlockId,
 };
 use reth::{
-    providers::{ProviderFactory, ProviderResult},
+    providers::{ProviderFactory, ProviderResult, providers::BlockchainProvider},
     rpc::server_types::eth::{EthApiError, EthConfig},
     tasks::{TaskExecutor, TaskSpawner},
 };
@@ -32,10 +32,22 @@ where
     Signet: Pnt,
 {
     /// Create a new `RpcCtx`.
+    ///
+    /// ## WARNING
+    ///
+    /// The [`BlockchainProvider`] passed in MUST be receiving updates from the
+    /// node wrt canonical chain changes. Some task MUST be calling relevant
+    /// [`CanonChainTracker`] methods on a clone of this [`BlockchainProvider`],
+    ///
+    /// If this is not correctly set up, [`BlockId`] resolution for `latest`,
+    /// `safe,` finalized, etc will not work correctly.
+    ///
+    /// [`CanonChainTracker`]: reth::providers::CanonChainTracker
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
         factory: ProviderFactory<Signet>,
+        provider: BlockchainProvider<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
@@ -43,7 +55,7 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        RpcCtxInner::new(host, constants, factory, eth_config, tx_cache, spawner)
+        RpcCtxInner::new(host, constants, factory, provider, eth_config, tx_cache, spawner)
             .map(|inner| Self { inner: Arc::new(inner) })
     }
 }
@@ -87,10 +99,22 @@ where
     Signet: Pnt,
 {
     /// Create a new `RpcCtxInner`.
+    ///
+    /// ## WARNING
+    ///
+    /// The [`BlockchainProvider`] passed in MUST be receiving updates from the
+    /// node wrt canonical chain changes. Some task MUST be calling relevant
+    /// [`CanonChainTracker`] methods on a clone of this [`BlockchainProvider`],
+    ///
+    /// If this is not correctly set up, [`BlockId`] resolution for `latest`,
+    /// `safe,` finalized, etc will not work correctly.
+    ///
+    /// [`CanonChainTracker`]: reth::providers::CanonChainTracker
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
         factory: ProviderFactory<Signet>,
+        provider: BlockchainProvider<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
         spawner: Tasks,
@@ -98,7 +122,7 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        SignetCtx::new(constants, factory, eth_config, tx_cache, spawner)
+        SignetCtx::new(constants, factory, provider, eth_config, tx_cache, spawner)
             .map(|signet| Self { host, signet })
     }
 
