@@ -1,7 +1,7 @@
 use crate::{RuRevmState, SignetCtx};
 use alloy::{consensus::Header, eips::BlockId};
 use reth::{
-    providers::{ProviderFactory, ProviderResult, providers::BlockchainProvider},
+    providers::{ProviderResult, providers::BlockchainProvider},
     rpc::server_types::eth::{EthApiError, EthConfig},
     rpc::types::BlockNumberOrTag,
     tasks::{TaskExecutor, TaskSpawner},
@@ -102,7 +102,6 @@ where
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
-        factory: ProviderFactory<Signet>,
         provider: BlockchainProvider<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
@@ -111,7 +110,7 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        RpcCtxInner::new(host, constants, factory, provider, eth_config, tx_cache, spawner)
+        RpcCtxInner::new(host, constants, provider, eth_config, tx_cache, spawner)
             .map(|inner| Self { inner: Arc::new(inner) })
     }
 }
@@ -177,7 +176,6 @@ where
     pub fn new<Tasks>(
         host: Host,
         constants: SignetSystemConstants,
-        factory: ProviderFactory<Signet>,
         provider: BlockchainProvider<Signet>,
         eth_config: EthConfig,
         tx_cache: Option<TxCache>,
@@ -186,14 +184,12 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        SignetCtx::new(constants, factory, provider, eth_config, tx_cache, spawner).map(|signet| {
-            Self {
-                host,
-                signet,
-                shared: SharedContext {
-                    tracing_semaphores: Semaphore::new(eth_config.max_tracing_requests).into(),
-                },
-            }
+        SignetCtx::new(constants, provider, eth_config, tx_cache, spawner).map(|signet| Self {
+            host,
+            signet,
+            shared: SharedContext {
+                tracing_semaphores: Semaphore::new(eth_config.max_tracing_requests).into(),
+            },
         })
     }
 
