@@ -19,8 +19,8 @@ use reth::{
     primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
-        ProviderBlock, ProviderError, ProviderReceipt, ProviderResult, ReceiptProvider,
-        StateProviderFactory, TransactionsProvider, providers::BlockchainProvider,
+        ProviderError, ProviderResult, ReceiptProvider, StateProviderFactory, TransactionsProvider,
+        providers::BlockchainProvider,
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
     rpc::{
@@ -32,6 +32,7 @@ use reth::{
                 calculate_reward_percentiles_for_block, fee_history_cache_new_blocks_task,
             },
             logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
+            receipt::EthReceiptConverter,
         },
         types::{FilterBlockOption, FilteredParams},
     },
@@ -66,10 +67,7 @@ where
 
     // State stuff
     provider: BlockchainProvider<Inner>,
-    cache: EthStateCache<
-        ProviderBlock<BlockchainProvider<Inner>>,
-        ProviderReceipt<BlockchainProvider<Inner>>,
-    >,
+    cache: EthStateCache<Inner::Primitives>,
 
     // Gas stuff
     gas_oracle: GasPriceOracle<BlockchainProvider<Inner>>,
@@ -225,8 +223,8 @@ where
     }
 
     /// Create a transaction response builder for the RPC API.
-    pub const fn tx_resp_builder(&self) -> EthRpcConverter {
-        EthRpcConverter::new()
+    pub fn rpc_converter(&self) -> EthRpcConverter<ChainSpec> {
+        EthRpcConverter::new(EthReceiptConverter::new(self.chain_spec()))
     }
 
     /// Get the block for a given block, formatting the block for
@@ -246,9 +244,11 @@ where
 
         (*block)
             .clone()
-            .into_rpc_block(full.unwrap_or_default().into(), |tx, tx_info| {
-                self.tx_resp_builder().fill(tx, tx_info)
-            })
+            .into_rpc_block(
+                full.unwrap_or_default().into(),
+                |tx, tx_info| self.rpc_converter().fill(tx, tx_info),
+                |header, rlp_len| self.rpc_converter().convert_header(header, rlp_len),
+            )
             .map(Some)
     }
 
