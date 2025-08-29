@@ -205,48 +205,51 @@ where
     }
 
     /// Returns the blob from the pylon blob indexer.
-    #[instrument(skip_all, err)]
+    #[instrument(skip_all)]
     async fn get_blobs_from_pylon(&self, tx: TxHash) -> FetchResult<Blobs> {
-        if let Some(url) = &self.pylon_url {
-            let url = url.join(&format!("sidecar/{tx}"))?;
+        let Some(url) = &self.pylon_url else {
+            return Err(BlobFetcherError::Unrecoverable(
+                UnrecoverableBlobError::ConsensusClientUrlNotSet,
+            ));
+        };
+        let url = url.join(&format!("sidecar/{tx}"))?;
 
-            let response = self.client.get(url).header("accept", "application/json").send().await?;
-            response
-                .json::<Arc<BlobTransactionSidecarVariant>>()
-                .await
-                .map(Into::into)
-                .map_err(Into::into)
-        } else {
-            Err(BlobFetcherError::Unrecoverable(UnrecoverableBlobError::ConsensusClientUrlNotSet))
-        }
+        let response = self.client.get(url).header("accept", "application/json").send().await?;
+        response
+            .json::<Arc<BlobTransactionSidecarVariant>>()
+            .await
+            .map(Into::into)
+            .map_err(Into::into)
     }
 
     /// Queries the connected consensus client for the blob transaction
-    #[instrument(skip_all, err)]
+    #[instrument(skip_all)]
     async fn get_blobs_from_cl(
         &self,
         slot: usize,
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
-        if let Some(url) = &self.cl_url {
-            let url = url.join(&format!("/eth/v1/beacon/blob_sidecars/{slot}")).map_err(|err| {
-                BlobFetcherError::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
-            })?;
+        let Some(url) = &self.cl_url else {
+            return Err(BlobFetcherError::Unrecoverable(
+                UnrecoverableBlobError::ConsensusClientUrlNotSet,
+            ));
+        };
 
-            let response = self.client.get(url).header("accept", "application/json").send().await?;
+        let url = url.join(&format!("/eth/v1/beacon/blob_sidecars/{slot}")).map_err(|err| {
+            BlobFetcherError::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
+        })?;
 
-            let response: BeaconBlobBundle = response.json().await?;
+        let response = self.client.get(url).header("accept", "application/json").send().await?;
 
-            extract_blobs_from_bundle(response, versioned_hashes)
-        } else {
-            Err(BlobFetcherError::Unrecoverable(UnrecoverableBlobError::ConsensusClientUrlNotSet))
-        }
+        let response: BeaconBlobBundle = response.json().await?;
+
+        extract_blobs_from_bundle(response, versioned_hashes)
     }
 
     /// Get the Zenith block from the extracted event.
     /// For 4844 transactions, this fetches the transaction's blobs and decodes them.
     /// For any other type of transactions, it returns a Non4844Transaction error.
-    #[tracing::instrument(skip(self, extract), fields(eip4844 = extract.is_eip4844(), tx = %extract.tx_hash(), url = self.explorer.baseurl()))]
+    #[tracing::instrument(skip(self, extract), fields(tx = %extract.tx_hash(), url = self.explorer.baseurl()))]
     async fn get_signet_block(
         &self,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
