@@ -38,6 +38,8 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));
+
     let _permit = response_tri!(
         ctx.acquire_tracing_permit()
             .await
@@ -45,7 +47,7 @@ where
     );
 
     let id = id.into();
-    let span = tracing::debug_span!("traceBlock", ?id, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
+    let span = tracing::debug_span!("traceBlock", ?id, tracer = ?opts.tracer.as_ref());
 
     let fut = async move {
         // Fetch the block by ID
@@ -64,8 +66,6 @@ where
         let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
 
         // Apply all transactions in the block up, tracing each one
-        let opts = opts.unwrap_or_default();
-
         tracing::trace!(?opts, "Tracing block transactions");
 
         let mut txns = block.body().transactions().enumerate().peekable();
@@ -107,13 +107,15 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));
+
     let _permit = response_tri!(
         ctx.acquire_tracing_permit()
             .await
             .map_err(|_| DebugError::rpc_error("Failed to acquire tracing permit".into()))
     );
 
-    let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.as_ref().and_then(|o| o.tracer.as_ref()));
+    let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.tracer.as_ref());
 
     let fut = async move {
         // Load the transaction by hash
@@ -159,8 +161,7 @@ where
             base_fee: block.header().base_fee_per_gas(),
         };
 
-        let res =
-            response_tri!(crate::debug::tracer::trace(trevm, &opts.unwrap_or_default(), tx_info)).0;
+        let res = response_tri!(crate::debug::tracer::trace(trevm, &opts, tx_info)).0;
 
         ResponsePayload::Success(res)
     }
