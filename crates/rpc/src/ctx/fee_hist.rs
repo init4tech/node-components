@@ -61,7 +61,7 @@ mod test {
         primitives::{Address, B256},
         signers::Signature,
     };
-    use reth::primitives::{BlockBody, SealedHeader};
+    use reth::primitives::{BlockBody, Header, SealedHeader};
 
     use super::*;
 
@@ -77,7 +77,7 @@ mod test {
 
     fn test_non_magic_sig_tx() -> TxEnvelope {
         let sig = Signature::test_signature();
-        TxEnvelope::new_unchecked(TxEip1559::default().into(), sig.into(), B256::repeat_byte(0x44))
+        TxEnvelope::new_unchecked(TxEip1559::default().into(), sig, B256::repeat_byte(0x44))
     }
 
     fn test_block_body() -> BlockBody {
@@ -92,9 +92,8 @@ mod test {
         }
     }
 
-    fn test_sealed_header(block_num: u64) -> SealedHeader {
-        let mut header: reth::primitives::Header = Default::default();
-        header.number = block_num;
+    fn test_sealed_header(number: u64) -> SealedHeader {
+        let header = Header { number, ..Default::default() };
         SealedHeader::new_unhashed(header)
     }
 
