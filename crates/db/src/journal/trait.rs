@@ -18,7 +18,7 @@ pub trait JournalDb: RuWriter {
     ///
     /// This is intended to be used for tx simulation, and other purposes that
     /// need fast state access WITHTOUT needing to retrieve historical data.
-    fn ingest(&self, header: &Header, update: BlockUpdate<'_>) -> ProviderResult<()> {
+    fn ingest(&self, header: SealedHeader, update: BlockUpdate<'_>) -> ProviderResult<()> {
         let journal_hash = update.journal_hash();
 
         // TODO: remove the clone in future versions. This can be achieved by
@@ -29,7 +29,7 @@ pub trait JournalDb: RuWriter {
         let execution_outcome = ExecutionOutcome::new(bundle_state, vec![], header.number());
 
         let block: SealedBlock<TransactionSigned, Header> =
-            SealedBlock { header: SealedHeader::new(header.to_owned()), body: Default::default() };
+            SealedBlock { header, body: Default::default() };
         let block_result =
             BlockResult { sealed_block: RecoveredBlock::new(block, vec![]), execution_outcome };
 
@@ -40,7 +40,9 @@ pub trait JournalDb: RuWriter {
             std::iter::empty(),
             &block_result,
             journal_hash,
-        )
+        )?;
+
+        Ok(())
     }
 }
 
