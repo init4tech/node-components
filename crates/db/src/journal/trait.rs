@@ -22,7 +22,7 @@ pub trait JournalDb: RuWriter {
         let journal_hash = journal.journal_hash();
 
         let (meta, bsi) = journal.into_parts();
-        let (_, _, header) = meta.into_parts();
+        let (host_height, _, header) = meta.into_parts();
 
         // TODO: remove the clone in future versions. This can be achieved by
         // _NOT_ making a `BlockResult` and instead manually updating relevan
@@ -33,8 +33,11 @@ pub trait JournalDb: RuWriter {
 
         let block: SealedBlock<TransactionSigned, Header> =
             SealedBlock { header: SealedHeader::new(header), body: Default::default() };
-        let block_result =
-            BlockResult { sealed_block: RecoveredBlock::new(block, vec![]), execution_outcome };
+        let block_result = BlockResult {
+            sealed_block: RecoveredBlock::new(block, vec![]),
+            execution_outcome,
+            host_height,
+        };
 
         self.append_host_block(
             None,
