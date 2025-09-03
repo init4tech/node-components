@@ -10,7 +10,7 @@
 use alloy::consensus::TxReceipt;
 
 /// Trait for types that can be converted into other types as they're already compatible.
-/// Uswed for converting between alloy/reth/signet types.
+/// Used for converting between alloy/reth/signet types.
 pub trait DataCompat<Other: DataCompat<Self>>: Sized {
     /// Convert `self` into the target type.
     fn convert(self) -> Other;
