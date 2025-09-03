@@ -1,11 +1,10 @@
 use crate::{SignetDbRw, journal::JournalDb};
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use reth::providers::ProviderResult;
+use signet_journal::{Journal, JournalStream};
 use signet_node_types::NodeTypesDbTrait;
-use signet_types::primitives::SealedHeader;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
-use trevm::journal::BlockUpdate;
 
 /// A task that ingests journals into a reth database.
 #[derive(Debug)]
@@ -33,20 +32,19 @@ impl<Db: NodeTypesDbTrait> JournalIngestor<Db> {
 
     async fn task_future<S>(self, mut stream: S) -> ProviderResult<()>
     where
-        S: Stream<Item = (SealedHeader, BlockUpdate<'static>)> + Send + Unpin + 'static,
+        S: JournalStream<'static> + Send + Unpin + 'static,
     {
-        while let Some(item) = stream.next().await {
+        while let Some(Journal::V1(journal)) = stream.next().await {
             // FUTURE: Sanity check that the header height matches the update
             // height. Sanity check that both heights are 1 greater than the
             // last height in the database.
 
             let db = self.db.clone();
-            let (header, block_update) = item;
 
             // DB interaction is sync, so we spawn a blocking task for it. We
             // immediately await that task. This prevents blocking the worker
             // thread
-            tokio::task::spawn_blocking(move || db.ingest(header, block_update))
+            tokio::task::spawn_blocking(move || db.ingest(journal))
                 .await
                 .expect("ingestion should not panic")?;
         }
@@ -57,7 +55,7 @@ impl<Db: NodeTypesDbTrait> JournalIngestor<Db> {
     /// Spawn a task to ingest journals from the provided stream.
     pub fn spawn<S>(self, stream: S) -> JoinHandle<ProviderResult<()>>
     where
-        S: Stream<Item = (SealedHeader, BlockUpdate<'static>)> + Send + Unpin + 'static,
+        S: JournalStream<'static> + Send + Unpin + 'static,
     {
         tokio::spawn(self.task_future(stream))
     }
@@ -67,7 +65,7 @@ impl<Db: NodeTypesDbTrait> JournalIngestor<Db> {
 pub async fn ingest_journals<Db, S>(db: Arc<SignetDbRw<Db>>, stream: S) -> ProviderResult<()>
 where
     Db: NodeTypesDbTrait,
-    S: Stream<Item = (SealedHeader, BlockUpdate<'static>)> + Send + Unpin + 'static,
+    S: JournalStream<'static> + Send + Unpin + 'static,
 {
     let ingestor = JournalIngestor::new(db);
     ingestor.task_future(stream).await
