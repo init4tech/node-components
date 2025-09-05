@@ -12,7 +12,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod aliases;
-pub use aliases::SignetDbRw;
+pub use aliases::{RuRevmState, SignetDbRw};
 
 mod chain;
 pub use chain::{DbExtractionResults, RuChain};

@@ -1,4 +1,4 @@
-use crate::{RuRevmState, SignetCtx};
+use crate::SignetCtx;
 use alloy::{consensus::Header, eips::BlockId};
 use reth::{
     providers::{ProviderResult, providers::BlockchainProvider},
@@ -7,6 +7,7 @@ use reth::{
     tasks::{TaskExecutor, TaskSpawner},
 };
 use reth_node_api::FullNodeComponents;
+use signet_db::RuRevmState;
 use signet_evm::EvmNeedsTx;
 use signet_node_types::Pnt;
 use signet_tx_cache::client::TxCache;
