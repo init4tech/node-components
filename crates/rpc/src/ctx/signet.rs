@@ -1,5 +1,4 @@
 use crate::{
-    RuRevmState,
     ctx::strip_signet_system_txns,
     eth::EthError,
     interest::{ActiveFilter, FilterManager, FilterOutput, SubscriptionManager},
@@ -41,6 +40,7 @@ use reth::{
 use reth_chainspec::{BaseFeeParams, ChainSpec, ChainSpecProvider};
 use reth_node_api::BlockBody;
 use reth_rpc_eth_api::{RpcBlock, RpcConvert, RpcReceipt, RpcTransaction};
+use signet_db::RuRevmState;
 use signet_node_types::Pnt;
 use signet_tx_cache::client::TxCache;
 use signet_types::{MagicSig, constants::SignetSystemConstants};

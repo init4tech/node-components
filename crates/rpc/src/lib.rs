@@ -54,7 +54,7 @@ mod config;
 pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
-pub use ctx::{LoadState, RpcCtx, RuRevmState, SignetCtx};
+pub use ctx::{LoadState, RpcCtx, SignetCtx};
 
 mod debug;
 pub use debug::{DebugError, debug};
