@@ -43,6 +43,7 @@ serde_json.workspace = true
 futures-util = "0.3.31"
 itertools.workspace = true
 revm-inspectors = "0.26.5"
+signet-db.workspace = true
 
 [dev-dependencies]
 signet-zenith.workspace = true
