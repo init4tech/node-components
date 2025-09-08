@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, info, instrument, warn};
+use tracing::{Instrument, debug, error, info, instrument};
 
 const BLOB_CACHE_SIZE: u32 = (MAX_BLOBS_PER_BLOCK_ELECTRA * EPOCH_SLOTS) as u32;
 const CACHE_REQUEST_CHANNEL_SIZE: usize = (MAX_BLOBS_PER_BLOCK_ELECTRA * 2) as usize;
@@ -26,7 +26,13 @@ const BETWEEN_RETRIES: Duration = Duration::from_millis(250);
 /// retrieving blobs.
 #[derive(Debug)]
 enum CacheInst {
-    Retrieve { slot: usize, tx_hash: B256, version_hashes: Vec<B256>, resp: oneshot::Sender<Blobs> },
+    Retrieve {
+        slot: usize,
+        tx_hash: B256,
+        version_hashes: Vec<B256>,
+        resp: oneshot::Sender<Blobs>,
+        span: tracing::Span,
+    },
 }
 
 /// Handle for the cache.
@@ -51,7 +57,14 @@ impl CacheHandle {
     ) -> FetchResult<Blobs> {
         let (resp, receiver) = oneshot::channel();
 
-        self.send(CacheInst::Retrieve { slot, tx_hash, version_hashes, resp }).await;
+        self.send(CacheInst::Retrieve {
+            slot,
+            tx_hash,
+            version_hashes,
+            resp,
+            span: tracing::Span::current(),
+        })
+        .await;
 
         receiver.await.map_err(|_| BlobFetcherError::missing_sidecar(tx_hash))
     }
@@ -164,7 +177,7 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
                     return Ok(blobs);
                 }
                 Err(BlobFetcherError::Ignorable(e)) => {
-                    warn!(target: "signet_blobber::BlobCacher", attempt, %e, "Blob fetch attempt failed.");
+                    debug!(target: "signet_blobber::BlobCacher", attempt, %e, "Blob fetch attempt failed.");
                     tokio::time::sleep(BETWEEN_RETRIES).await;
                     continue;
                 }
@@ -178,8 +191,10 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     /// Processes the cache instructions.
     async fn handle_inst(self: Arc<Self>, inst: CacheInst) {
         match inst {
-            CacheInst::Retrieve { slot, tx_hash, version_hashes, resp } => {
-                if let Ok(blobs) = self.fetch_blobs(slot, tx_hash, version_hashes).await {
+            CacheInst::Retrieve { slot, tx_hash, version_hashes, resp, span } => {
+                if let Ok(blobs) =
+                    self.fetch_blobs(slot, tx_hash, version_hashes).instrument(span).await
+                {
                     // if listener has gone away, that's okay, we just won't send the response
                     let _ = resp.send(blobs);
                 }

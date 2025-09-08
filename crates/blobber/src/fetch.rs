@@ -16,7 +16,7 @@ use signet_extract::{ExtractedEvent, Extracts};
 use signet_zenith::{Zenith::BlockSubmitted, ZenithBlock};
 use std::{ops::Deref, sync::Arc};
 use tokio::select;
-use tracing::{error, instrument, trace};
+use tracing::{instrument, trace};
 
 /// Blobs which may be a local shared sidecar, or a list of blobs from an
 /// external source.
@@ -161,7 +161,7 @@ where
     }
 
     /// Fetch blobs from the local txpool, or fall back to remote sources
-    #[instrument(skip(self, versioned_hashes))]
+    #[instrument(skip(self))]
     pub(crate) async fn fetch_blobs(
         &self,
         slot: usize,
@@ -185,7 +185,6 @@ where
                 Ok(blobs)
             }
             else => {
-                error!(%tx_hash, "Blobs not available from any source");
                 Err(BlobFetcherError::missing_sidecar(tx_hash))
             }
         }
