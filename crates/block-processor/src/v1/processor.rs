@@ -224,9 +224,9 @@ where
             Some(submitted) => {
                 self.blob_cacher
                     .signet_block(block_extracts.host_block.number(), slot, submitted)
-                    .await
-                    .map(|block| block.into_parts().1)
-                    .unwrap_or_default()
+                    .await?
+                    .into_parts()
+                    .1
                     .into_iter()
                     .filter(|tx| !tx.is_eip4844()) // redundant, but let's be sure
                     .map(|tx| tx.into())
