@@ -1,5 +1,4 @@
 use crate::{BlobCacher, BlobFetcher, BlobFetcherConfig};
-use init4_bin_base::utils::calc::SlotCalculator;
 use reth::transaction_pool::TransactionPool;
 use url::Url;
 
@@ -35,7 +34,6 @@ pub struct BlobFetcherBuilder<Pool> {
     client: Option<reqwest::Client>,
     cl_url: Option<String>,
     pylon_url: Option<String>,
-    slot_calculator: Option<SlotCalculator>,
 }
 
 impl<Pool> BlobFetcherBuilder<Pool> {
@@ -47,7 +45,6 @@ impl<Pool> BlobFetcherBuilder<Pool> {
             client: self.client,
             cl_url: self.cl_url,
             pylon_url: self.pylon_url,
-            slot_calculator: self.slot_calculator,
         }
     }
 
@@ -107,22 +104,6 @@ impl<Pool> BlobFetcherBuilder<Pool> {
         self.pylon_url = Some(pylon_url.to_string());
         Ok(self)
     }
-
-    /// Set the slot calculator to use for the extractor.
-    pub const fn with_slot_calculator(
-        mut self,
-        slot_calculator: SlotCalculator,
-    ) -> BlobFetcherBuilder<Pool> {
-        self.slot_calculator = Some(slot_calculator);
-        self
-    }
-
-    /// Set the slot calculator to use for the extractor, using the Pecornino
-    /// host configuration.
-    pub const fn with_pecornino_slots(mut self) -> BlobFetcherBuilder<Pool> {
-        self.slot_calculator = Some(SlotCalculator::pecorino_host());
-        self
-    }
 }
 
 impl<Pool: TransactionPool> BlobFetcherBuilder<Pool> {
@@ -141,9 +122,7 @@ impl<Pool: TransactionPool> BlobFetcherBuilder<Pool> {
         let explorer =
             foundry_blob_explorers::Client::new_with_client(explorer_url, client.clone());
 
-        let slot_calculator = self.slot_calculator.ok_or(BuilderError::MissingSlotCalculator)?;
-
-        Ok(BlobFetcher::new(pool, explorer, client, cl_url, pylon_url, slot_calculator))
+        Ok(BlobFetcher::new(pool, explorer, client, cl_url, pylon_url))
     }
 
     /// Build a [`BlobCacher`] with the provided parameters.
