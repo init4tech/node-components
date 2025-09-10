@@ -1,4 +1,4 @@
-use crate::{BlobFetcherError, Blobs, FetchResult};
+use crate::{BlobberError, BlobberResult, Blobs, FetchResult};
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
 use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{Instrument, debug, error, info, instrument};
+use tracing::{Instrument, debug_span, error, info, instrument, trace};
 
 const BLOB_CACHE_SIZE: u32 = (MAX_BLOBS_PER_BLOCK_ELECTRA * EPOCH_SLOTS) as u32;
 const CACHE_REQUEST_CHANNEL_SIZE: usize = (MAX_BLOBS_PER_BLOCK_ELECTRA * 2) as usize;
@@ -54,7 +54,7 @@ impl CacheHandle {
         slot: usize,
         tx_hash: B256,
         version_hashes: Vec<B256>,
-    ) -> FetchResult<Blobs> {
+    ) -> BlobberResult<Blobs> {
         let (resp, receiver) = oneshot::channel();
 
         self.send(CacheInst::Retrieve {
@@ -66,7 +66,7 @@ impl CacheHandle {
         })
         .await;
 
-        receiver.await.map_err(|_| BlobFetcherError::missing_sidecar(tx_hash))
+        receiver.await.map_err(|_| BlobberError::missing_sidecar(tx_hash))
     }
 
     /// Fetch the blobs using [`Self::fetch_blobs`] and decode them to get the
@@ -76,12 +76,12 @@ impl CacheHandle {
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
         mut coder: C,
-    ) -> FetchResult<Bytes> {
+    ) -> BlobberResult<Bytes> {
         let tx_hash = extract.tx_hash();
         let versioned_hashes = extract
             .tx
             .as_eip4844()
-            .ok_or_else(BlobFetcherError::non_4844_transaction)?
+            .ok_or_else(BlobberError::non_4844_transaction)?
             .blob_versioned_hashes()
             .expect("tx is eip4844");
 
@@ -89,11 +89,11 @@ impl CacheHandle {
 
         coder
             .decode_all(blobs.as_ref())
-            .ok_or_else(BlobFetcherError::blob_decode_error)?
+            .ok_or_else(BlobberError::blob_decode_error)?
             .into_iter()
             .find(|data| keccak256(data) == extract.block_data_hash())
             .map(Into::into)
-            .ok_or_else(|| BlobFetcherError::block_data_not_found(tx_hash))
+            .ok_or_else(|| BlobberError::block_data_not_found(tx_hash))
     }
 
     /// Fetch the blobs using [`Self::fetch_blobs`] and decode them using
@@ -102,12 +102,21 @@ impl CacheHandle {
         &self,
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-    ) -> FetchResult<Bytes> {
+    ) -> BlobberResult<Bytes> {
         self.fetch_and_decode_with_coder(slot, extract, SimpleCoder::default()).await
     }
 
     /// Fetch the blobs, decode them using the provided coder, and construct a
     /// Zenith block from the header and data.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(ZenithBlock)` if the block was successfully fetched and
+    ///   decoded.
+    /// - `Ok(ZenithBlock)` with an EMPTY BLOCK if the block_data could not be
+    ///   decoded (e.g., due to a malformatted blob).
+    /// - `Err(FetchError)` if there was an unrecoverable error fetching the
+    ///   blobs.
     pub async fn signet_block_with_coder<C: SidecarCoder>(
         &self,
         host_block_number: u64,
@@ -116,13 +125,28 @@ impl CacheHandle {
         coder: C,
     ) -> FetchResult<ZenithBlock> {
         let header = extract.ru_header(host_block_number);
-        self.fetch_and_decode_with_coder(slot, extract, coder)
-            .await
-            .map(|buf| ZenithBlock::from_header_and_data(header, buf))
+        let block_data = match self.fetch_and_decode_with_coder(slot, extract, coder).await {
+            Ok(buf) => buf,
+            Err(BlobberError::Decode(_)) => {
+                trace!("Failed to decode block data");
+                Bytes::default()
+            }
+            Err(BlobberError::Fetch(err)) => return Err(err),
+        };
+        Ok(ZenithBlock::from_header_and_data(header, block_data))
     }
 
     /// Fetch the blobs, decode them using [`SimpleCoder`], and construct a
     /// Zenith block from the header and data.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(ZenithBlock)` if the block was successfully fetched and
+    ///   decoded.
+    /// - `Ok(ZenithBlock)` with an EMPTY BLOCK if the block_data could not be
+    ///   decoded (e.g., due to a malformatted blob).
+    /// - `Err(FetchError)` if there was an unrecoverable error fetching the
+    ///   blobs.
     pub async fn signet_block(
         &self,
         host_block_number: u64,
@@ -159,7 +183,7 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         slot: usize,
         tx_hash: B256,
         versioned_hashes: Vec<B256>,
-    ) -> FetchResult<Blobs> {
+    ) -> BlobberResult<Blobs> {
         // Cache hit
         if let Some(blobs) = self.cache.lock().unwrap().get(&(slot, tx_hash)) {
             info!(target: "signet_blobber::BlobCacher", "Cache hit");
@@ -169,23 +193,21 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         // Cache miss, use the fetcher to retrieve blobs
         // Retry fetching blobs up to `FETCH_RETRIES` times
         for attempt in 1..=FETCH_RETRIES {
-            let blobs = self.fetcher.fetch_blobs(slot, tx_hash, &versioned_hashes).await;
+            let Ok(blobs) = self
+                .fetcher
+                .fetch_blobs(slot, tx_hash, &versioned_hashes)
+                .instrument(debug_span!("fetch_blobs_loop", attempt))
+                .await
+            else {
+                tokio::time::sleep(BETWEEN_RETRIES).await;
+                continue;
+            };
 
-            match blobs {
-                Ok(blobs) => {
-                    self.cache.lock().unwrap().insert((slot, tx_hash), blobs.clone());
-                    return Ok(blobs);
-                }
-                Err(BlobFetcherError::Ignorable(e)) => {
-                    debug!(target: "signet_blobber::BlobCacher", attempt, %e, "Blob fetch attempt failed.");
-                    tokio::time::sleep(BETWEEN_RETRIES).await;
-                    continue;
-                }
-                Err(e) => return Err(e), // unrecoverable error
-            }
+            self.cache.lock().unwrap().insert((slot, tx_hash), blobs.clone());
+            return Ok(blobs);
         }
         error!(target: "signet_blobber::BlobCacher",  "All fetch attempts failed");
-        Err(BlobFetcherError::missing_sidecar(tx_hash))
+        Err(BlobberError::missing_sidecar(tx_hash))
     }
 
     /// Processes the cache instructions.

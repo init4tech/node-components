@@ -1,5 +1,5 @@
 use crate::{
-    BlobFetcherBuilder, BlobFetcherError, FetchResult, error::UnrecoverableBlobError,
+    BlobFetcherBuilder, BlobberError, BlobberResult, FetchResult, error::FetchError,
     shim::ExtractableChainShim, utils::extract_blobs_from_bundle,
 };
 use alloy::{
@@ -135,31 +135,6 @@ where
         Self { pool, explorer, client: cl_client, cl_url, pylon_url, slot_calculator }
     }
 
-    /// Get blobs from either the pool or the network and decode them,
-    /// searching for the expected hash
-    async fn get_and_decode_blobs(
-        &self,
-        slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-    ) -> FetchResult<Vec<u8>> {
-        debug_assert!(extract.tx.is_eip4844(), "Transaction must be of type EIP-4844");
-        let hash = extract.tx.tx_hash();
-        let versioned_hashes = extract
-            .tx
-            .as_eip4844()
-            .expect("tx is eip4844")
-            .blob_versioned_hashes()
-            .expect("tx is eip4844");
-        let bz = self.fetch_blobs(slot, extract.tx_hash(), versioned_hashes).await?;
-
-        SimpleCoder::default()
-            .decode_all(bz.as_ref())
-            .ok_or_else(BlobFetcherError::blob_decode_error)?
-            .into_iter()
-            .find(|data| keccak256(data) == extract.block_data_hash())
-            .ok_or_else(|| BlobFetcherError::block_data_not_found(*hash))
-    }
-
     /// Fetch blobs from the local txpool, or fall back to remote sources
     #[instrument(skip(self))]
     pub(crate) async fn fetch_blobs(
@@ -185,14 +160,14 @@ where
                 Ok(blobs)
             }
             else => {
-                Err(BlobFetcherError::missing_sidecar(tx_hash))
+                Err(FetchError::MissingSidecar(tx_hash))
             }
         }
     }
 
     /// Return a blob from the local pool or an error
     fn get_blobs_from_pool(&self, tx: TxHash) -> FetchResult<Blobs> {
-        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| BlobFetcherError::missing_sidecar(tx))
+        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| FetchError::MissingSidecar(tx))
     }
 
     /// Returns the blob from the explorer
@@ -207,9 +182,7 @@ where
     #[instrument(skip_all)]
     async fn get_blobs_from_pylon(&self, tx: TxHash) -> FetchResult<Blobs> {
         let Some(url) = &self.pylon_url else {
-            return Err(BlobFetcherError::Unrecoverable(
-                UnrecoverableBlobError::ConsensusClientUrlNotSet,
-            ));
+            return Err(FetchError::ConsensusClientUrlNotSet);
         };
         let url = url.join(&format!("sidecar/{tx}"))?;
 
@@ -229,20 +202,43 @@ where
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
         let Some(url) = &self.cl_url else {
-            return Err(BlobFetcherError::Unrecoverable(
-                UnrecoverableBlobError::ConsensusClientUrlNotSet,
-            ));
+            return Err(FetchError::ConsensusClientUrlNotSet);
         };
 
-        let url = url.join(&format!("/eth/v1/beacon/blob_sidecars/{slot}")).map_err(|err| {
-            BlobFetcherError::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
-        })?;
+        let url = url
+            .join(&format!("/eth/v1/beacon/blob_sidecars/{slot}"))
+            .map_err(FetchError::UrlParse)?;
 
         let response = self.client.get(url).header("accept", "application/json").send().await?;
 
         let response: BeaconBlobBundle = response.json().await?;
 
         extract_blobs_from_bundle(response, versioned_hashes)
+    }
+
+    /// Get blobs from either the pool or the network and decode them,
+    /// searching for the expected hash
+    async fn get_and_decode_blobs(
+        &self,
+        slot: usize,
+        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+    ) -> BlobberResult<Vec<u8>> {
+        debug_assert!(extract.tx.is_eip4844(), "Transaction must be of type EIP-4844");
+        let hash = extract.tx.tx_hash();
+        let versioned_hashes = extract
+            .tx
+            .as_eip4844()
+            .expect("tx is eip4844")
+            .blob_versioned_hashes()
+            .expect("tx is eip4844");
+        let bz = self.fetch_blobs(slot, extract.tx_hash(), versioned_hashes).await?;
+
+        SimpleCoder::default()
+            .decode_all(bz.as_ref())
+            .ok_or_else(BlobberError::blob_decode_error)?
+            .into_iter()
+            .find(|data| keccak256(data) == extract.block_data_hash())
+            .ok_or_else(|| BlobberError::block_data_not_found(*hash))
     }
 
     /// Get the Zenith block from the extracted event.
@@ -254,9 +250,9 @@ where
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
         host_block_number: u64,
         host_block_timestamp: u64,
-    ) -> FetchResult<ZenithBlock> {
+    ) -> BlobberResult<ZenithBlock> {
         if !extract.is_eip4844() {
-            return Err(BlobFetcherError::non_4844_transaction());
+            return Err(BlobberError::non_4844_transaction());
         }
 
         let header = extract.ru_header(host_block_number);
@@ -266,8 +262,14 @@ where
             .slot_ending_at(host_block_timestamp)
             .expect("host chain has started");
 
-        let block_data = self.get_and_decode_blobs(slot, extract).await?;
-        Ok(ZenithBlock::from_header_and_data(header, block_data))
+        match self.get_and_decode_blobs(slot, extract).await {
+            Ok(data) => Ok(ZenithBlock::from_header_and_data(header, data)),
+            Err(BlobberError::Decode(err)) => {
+                trace!(%err, "ignorable error in block extraction.");
+                Ok(ZenithBlock::from_header_and_data(header, vec![]))
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     /// Fetch the [`ZenithBlock`] specified by the outputs.
@@ -281,7 +283,7 @@ where
     pub async fn block_from_outputs(
         &self,
         outputs: &Extracts<'_, ExtractableChainShim<'_>>,
-    ) -> FetchResult<Option<ZenithBlock>> {
+    ) -> BlobberResult<Option<ZenithBlock>> {
         if !outputs.contains_block() {
             return Ok(None);
         }
@@ -295,8 +297,7 @@ where
         {
             Ok(block) => Ok(block),
             Err(err) => {
-                if err.is_ignorable() {
-                    trace!(%err, "ignorable error in block extraction");
+                if err.is_decode() {
                     Ok(None) // ignore ignorable errors
                 } else {
                     Err(err)

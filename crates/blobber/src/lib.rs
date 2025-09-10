@@ -21,7 +21,7 @@ mod config;
 pub use config::BlobFetcherConfig;
 
 mod error;
-pub use error::{BlobFetcherError, FetchResult};
+pub use error::{BlobberError, BlobberResult, DecodeError, DecodeResult, FetchError, FetchResult};
 
 mod fetch;
 pub use fetch::{BlobFetcher, Blobs};
