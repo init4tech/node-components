@@ -53,7 +53,7 @@ mod test {
     use super::*;
     use crate::{Blobs, utils::tests::PYLON_BLOB_RESPONSE};
     use alloy::{
-        consensus::{BlobTransactionSidecar, SimpleCoder},
+        consensus::{Blob, BlobTransactionSidecar, Bytes48, SimpleCoder},
         primitives::{Address, B256, U256, b256},
     };
     use signet_zenith::Zenith;
@@ -100,5 +100,37 @@ mod test {
         );
 
         assert_eq!(block.transactions().len(), 0);
+    }
+
+    #[test]
+    fn it_fails_to_decode_junk() {
+        let mut blob = Blob::default();
+
+        blob.as_mut_slice()[0..32].copy_from_slice(&[
+            0x10, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0, 0x10, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0, 0x10,
+            0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0, 0x10, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x0,
+        ]);
+
+        let sidecar = BlobTransactionSidecar::new(
+            vec![blob],
+            vec![Bytes48::default()],
+            vec![Bytes48::default()],
+        );
+        let blobs = Blobs::from(sidecar);
+
+        let err = SimpleCoder::default()
+            .decode_block(
+                blobs,
+                Zenith::BlockHeader {
+                    rollupChainId: U256::ZERO,
+                    hostBlockNumber: U256::ZERO,
+                    gasLimit: U256::ZERO,
+                    rewardAddress: Address::ZERO,
+                    blockDataHash: B256::ZERO,
+                },
+                B256::ZERO,
+            )
+            .unwrap_err();
+        assert!(matches!(err, DecodeError::BlobDecodeError));
     }
 }
