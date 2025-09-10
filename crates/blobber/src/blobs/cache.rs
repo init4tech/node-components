@@ -1,19 +1,21 @@
-use crate::{BlobFetcherError, Blobs, FetchResult};
+use crate::{BlobFetcher, BlobberError, BlobberResult, Blobs, FetchResult};
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
 use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
 use alloy::primitives::{B256, Bytes, keccak256};
+use core::fmt;
 use reth::transaction_pool::TransactionPool;
 use reth::{network::cache::LruMap, primitives::Receipt};
 use signet_extract::ExtractedEvent;
 use signet_zenith::Zenith::BlockSubmitted;
 use signet_zenith::ZenithBlock;
+use std::marker::PhantomData;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{Instrument, debug, error, info, instrument};
+use tracing::{Instrument, debug_span, error, info, instrument, trace};
 
 const BLOB_CACHE_SIZE: u32 = (MAX_BLOBS_PER_BLOCK_ELECTRA * EPOCH_SLOTS) as u32;
 const CACHE_REQUEST_CHANNEL_SIZE: usize = (MAX_BLOBS_PER_BLOCK_ELECTRA * 2) as usize;
@@ -37,11 +39,13 @@ enum CacheInst {
 
 /// Handle for the cache.
 #[derive(Debug, Clone)]
-pub struct CacheHandle {
+pub struct CacheHandle<Coder = SimpleCoder> {
     sender: mpsc::Sender<CacheInst>,
+
+    _coder: PhantomData<Coder>,
 }
 
-impl CacheHandle {
+impl<Coder> CacheHandle<Coder> {
     /// Sends a cache instruction.
     async fn send(&self, inst: CacheInst) {
         let _ = self.sender.send(inst).await;
@@ -54,7 +58,7 @@ impl CacheHandle {
         slot: usize,
         tx_hash: B256,
         version_hashes: Vec<B256>,
-    ) -> FetchResult<Blobs> {
+    ) -> BlobberResult<Blobs> {
         let (resp, receiver) = oneshot::channel();
 
         self.send(CacheInst::Retrieve {
@@ -66,89 +70,87 @@ impl CacheHandle {
         })
         .await;
 
-        receiver.await.map_err(|_| BlobFetcherError::missing_sidecar(tx_hash))
+        receiver.await.map_err(|_| BlobberError::missing_sidecar(tx_hash))
     }
 
     /// Fetch the blobs using [`Self::fetch_blobs`] and decode them to get the
     /// Zenith block data using the provided coder.
-    pub async fn fetch_and_decode_with_coder<C: SidecarCoder>(
+    pub async fn fetch_and_decode(
         &self,
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-        mut coder: C,
-    ) -> FetchResult<Bytes> {
+    ) -> BlobberResult<Bytes>
+    where
+        Coder: SidecarCoder + Default,
+    {
         let tx_hash = extract.tx_hash();
         let versioned_hashes = extract
             .tx
             .as_eip4844()
-            .ok_or_else(BlobFetcherError::non_4844_transaction)?
+            .ok_or_else(BlobberError::non_4844_transaction)?
             .blob_versioned_hashes()
             .expect("tx is eip4844");
 
         let blobs = self.fetch_blobs(slot, tx_hash, versioned_hashes.to_owned()).await?;
 
-        coder
+        Coder::default()
             .decode_all(blobs.as_ref())
-            .ok_or_else(BlobFetcherError::blob_decode_error)?
+            .ok_or_else(BlobberError::blob_decode_error)?
             .into_iter()
             .find(|data| keccak256(data) == extract.block_data_hash())
             .map(Into::into)
-            .ok_or_else(|| BlobFetcherError::block_data_not_found(tx_hash))
-    }
-
-    /// Fetch the blobs using [`Self::fetch_blobs`] and decode them using
-    /// [`SimpleCoder`] to get the Zenith block data.
-    pub async fn fech_and_decode(
-        &self,
-        slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-    ) -> FetchResult<Bytes> {
-        self.fetch_and_decode_with_coder(slot, extract, SimpleCoder::default()).await
+            .ok_or_else(|| BlobberError::block_data_not_found(extract.block_data_hash()))
     }
 
     /// Fetch the blobs, decode them using the provided coder, and construct a
     /// Zenith block from the header and data.
-    pub async fn signet_block_with_coder<C: SidecarCoder>(
-        &self,
-        host_block_number: u64,
-        slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-        coder: C,
-    ) -> FetchResult<ZenithBlock> {
-        let header = extract.ru_header(host_block_number);
-        self.fetch_and_decode_with_coder(slot, extract, coder)
-            .await
-            .map(|buf| ZenithBlock::from_header_and_data(header, buf))
-    }
-
-    /// Fetch the blobs, decode them using [`SimpleCoder`], and construct a
-    /// Zenith block from the header and data.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(ZenithBlock)` if the block was successfully fetched and
+    ///   decoded.
+    /// - `Ok(ZenithBlock)` with an EMPTY BLOCK if the block_data could not be
+    ///   decoded (e.g., due to a malformatted blob).
+    /// - `Err(FetchError)` if there was an unrecoverable error fetching the
+    ///   blobs.
     pub async fn signet_block(
         &self,
         host_block_number: u64,
         slot: usize,
         extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-    ) -> FetchResult<ZenithBlock> {
-        self.signet_block_with_coder(host_block_number, slot, extract, SimpleCoder::default()).await
+    ) -> FetchResult<ZenithBlock>
+    where
+        Coder: SidecarCoder + Default,
+    {
+        let header = extract.ru_header(host_block_number);
+        let block_data = match self.fetch_and_decode(slot, extract).await {
+            Ok(buf) => buf,
+            Err(BlobberError::Decode(_)) => {
+                trace!("Failed to decode block data");
+                Bytes::default()
+            }
+            Err(BlobberError::Fetch(err)) => return Err(err),
+        };
+        Ok(ZenithBlock::from_header_and_data(header, block_data))
     }
 }
 
 /// Retrieves blobs and stores them in a cache for later use.
 pub struct BlobCacher<Pool> {
-    fetcher: crate::BlobFetcher<Pool>,
+    fetcher: BlobFetcher<Pool>,
 
     cache: Mutex<LruMap<(usize, B256), Blobs>>,
 }
 
-impl<Pool: core::fmt::Debug> core::fmt::Debug for BlobCacher<Pool> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl<Pool: fmt::Debug> fmt::Debug for BlobCacher<Pool> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BlobCacher").field("fetcher", &self.fetcher).finish_non_exhaustive()
     }
 }
 
 impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     /// Creates a new `BlobCacher` with the provided extractor and cache size.
-    pub fn new(fetcher: crate::BlobFetcher<Pool>) -> Self {
+    pub fn new(fetcher: BlobFetcher<Pool>) -> Self {
         Self { fetcher, cache: LruMap::new(BLOB_CACHE_SIZE).into() }
     }
 
@@ -159,7 +161,7 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         slot: usize,
         tx_hash: B256,
         versioned_hashes: Vec<B256>,
-    ) -> FetchResult<Blobs> {
+    ) -> BlobberResult<Blobs> {
         // Cache hit
         if let Some(blobs) = self.cache.lock().unwrap().get(&(slot, tx_hash)) {
             info!(target: "signet_blobber::BlobCacher", "Cache hit");
@@ -169,23 +171,21 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         // Cache miss, use the fetcher to retrieve blobs
         // Retry fetching blobs up to `FETCH_RETRIES` times
         for attempt in 1..=FETCH_RETRIES {
-            let blobs = self.fetcher.fetch_blobs(slot, tx_hash, &versioned_hashes).await;
+            let Ok(blobs) = self
+                .fetcher
+                .fetch_blobs(slot, tx_hash, &versioned_hashes)
+                .instrument(debug_span!("fetch_blobs_loop", attempt))
+                .await
+            else {
+                tokio::time::sleep(BETWEEN_RETRIES).await;
+                continue;
+            };
 
-            match blobs {
-                Ok(blobs) => {
-                    self.cache.lock().unwrap().insert((slot, tx_hash), blobs.clone());
-                    return Ok(blobs);
-                }
-                Err(BlobFetcherError::Ignorable(e)) => {
-                    debug!(target: "signet_blobber::BlobCacher", attempt, %e, "Blob fetch attempt failed.");
-                    tokio::time::sleep(BETWEEN_RETRIES).await;
-                    continue;
-                }
-                Err(e) => return Err(e), // unrecoverable error
-            }
+            self.cache.lock().unwrap().insert((slot, tx_hash), blobs.clone());
+            return Ok(blobs);
         }
         error!(target: "signet_blobber::BlobCacher",  "All fetch attempts failed");
-        Err(BlobFetcherError::missing_sidecar(tx_hash))
+        Err(BlobberError::missing_sidecar(tx_hash))
     }
 
     /// Processes the cache instructions.
@@ -215,10 +215,10 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     ///
     /// # Panics
     /// This function will panic if the cache task fails to spawn.
-    pub fn spawn(self) -> CacheHandle {
+    pub fn spawn<C: SidecarCoder + Default>(self) -> CacheHandle<C> {
         let (sender, inst) = mpsc::channel(CACHE_REQUEST_CHANNEL_SIZE);
         tokio::spawn(Arc::new(self).task_future(inst));
-        CacheHandle { sender }
+        CacheHandle { sender, _coder: PhantomData }
     }
 }
 
@@ -234,7 +234,6 @@ mod tests {
         rlp::encode,
         signers::{SignerSync, local::PrivateKeySigner},
     };
-    use init4_bin_base::utils::calc::SlotCalculator;
     use reth::primitives::Transaction;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -250,7 +249,6 @@ mod tests {
         let test = signet_constants::KnownChains::Test;
 
         let constants: SignetSystemConstants = test.try_into().unwrap();
-        let calc = SlotCalculator::new(0, 0, 12);
 
         let explorer_url = "https://api.holesky.blobscan.com/";
         let client = reqwest::Client::builder().use_rustls_tls();
@@ -286,9 +284,8 @@ mod tests {
             .with_explorer_url(explorer_url)
             .with_client_builder(client)
             .unwrap()
-            .with_slot_calculator(calc)
             .build_cache()?;
-        let handle = cache.spawn();
+        let handle = cache.spawn::<SimpleCoder>();
 
         let got = handle
             .fetch_blobs(

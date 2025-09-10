@@ -1,22 +1,13 @@
-use crate::{
-    BlobFetcherBuilder, BlobFetcherError, FetchResult, error::UnrecoverableBlobError,
-    shim::ExtractableChainShim, utils::extract_blobs_from_bundle,
-};
+use crate::{BlobFetcherBuilder, FetchError, FetchResult, utils::extract_blobs_from_bundle};
 use alloy::{
-    consensus::{Blob, SidecarCoder, SimpleCoder, Transaction as _},
-    eips::eip7594::BlobTransactionSidecarVariant,
-    primitives::{B256, TxHash, keccak256},
+    consensus::{Blob, BlobTransactionSidecar},
+    eips::eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
+    primitives::{B256, TxHash},
 };
-use init4_bin_base::utils::calc::SlotCalculator;
-use reth::{
-    primitives::Receipt, rpc::types::beacon::sidecar::BeaconBlobBundle,
-    transaction_pool::TransactionPool,
-};
-use signet_extract::{ExtractedEvent, Extracts};
-use signet_zenith::{Zenith::BlockSubmitted, ZenithBlock};
+use reth::{rpc::types::beacon::sidecar::BeaconBlobBundle, transaction_pool::TransactionPool};
 use std::{ops::Deref, sync::Arc};
 use tokio::select;
-use tracing::{instrument, trace};
+use tracing::instrument;
 
 /// Blobs which may be a local shared sidecar, or a list of blobs from an
 /// external source.
@@ -28,6 +19,42 @@ pub enum Blobs {
     FromPool(Arc<BlobTransactionSidecarVariant>),
     /// Some other blob source.
     Other(Arc<Vec<Blob>>),
+}
+
+impl From<Vec<Blob>> for Blobs {
+    fn from(blobs: Vec<Blob>) -> Self {
+        Self::Other(Arc::new(blobs))
+    }
+}
+
+impl From<Arc<Vec<Blob>>> for Blobs {
+    fn from(blobs: Arc<Vec<Blob>>) -> Self {
+        Blobs::Other(blobs)
+    }
+}
+
+impl From<BlobTransactionSidecarVariant> for Blobs {
+    fn from(sidecar: BlobTransactionSidecarVariant) -> Self {
+        Self::FromPool(Arc::new(sidecar))
+    }
+}
+
+impl From<Arc<BlobTransactionSidecarVariant>> for Blobs {
+    fn from(sidecar: Arc<BlobTransactionSidecarVariant>) -> Self {
+        Self::FromPool(sidecar)
+    }
+}
+
+impl From<BlobTransactionSidecar> for Blobs {
+    fn from(sidecar: BlobTransactionSidecar) -> Self {
+        Self::FromPool(Arc::new(BlobTransactionSidecarVariant::Eip4844(sidecar)))
+    }
+}
+
+impl From<BlobTransactionSidecarEip7594> for Blobs {
+    fn from(sidecar: BlobTransactionSidecarEip7594) -> Self {
+        Self::FromPool(Arc::new(BlobTransactionSidecarVariant::Eip7594(sidecar)))
+    }
 }
 
 impl AsRef<Vec<Blob>> for Blobs {
@@ -76,18 +103,6 @@ impl Blobs {
     }
 }
 
-impl From<Arc<BlobTransactionSidecarVariant>> for Blobs {
-    fn from(sidecar: Arc<BlobTransactionSidecarVariant>) -> Self {
-        Blobs::FromPool(sidecar)
-    }
-}
-
-impl From<Vec<Blob>> for Blobs {
-    fn from(blobs: Vec<Blob>) -> Self {
-        Blobs::Other(Arc::new(blobs))
-    }
-}
-
 /// Decoder is generic over a Pool and handles fetching and decoding blob
 /// transactions. Decoder attempts to fetch from the Pool first and then
 /// queries an explorer if it can't find the blob. When Decoder does find a
@@ -98,7 +113,6 @@ pub struct BlobFetcher<Pool> {
     client: reqwest::Client,
     cl_url: Option<url::Url>,
     pylon_url: Option<url::Url>,
-    slot_calculator: SlotCalculator,
 }
 
 impl<Pool: core::fmt::Debug> core::fmt::Debug for BlobFetcher<Pool> {
@@ -130,34 +144,8 @@ where
         cl_client: reqwest::Client,
         cl_url: Option<url::Url>,
         pylon_url: Option<url::Url>,
-        slot_calculator: SlotCalculator,
     ) -> Self {
-        Self { pool, explorer, client: cl_client, cl_url, pylon_url, slot_calculator }
-    }
-
-    /// Get blobs from either the pool or the network and decode them,
-    /// searching for the expected hash
-    async fn get_and_decode_blobs(
-        &self,
-        slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-    ) -> FetchResult<Vec<u8>> {
-        debug_assert!(extract.tx.is_eip4844(), "Transaction must be of type EIP-4844");
-        let hash = extract.tx.tx_hash();
-        let versioned_hashes = extract
-            .tx
-            .as_eip4844()
-            .expect("tx is eip4844")
-            .blob_versioned_hashes()
-            .expect("tx is eip4844");
-        let bz = self.fetch_blobs(slot, extract.tx_hash(), versioned_hashes).await?;
-
-        SimpleCoder::default()
-            .decode_all(bz.as_ref())
-            .ok_or_else(BlobFetcherError::blob_decode_error)?
-            .into_iter()
-            .find(|data| keccak256(data) == extract.block_data_hash())
-            .ok_or_else(|| BlobFetcherError::block_data_not_found(*hash))
+        Self { pool, explorer, client: cl_client, cl_url, pylon_url }
     }
 
     /// Fetch blobs from the local txpool, or fall back to remote sources
@@ -185,14 +173,14 @@ where
                 Ok(blobs)
             }
             else => {
-                Err(BlobFetcherError::missing_sidecar(tx_hash))
+                Err(FetchError::MissingSidecar(tx_hash))
             }
         }
     }
 
     /// Return a blob from the local pool or an error
     fn get_blobs_from_pool(&self, tx: TxHash) -> FetchResult<Blobs> {
-        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| BlobFetcherError::missing_sidecar(tx))
+        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| FetchError::MissingSidecar(tx))
     }
 
     /// Returns the blob from the explorer
@@ -207,9 +195,7 @@ where
     #[instrument(skip_all)]
     async fn get_blobs_from_pylon(&self, tx: TxHash) -> FetchResult<Blobs> {
         let Some(url) = &self.pylon_url else {
-            return Err(BlobFetcherError::Unrecoverable(
-                UnrecoverableBlobError::ConsensusClientUrlNotSet,
-            ));
+            return Err(FetchError::ConsensusClientUrlNotSet);
         };
         let url = url.join(&format!("sidecar/{tx}"))?;
 
@@ -229,14 +215,12 @@ where
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
         let Some(url) = &self.cl_url else {
-            return Err(BlobFetcherError::Unrecoverable(
-                UnrecoverableBlobError::ConsensusClientUrlNotSet,
-            ));
+            return Err(FetchError::ConsensusClientUrlNotSet);
         };
 
-        let url = url.join(&format!("/eth/v1/beacon/blob_sidecars/{slot}")).map_err(|err| {
-            BlobFetcherError::Unrecoverable(UnrecoverableBlobError::UrlParse(err))
-        })?;
+        let url = url
+            .join(&format!("/eth/v1/beacon/blob_sidecars/{slot}"))
+            .map_err(FetchError::UrlParse)?;
 
         let response = self.client.get(url).header("accept", "application/json").send().await?;
 
@@ -244,73 +228,13 @@ where
 
         extract_blobs_from_bundle(response, versioned_hashes)
     }
-
-    /// Get the Zenith block from the extracted event.
-    /// For 4844 transactions, this fetches the transaction's blobs and decodes them.
-    /// For any other type of transactions, it returns a Non4844Transaction error.
-    #[tracing::instrument(skip(self, extract), fields(tx = %extract.tx_hash(), url = self.explorer.baseurl()))]
-    async fn get_signet_block(
-        &self,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
-        host_block_number: u64,
-        host_block_timestamp: u64,
-    ) -> FetchResult<ZenithBlock> {
-        if !extract.is_eip4844() {
-            return Err(BlobFetcherError::non_4844_transaction());
-        }
-
-        let header = extract.ru_header(host_block_number);
-
-        let slot = self
-            .slot_calculator
-            .slot_ending_at(host_block_timestamp)
-            .expect("host chain has started");
-
-        let block_data = self.get_and_decode_blobs(slot, extract).await?;
-        Ok(ZenithBlock::from_header_and_data(header, block_data))
-    }
-
-    /// Fetch the [`ZenithBlock`] specified by the outputs.
-    ///
-    /// ## Returns
-    ///
-    /// - `Ok(None)` - If the outputs do not contain a [`BlockSubmitted`].
-    /// - `Ok(Some(block))` - If the block was successfully fetched and decoded.
-    /// - `Err(err)` - If an error occurred while fetching or decoding the
-    ///   block.
-    pub async fn block_from_outputs(
-        &self,
-        outputs: &Extracts<'_, ExtractableChainShim<'_>>,
-    ) -> FetchResult<Option<ZenithBlock>> {
-        if !outputs.contains_block() {
-            return Ok(None);
-        }
-
-        let tx = outputs.submitted.as_ref().expect("checked by contains_block");
-
-        match self
-            .get_signet_block(tx, outputs.host_block_number(), outputs.host_block_timestamp())
-            .await
-            .map(Some)
-        {
-            Ok(block) => Ok(block),
-            Err(err) => {
-                if err.is_ignorable() {
-                    trace!(%err, "ignorable error in block extraction");
-                    Ok(None) // ignore ignorable errors
-                } else {
-                    Err(err)
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy::{
-        consensus::{SidecarBuilder, SignableTransaction as _, TxEip2930},
+        consensus::{SidecarBuilder, SignableTransaction as _, SimpleCoder, TxEip2930},
         eips::Encodable2718,
         primitives::{TxKind, U256, bytes},
         rlp::encode,
@@ -331,7 +255,6 @@ mod tests {
         let test = signet_constants::KnownChains::Test;
 
         let constants: SignetSystemConstants = test.try_into().unwrap();
-        let calc = SlotCalculator::new(0, 0, 12);
 
         let explorer_url = "https://api.holesky.blobscan.com/";
         let client = reqwest::Client::builder().use_rustls_tls();
@@ -341,7 +264,6 @@ mod tests {
             .with_explorer_url(explorer_url)
             .with_client_builder(client)
             .unwrap()
-            .with_slot_calculator(calc)
             .build()?;
 
         let tx = Transaction::Eip2930(TxEip2930 {
