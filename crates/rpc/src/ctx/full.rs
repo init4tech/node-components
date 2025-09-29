@@ -185,12 +185,12 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
+        let tracing_semaphores = Semaphore::new(eth_config.max_tracing_requests).into();
+
         SignetCtx::new(constants, provider, eth_config, tx_cache, spawner).map(|signet| Self {
             host,
             signet,
-            shared: SharedContext {
-                tracing_semaphores: Semaphore::new(eth_config.max_tracing_requests).into(),
-            },
+            shared: SharedContext { tracing_semaphores },
         })
     }
 

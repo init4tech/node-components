@@ -24,7 +24,6 @@ use reth::{
 use reth_chainspec::ChainSpec;
 use reth_node_api::{NodePrimitives, NodeTypes, NodeTypesWithDB};
 use reth_node_ethereum::EthEngineTypes;
-use reth_trie_db::MerklePatriciaTrie;
 use std::marker::PhantomData;
 use tokio::sync::broadcast::error::SendError;
 
@@ -84,8 +83,6 @@ where
     type Primitives = EthPrimitives;
 
     type ChainSpec = ChainSpec;
-
-    type StateCommitment = MerklePatriciaTrie;
 
     type Storage = EthStorage;
 

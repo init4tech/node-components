@@ -137,6 +137,7 @@ where
                 replacement_uuid: None, // optional if implementing strategies that replace or cancel bundles
                 ..Default::default()    // all other options are not used.
             },
+            host_txs: vec![],
         };
 
         // submit the Bundle to the transaction cache
