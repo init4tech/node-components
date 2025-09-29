@@ -1,12 +1,13 @@
 //! Signet RPC receipt response builder.
 
-use alloy::consensus::Transaction;
-use alloy::consensus::{ReceiptEnvelope, TxReceipt, transaction::TransactionMeta};
-use alloy::primitives::{Address, TxKind};
-use alloy::rpc::types::eth::{Log, ReceiptWithBloom, TransactionReceipt};
-use reth::core::primitives::SignerRecoverable;
-use reth::primitives::{Receipt, TransactionSigned, TxType};
+use alloy::{
+    consensus::{ReceiptEnvelope, Transaction, TxReceipt, transaction::TransactionMeta},
+    primitives::{Address, TxKind},
+    rpc::types::eth::{Log, ReceiptWithBloom, TransactionReceipt},
+};
+use reth::primitives::{Receipt, TransactionSigned};
 use reth::rpc::server_types::eth::{EthApiError, EthResult};
+use reth::{core::primitives::SignerRecoverable, primitives::TxType};
 use signet_types::MagicSig;
 
 /// Builds an [`TransactionReceipt`] obtaining the inner receipt envelope from the given closure.

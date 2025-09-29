@@ -445,7 +445,7 @@ where
         //
         // last reviewed at tag v1.5.1
 
-        let BlockResult { sealed_block: block, execution_outcome } = block_result;
+        let BlockResult { sealed_block: block, execution_outcome, .. } = block_result;
 
         let ru_height = block.number();
         self.insert_signet_block(header, block, journal_hash, StorageLocation::Database)?;
