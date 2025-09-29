@@ -337,7 +337,7 @@ where
         let mut items = Vec::new();
         trace!(target: "signet_db_lifecycle", "taking zenith headers");
         let mut cursor_write = self.tx_ref().cursor_write::<ZenithHeaders>()?;
-        let mut walker = cursor_write.walk_range(target..)?;
+        let mut walker = cursor_write.walk_range(target + 1..)?;
         while let Some((k, DbZenithHeader(e))) = walker.next().transpose()? {
             walker.delete_current()?;
             items.push((k, e))
@@ -352,7 +352,7 @@ where
         target: BlockNumber,
         _remove_from: StorageLocation,
     ) -> ProviderResult<()> {
-        self.remove::<ZenithHeaders>(target..)?;
+        self.remove::<ZenithHeaders>(target + 1..)?;
         Ok(())
     }
 
@@ -375,7 +375,7 @@ where
         target: BlockNumber,
         remove_from: StorageLocation,
     ) -> ProviderResult<Vec<(BlockNumber, DbSignetEvent)>> {
-        let range = target..=(1 + self.last_block_number()?);
+        let range = target + 1..=self.last_block_number()?;
         let items = self.get_signet_events(range)?;
         self.remove_signet_events_above(target, remove_from)?;
         Ok(items)
@@ -390,7 +390,7 @@ where
         target: BlockNumber,
         _remove_from: StorageLocation,
     ) -> ProviderResult<()> {
-        self.remove::<SignetEvents>(target..)?;
+        self.remove::<SignetEvents>(target + 1..)?;
         Ok(())
     }
 
