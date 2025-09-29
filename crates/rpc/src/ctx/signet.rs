@@ -15,10 +15,10 @@ use alloy::{
 use futures_util::StreamExt;
 use reth::{
     core::primitives::SignerRecoverable,
-    primitives::{Block, EthPrimitives, Receipt, Recovered, RecoveredBlock, TransactionSigned},
+    primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
-        ProviderError, ProviderFactory, ProviderResult, ReceiptProvider, StateProviderFactory,
+        ProviderError, ProviderResult, ReceiptProvider, StateProviderFactory,
         TransactionsProvider, providers::BlockchainProvider,
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},

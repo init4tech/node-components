@@ -185,7 +185,7 @@ where
     where
         Tasks: TaskSpawner + Clone + 'static,
     {
-        SignetCtx::new(constants, provider, eth_config, tx_cache, spawner).map(|signet| Self {
+        SignetCtx::new(constants, provider, eth_config.clone(), tx_cache, spawner).map(|signet| Self {
             host,
             signet,
             shared: SharedContext {
