@@ -11,10 +11,12 @@ repository.workspace = true
 [dependencies]
 signet-node-types.workspace = true
 
-
 signet-evm.workspace = true
+signet-journal.workspace = true
 signet-types.workspace = true
 signet-zenith.workspace = true
+
+trevm.workspace = true
 
 alloy.workspace = true
 
@@ -25,3 +27,12 @@ reth-prune-types.workspace = true
 itertools.workspace = true
 serde.workspace = true
 tracing.workspace = true
+futures-util = "0.3.31"
+tokio.workspace = true
+auto_impl = "1.3.0"
+
+[dev-dependencies]
+serde_json.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-exex-test-utils.workspace = true
+signet-constants = { workspace = true, features = ["test-utils"] }

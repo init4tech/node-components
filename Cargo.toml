@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.9.1"
+version = "0.10.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,12 +34,13 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.9.0", path = "crates/blobber" }
-signet-db = { version = "0.9.0", path = "crates/db" }
-signet-node-types = { version = "0.9.0", path = "crates/node-types" }
-signet-rpc = { version = "0.9.0", path = "crates/rpc" }
+signet-blobber = { version = "0.10", path = "crates/blobber" }
+signet-block-processor = { version = "0.10", path = "crates/block-processor" }
+signet-db = { version = "0.10", path = "crates/db" }
+signet-node-types = { version = "0.10", path = "crates/node-types" }
+signet-rpc = { version = "0.10", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.10.0", features = ["alloy"] }
+init4-bin-base = { version = "0.13.0", features = ["alloy"] }
 
 signet-bundle = "0.11.0"
 signet-constants = "0.11.0"
@@ -48,6 +49,7 @@ signet-extract = "0.11.0"
 signet-tx-cache = "0.11.0"
 signet-types = "0.11.0"
 signet-zenith = "0.11.0"
+signet-journal = "0.11.0"
 
 # ajj
 ajj = { version = "0.3.4" }
@@ -56,7 +58,6 @@ ajj = { version = "0.3.4" }
 trevm = { version = "0.29.0", features = ["full_env_cfg"] }
 
 # Alloy periphery crates
-alloy-core = { version = "1.4" }
 alloy = { version = "1.0.35", features = [
     "full",
     "rpc-types-beacon",
@@ -118,5 +119,13 @@ uuid = "1.16.0"
 alloy-rlp = "0.3.11"
 tempfile = "3.17.0"
 
-[patch.crates-io]
-init4-bin-base = {path = "../bin-base" }
+# [patch.crates-io]
+# signet-bundle = { path = "../sdk/crates/bundle"}
+# signet-constants = { path = "../sdk/crates/constants"}
+# signet-evm = { path = "../sdk/crates/evm"}
+# signet-extract = { path = "../sdk/crates/extract"}
+# signet-tx-cache = { path = "../sdk/crates/tx-cache"}
+# signet-types = { path = "../sdk/crates/types"}
+# signet-zenith = { path = "../sdk/crates/zenith"}
+
+# init4-bin-base = { path = "../shared" }

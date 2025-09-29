@@ -1,7 +1,8 @@
 //! Type conversion traits and implementations for converting between Reth, Alloy, and Signet types.
 //!
-//! This module provides a set of conversion traits that enable seamless interoperability
-//! between different type systems used in the Ethereum ecosystem:
+//! This module provides a set of conversion traits that enable seamless
+//! interoperability between different type systems used in the Ethereum
+//! ecosystem:
 //!
 //! - **Reth types**: Core primitives from the Reth Ethereum client
 //! - **Alloy types**: Modern Ethereum types from the Alloy framework
@@ -9,7 +10,7 @@
 use alloy::consensus::TxReceipt;
 
 /// Trait for types that can be converted into other types as they're already compatible.
-/// Uswed for converting between alloy/reth/signet types.
+/// Used for converting between alloy/reth/signet types.
 pub trait DataCompat<Other: DataCompat<Self>>: Sized {
     /// Convert `self` into the target type.
     fn convert(self) -> Other;

@@ -1,5 +1,5 @@
 use crate::{
-    DataCompat, DbZenithHeader, RuChain, ZenithHeaders,
+    DataCompat, DbZenithHeader, RuChain, SignetDbRw, ZenithHeaders,
     tables::{DbSignetEvent, JournalHashes, SignetEvents},
     traits::RuWriter,
 };
@@ -8,16 +8,14 @@ use alloy::{
     primitives::{Address, B256, BlockNumber, U256, map::HashSet},
 };
 use reth::{
-    primitives::{Account, StaticFileSegment},
+    primitives::StaticFileSegment,
     providers::{
-        AccountReader, BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain,
-        DBProvider, DatabaseProviderRW, HistoryWriter, OriginalValuesKnown, ProviderError,
-        ProviderResult, StageCheckpointWriter, StateWriter, StaticFileProviderFactory,
-        StaticFileWriter, StorageLocation,
+        BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain, DBProvider,
+        HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult, StageCheckpointWriter,
+        StateWriter, StaticFileProviderFactory, StaticFileWriter, StorageLocation,
     },
 };
 use reth_db::{
-    PlainAccountState,
     cursor::{DbCursorRO, DbCursorRW},
     models::{BlockNumberAddress, StoredBlockBodyIndices},
     tables,
@@ -25,7 +23,7 @@ use reth_db::{
 };
 use reth_prune_types::{MINIMUM_PRUNING_DISTANCE, PruneMode};
 use signet_evm::BlockResult;
-use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
+use signet_node_types::NodeTypesDbTrait;
 use signet_types::primitives::RecoveredBlock;
 use signet_zenith::{
     Passage::{self, Enter, EnterToken},
@@ -35,7 +33,7 @@ use signet_zenith::{
 use std::ops::RangeInclusive;
 use tracing::{debug, instrument, trace, warn};
 
-impl<Db> RuWriter for DatabaseProviderRW<Db, SignetNodeTypes<Db>>
+impl<Db> RuWriter for SignetDbRw<Db>
 where
     Db: NodeTypesDbTrait,
 {
@@ -102,31 +100,6 @@ where
         self.tx_ref()
             .put::<SignetEvents>(ru_height, DbSignetEvent::Transact(index, t))
             .map_err(Into::into)
-    }
-
-    /// Increase the balance of an account.
-    fn mint_eth(&self, address: Address, amount: U256) -> ProviderResult<Account> {
-        let mut account = self.basic_account(&address)?.unwrap_or_default();
-        account.balance = account.balance.saturating_add(amount);
-        self.tx_ref().put::<PlainAccountState>(address, account)?;
-        trace!(%address, balance = %account.balance, "minting ETH");
-        Ok(account)
-    }
-
-    /// Decrease the balance of an account.
-    fn burn_eth(&self, address: Address, amount: U256) -> ProviderResult<Account> {
-        let mut account = self.basic_account(&address)?.unwrap_or_default();
-        if amount > account.balance {
-            warn!(
-                balance = %account.balance,
-                amount = %amount,
-                "burning more than balance"
-            );
-        }
-        account.balance = account.balance.saturating_sub(amount);
-        self.tx_ref().put::<PlainAccountState>(address, account)?;
-        trace!(%address, balance = %account.balance, "burning ETH");
-        Ok(account)
     }
 
     fn insert_signet_header(
@@ -430,7 +403,6 @@ where
     /// see the documentation for each function.
     fn append_host_block(
         &self,
-        host_height: u64,
         header: Option<Zenith::BlockHeader>,
         transacts: impl IntoIterator<Item = Transact>,
         enters: impl IntoIterator<Item = Passage::Enter>,
@@ -480,7 +452,7 @@ where
 
         self.update_pipeline_stages(ru_height, false)?;
 
-        debug!(target: "signet_db_lifecycle", host_height, ru_height, "Appended blocks");
+        debug!(target: "signet_db_lifecycle", ru_height, "Appended blocks");
 
         Ok(())
     }

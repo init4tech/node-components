@@ -50,10 +50,14 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod config;
+
 pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
-pub use ctx::{RpcCtx, RuRevmState};
+pub use ctx::{LoadState, RpcCtx, SignetCtx};
+
+mod debug;
+pub use debug::{DebugError, debug};
 
 mod eth;
 pub use eth::{CallErrorData, EthError, eth};
@@ -75,8 +79,11 @@ pub mod utils;
 pub use ::ajj;
 
 use ajj::Router;
+use reth::providers::{ProviderFactory, providers::ProviderNodeTypes};
+use reth_db::mdbx::DatabaseEnv;
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
+use std::sync::Arc;
 
 /// Create a new router with the given host and signet types.
 pub fn router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
@@ -84,14 +91,16 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new().nest("eth", eth::<Host, Signet>()).nest("signet", signet::<Host, Signet>())
+    ajj::Router::new()
+        .nest("eth", eth::<Host, Signet>())
+        .nest("signet", signet::<Host, Signet>())
+        .nest("debug", debug::<Host, Signet>())
 }
 
 /// Create a new hazmat router that exposes the `inspect` API.
-pub fn hazmat_router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
+pub fn hazmat_router<Signet>() -> Router<ProviderFactory<Signet>>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    Signet: Pnt + ProviderNodeTypes<DB = Arc<DatabaseEnv>>,
 {
-    ajj::Router::new().nest("inspect", inspect::inspect::<Host, Signet>())
+    ajj::Router::new().nest("inspect", inspect::inspect::<Signet>())
 }
