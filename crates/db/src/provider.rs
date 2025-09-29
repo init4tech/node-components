@@ -151,12 +151,16 @@ where
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // Last reviewed at tag v1.5.1
+        // Last reviewed at tag v1.8.1
         let block_number = block.number();
+
+        // SIGNET-SPECIFIC
+        // Put journal hash into the DB
         if let Some(header) = header {
             self.insert_signet_header(header, block_number)?;
         }
 
+        // SIGNET-SPECIFIC
         // Put journal hash into the DB
         self.tx_ref().put::<crate::JournalHashes>(block_number, journal_hash)?;
 
@@ -226,7 +230,7 @@ where
         // duration metrics have been removed, and the implementation has been
         // modified to work with a single signet block.
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
 
         let sf = self.static_file_provider();
 
@@ -415,7 +419,7 @@ where
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
 
         let BlockResult { sealed_block: block, execution_outcome, .. } = block_result;
 
@@ -467,13 +471,13 @@ where
         // `BlockExecutionWriter::take_block_and_execution_above`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
 
-        let range = target..=self.last_block_number()?;
+        let range = target + 1..=self.last_block_number()?;
 
         // This block is copied from `unwind_trie_state_range`
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
         {
             let changed_accounts = self
                 .tx_ref()
@@ -537,7 +541,7 @@ where
     #[instrument(skip(self))]
     fn ru_remove_blocks_and_execution_above(
         &self,
-        target: BlockNumber,
+        block: BlockNumber,
         remove_from: StorageLocation,
     ) -> ProviderResult<()> {
         // Implementation largely copied from
@@ -545,13 +549,13 @@ where
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
 
         // This block is copied from `unwind_trie_state_range`
         //
-        // last reviewed at tag v1.5.1
+        // last reviewed at tag v1.8.1
         {
-            let range = target..=self.last_block_number()?;
+            let range = block + 1..=self.last_block_number()?;
             let changed_accounts = self
                 .tx_ref()
                 .cursor_read::<tables::AccountChangeSets>()?
@@ -572,14 +576,14 @@ where
             self.unwind_storage_history_indices(changed_storages.iter().copied())?;
         }
 
-        self.remove_state_above(target, remove_from)?;
-        self.remove_blocks_above(target, remove_from)?;
+        self.remove_state_above(block, remove_from)?;
+        self.remove_blocks_above(block, remove_from)?;
 
         // Signet specific:
-        self.remove_extraction_results_above(target, remove_from)?;
+        self.remove_extraction_results_above(block, remove_from)?;
 
         // Update pipeline stages
-        self.update_pipeline_stages(target, true)?;
+        self.update_pipeline_stages(block, true)?;
 
         Ok(())
     }
@@ -594,7 +598,7 @@ where
         // `StateWriter::write_state` for `DatabaseProvider`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         //
-        // Last reviewed at tag v1.5.1
+        // Last reviewed at tag v1.8.1
         let first_block = execution_outcome.first_block();
         let block_count = execution_outcome.len() as u64;
         let last_block = execution_outcome.last_block();

@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.10.4"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,11 +34,11 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.10", path = "crates/blobber" }
-signet-block-processor = { version = "0.10", path = "crates/block-processor" }
-signet-db = { version = "0.10", path = "crates/db" }
-signet-node-types = { version = "0.10", path = "crates/node-types" }
-signet-rpc = { version = "0.10", path = "crates/rpc" }
+signet-blobber = { version = "0.11", path = "crates/blobber" }
+signet-block-processor = { version = "0.11", path = "crates/block-processor" }
+signet-db = { version = "0.11", path = "crates/db" }
+signet-node-types = { version = "0.11", path = "crates/node-types" }
+signet-rpc = { version = "0.11", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
