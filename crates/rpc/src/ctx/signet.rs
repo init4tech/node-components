@@ -18,8 +18,8 @@ use reth::{
     primitives::{Block, Receipt, Recovered, RecoveredBlock, TransactionSigned},
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, CanonStateSubscriptions, HeaderProvider,
-        ProviderError, ProviderResult, ReceiptProvider, StateProviderFactory,
-        TransactionsProvider, providers::BlockchainProvider,
+        ProviderError, ProviderResult, ReceiptProvider, StateProviderFactory, TransactionsProvider,
+        providers::BlockchainProvider,
     },
     revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
     rpc::{
