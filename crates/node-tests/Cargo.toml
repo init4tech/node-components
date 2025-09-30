@@ -1,0 +1,40 @@
+[package]
+name = "signet-node-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+signet-node.workspace = true
+signet-node-config = { workspace = true, features = ["test_utils"] }
+signet-node-types.workspace = true
+signet-db.workspace = true
+
+signet-constants.workspace = true
+signet-evm.workspace = true
+signet-test-utils.workspace = true
+signet-types.workspace = true
+signet-zenith.workspace = true
+
+alloy.workspace = true
+
+reth.workspace = true
+reth-db.workspace = true
+reth-exex.workspace = true
+reth-exex-test-utils.workspace = true
+reth-node-api.workspace = true
+
+eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+signet-genesis.workspace = true
+
+serde_json.workspace = true
+serial_test = "3.2.0"

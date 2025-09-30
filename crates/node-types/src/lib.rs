@@ -11,6 +11,9 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod block;
+pub use block::{Reth2718Coder, ZenithBlock};
+
 mod utils;
 pub use utils::{NodeTypesDbTrait, Pnt};
 

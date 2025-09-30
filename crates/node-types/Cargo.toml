@@ -9,10 +9,13 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+alloy.workspace = true
 reth.workspace = true
 reth-chainspec.workspace = true
 reth-db.workspace = true
 reth-node-api.workspace = true
 reth-node-ethereum.workspace = true
+signet-zenith.workspace = true
 
 tokio.workspace = true
+tracing.workspace = true

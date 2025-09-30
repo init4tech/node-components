@@ -1,0 +1,17 @@
+[package]
+name = "signet-genesis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy = { workspace = true, features = ["genesis"] }
+init4-bin-base.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+signet-constants.workspace = true
+thiserror.workspace = true
