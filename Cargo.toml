@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -37,8 +37,13 @@ incremental = false
 signet-blobber = { version = "0.11", path = "crates/blobber" }
 signet-block-processor = { version = "0.11", path = "crates/block-processor" }
 signet-db = { version = "0.11", path = "crates/db" }
+signet-genesis = { version = "0.11", path = "crates/genesis" }
+signet-node = { version = "0.11", path = "crates/node" }
+signet-node-config = { version = "0.11", path = "crates/node-config" }
+signet-node-tests = { version = "0.11", path = "crates/node-tests" }
 signet-node-types = { version = "0.11", path = "crates/node-types" }
 signet-rpc = { version = "0.11", path = "crates/rpc" }
+
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
@@ -46,6 +51,7 @@ signet-bundle = "0.11.1"
 signet-constants = "0.11.1"
 signet-evm = "0.11.1"
 signet-extract = "0.11.1"
+signet-test-utils = "0.11.1"
 signet-tx-cache = "0.11.1"
 signet-types = "0.11.1"
 signet-zenith = "0.11.1"
@@ -124,6 +130,7 @@ tempfile = "3.17.0"
 # signet-constants = { path = "../sdk/crates/constants"}
 # signet-evm = { path = "../sdk/crates/evm"}
 # signet-extract = { path = "../sdk/crates/extract"}
+# signet-test-utils = { path = "../sdk/crates/test-utils"}
 # signet-tx-cache = { path = "../sdk/crates/tx-cache"}
 # signet-types = { path = "../sdk/crates/types"}
 # signet-zenith = { path = "../sdk/crates/zenith"}
