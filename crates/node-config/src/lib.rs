@@ -19,3 +19,18 @@ mod rpc;
 /// Test configuration for Signet Nodes.
 #[cfg(feature = "test_utils")]
 pub mod test_utils;
+
+#[cfg(test)]
+mod test {
+    use init4_bin_base::utils::from_env::FromEnv;
+
+    use crate::SignetNodeConfig;
+
+    #[test]
+    fn print_inventory() {
+        let inventory = SignetNodeConfig::inventory();
+        for config in inventory {
+            println!("{config:?}");
+        }
+    }
+}

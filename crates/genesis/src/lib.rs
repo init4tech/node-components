@@ -35,7 +35,7 @@ pub static TEST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
 });
 
 /// Environment variable for specifying the genesis JSON file path.
-const GENSIS_JSON_PATH: &str = "GENSIS_JSON_PATH";
+const GENESIS_JSON_PATH: &str = "GENESIS_JSON_PATH";
 
 /// Result type for genesis operations.
 pub type Result<T, E = GenesisError> = std::result::Result<T, E>;
@@ -122,7 +122,7 @@ impl FromEnv for GenesisSpec {
                 optional: true,
             },
             &EnvItemInfo {
-                var: GENSIS_JSON_PATH,
+                var: GENESIS_JSON_PATH,
                 description: "A filepath to the genesis JSON file. Required if CHAIN_NAME is not set.",
                 optional: true,
             },
@@ -132,7 +132,7 @@ impl FromEnv for GenesisSpec {
     fn from_env() -> Result<Self, FromEnvErr<Self::Error>> {
         parse_env_if_present::<KnownChains>("CHAIN_NAME")
             .map(Into::into)
-            .or_else(|_| parse_env_if_present::<PathBuf>(GENSIS_JSON_PATH).map(Into::into))
+            .or_else(|_| parse_env_if_present::<PathBuf>(GENESIS_JSON_PATH).map(Into::into))
     }
 }
 
