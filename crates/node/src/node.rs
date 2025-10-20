@@ -1,3 +1,4 @@
+use crate::metrics;
 use alloy::{
     consensus::BlockHeader,
     eips::NumHash,
@@ -314,6 +315,8 @@ where
         committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
     pub async fn on_notification(&self, notification: ExExNotification<Host>) -> eyre::Result<()> {
+        metrics::record_notification_received(&notification);
+
         // NB: REVERTS MUST RUN FIRST
         let mut reverted = None;
         if let Some(chain) = notification.reverted_chain() {
@@ -335,6 +338,7 @@ where
             self.update_status(committed, reverted)?;
         }
 
+        metrics::record_notification_processed(&notification);
         Ok(())
     }
 

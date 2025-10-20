@@ -9,23 +9,28 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+signet-block-processor.workspace = true
+signet-db.workspace = true
+signet-node-config.workspace = true
+signet-node-types.workspace = true
+signet-rpc.workspace = true
+
+signet-blobber.workspace = true
+signet-tx-cache.workspace = true
+signet-types.workspace = true
+
 alloy.workspace = true
-eyre.workspace = true
-futures-util = "0.3.31"
-reqwest.workspace = true
+
 reth.workspace = true
 reth-chainspec.workspace = true
 reth-db.workspace = true
 reth-db-common.workspace = true
 reth-exex.workspace = true
 reth-node-api.workspace = true
-signet-blobber.workspace = true
-signet-block-processor.workspace = true
-signet-db.workspace = true
-signet-node-config.workspace = true
-signet-node-types.workspace = true
-signet-rpc.workspace = true
-signet-tx-cache.workspace = true
-signet-types.workspace = true
+
+eyre.workspace = true
+futures-util.workspace = true
+metrics.workspace = true
+reqwest.workspace = true
 tokio.workspace = true
 tracing.workspace = true

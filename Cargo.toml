@@ -105,10 +105,12 @@ parking_lot = "0.12"
 chrono = "0.4.38"
 clap = "4"
 eyre = "0.6.12"
+futures-util = "0.3.31"
 hex = { package = "const-hex", version = "1.10", default-features = false, features = [
     "alloc",
 ] }
 itertools = "0.14.0"
+metrics = "0.24.2"
 openssl = { version = "0.10", features = ["vendored"] }
 proptest = "1.6.0"
 reqwest = "0.12.9"

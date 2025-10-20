@@ -10,23 +10,27 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+signet-constants.workspace = true
 signet-evm.workspace = true
 signet-extract.workspace = true
 signet-journal.workspace = true
+signet-types.workspace = true
 
 init4-bin-base.workspace = true
+
+trevm.workspace = true
 
 signet-blobber.workspace = true
 signet-db.workspace = true
 signet-node-types.workspace = true
 
+alloy.workspace = true
+
 reth.workspace = true
 reth-exex.workspace = true
 reth-node-api.workspace = true
-
-tracing.workspace = true
-eyre.workspace = true
-alloy.workspace = true
-signet-constants.workspace = true
-trevm.workspace = true
 reth-chainspec.workspace = true
+
+eyre.workspace = true
+metrics.workspace = true
+tracing.workspace = true

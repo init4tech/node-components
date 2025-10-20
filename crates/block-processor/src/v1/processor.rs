@@ -1,4 +1,4 @@
-use crate::Chain;
+use crate::{Chain, metrics};
 use alloy::{consensus::BlockHeader, primitives::B256};
 use eyre::ContextCompat;
 use init4_bin_base::utils::calc::SlotCalculator;
@@ -146,6 +146,8 @@ where
                 }
                 start = Some(new_ru_height);
             }
+
+            metrics::record_extracts(&block_extracts);
             current = block_extracts.ru_height;
             let spec_id = self.spec_id(block_extracts.host_block.timestamp());
 
@@ -159,6 +161,8 @@ where
 
             tracing::trace!("Running EVM");
             let block_result = self.run_evm(&block_extracts, spec_id).instrument(span).await?;
+            metrics::record_block_result(&block_result);
+
             tracing::trace!("Committing EVM results");
             let journal =
                 self.commit_evm_results(&block_extracts, &block_result, prev_block_journal)?;
