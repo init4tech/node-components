@@ -11,6 +11,8 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod metrics;
+
 mod node;
 pub use node::{GENESIS_JOURNAL_HASH, SignetNode};
 

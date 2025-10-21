@@ -11,6 +11,8 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+pub(crate) mod metrics;
+
 mod v1;
 pub use v1::SignetBlockProcessor as SignetBlockProcessorV1;
 
