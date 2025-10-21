@@ -1,7 +1,14 @@
-use std::sync::LazyLock;
+//! Metrics to track
+//!
+//! - Counters
+//!   - Number of notifications received
+//!   - Number of reorgs received
+//!   - Number of notifications processed
+//!   - Number of reorgs processed
 
 use metrics::{Counter, counter, describe_counter};
 use reth_exex::ExExNotification;
+use std::sync::LazyLock;
 
 const NOTIFICATION_RECEIVED: &str = "signet.node.notification_received";
 const NOTIFICATION_RECEIVED_HELP: &str = "Number of notifications received";

@@ -1,11 +1,17 @@
 //! Metrics to track
 //!
 //! - Counters:
+//!   - Number of builder blocks extracted
 //!   - Number of builder blocks processed
 //!   - Number of transactions processed
-//!   - slots without builder blocks
+//!   - Host blocks without builder blocks
 //! - Histograms:
-//!   - slots since last builder block
+//!   - enter events extracted per block
+//!   - enter token events extracted per block
+//!   - transact events extracted per block
+//!   - enter events processed per block
+//!   - enter token events processed per block
+//!   - transact events processed
 //!   - Transaction counts per builder block
 
 use metrics::{Counter, Histogram, counter, describe_counter, describe_histogram, histogram};
@@ -23,8 +29,8 @@ const BLOCKS_PROCESSED_HELP: &str = "Number of signet blocks processed";
 const TRANSACTIONS_PROCESSED: &str = "signet.block_processor.transactions_processed";
 const TRANSACTIONS_PROCESSED_HELP: &str = "Number of transactions processed in signet blocks";
 
-const SLOTS_WITHOUT_BUILDER_BLOCK: &str = "signet.block_processor.slots_without_builder_block";
-const SLOTS_WITHOUT_BUILDER_BLOCK_HELP: &str = "Number of slots without builder blocks";
+const HOST_WITHOUT_BUILDER_BLOCK: &str = "signet.block_processor.host_without_builder_block";
+const HOST_WITHOUT_BUILDER_BLOCK_HELP: &str = "Number of host blocks without builder blocks";
 
 const TRANSACTIONS_PER_BUILDER_BLOCK: &str = "signet.block_processor.txns_per_builder_block";
 const TRANSACTIONS_PER_BUILDER_BLOCK_HELP: &str =
@@ -54,7 +60,7 @@ static DESCRIBE: LazyLock<()> = LazyLock::new(|| {
     describe_counter!(BUILDER_BLOCKS_EXTRACTED, BUILDER_BLOCKS_EXTRACTED_HELP);
     describe_counter!(BLOCKS_PROCESSED, BLOCKS_PROCESSED_HELP);
     describe_counter!(TRANSACTIONS_PROCESSED, TRANSACTIONS_PROCESSED_HELP);
-    describe_counter!(SLOTS_WITHOUT_BUILDER_BLOCK, SLOTS_WITHOUT_BUILDER_BLOCK_HELP);
+    describe_counter!(HOST_WITHOUT_BUILDER_BLOCK, HOST_WITHOUT_BUILDER_BLOCK_HELP);
 
     describe_histogram!(TRANSACTIONS_PER_BUILDER_BLOCK, TRANSACTIONS_PER_BUILDER_BLOCK_HELP);
     describe_histogram!(TRANSACT_EXTRACTS, TRANSACT_EXTRACTS_HELP);
@@ -92,13 +98,13 @@ fn inc_transactions_processed(value: u64) {
     transactions_processed().increment(value);
 }
 
-fn slots_without_builder_block() -> Counter {
+fn host_without_builder_block() -> Counter {
     LazyLock::force(&DESCRIBE);
-    counter!(SLOTS_WITHOUT_BUILDER_BLOCK)
+    counter!(HOST_WITHOUT_BUILDER_BLOCK)
 }
 
-fn inc_slots_without_builder_block() {
-    slots_without_builder_block().increment(1);
+fn inc_host_without_builder_block() {
+    host_without_builder_block().increment(1);
 }
 
 fn transactions_per_builder_block() -> Histogram {
@@ -172,7 +178,7 @@ pub(crate) fn record_extracts<T: Extractable>(extracts: &Extracts<'_, T>) {
     if extracts.events.submitted.is_some() {
         inc_blocks_extracted();
     } else {
-        inc_slots_without_builder_block();
+        inc_host_without_builder_block();
     }
 }
 
