@@ -123,7 +123,6 @@ fn transact_extracts() -> Histogram {
 
 fn record_transact_extracts(value: u64) {
     transact_extracts().record(value as f64);
-    // todo!("Implement transact events recording")
 }
 
 fn enter_extracts() -> Histogram {
