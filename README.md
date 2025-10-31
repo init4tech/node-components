@@ -18,7 +18,7 @@ implement core node functionality, but are potentially indepedently useful.
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-[Signet docs]: https://docs.signet.sh
+[Signet docs]: https://signet.sh/docs
 
 ## Note on Semver
 
