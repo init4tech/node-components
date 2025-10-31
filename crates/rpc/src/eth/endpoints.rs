@@ -88,7 +88,7 @@ impl TryFrom<SubscribeArgs> for InterestKind {
 
 pub(super) async fn not_supported() -> ResponsePayload<(), ()> {
     ResponsePayload::internal_error_message(Cow::Borrowed(
-        "Method not supported. See signet documentation for a list of unsupported methods: https://docs.signet.sh/.",
+        "Method not supported. See signet documentation for a list of unsupported methods: https://signet.sh/docs",
     ))
 }
 
