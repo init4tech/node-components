@@ -177,6 +177,7 @@ where
             constants.clone(),
             config.chain_spec().clone(),
             factory.clone(),
+            Box::new(ctx.provider().clone()),
             config.slot_calculator(),
             blob_cacher,
         );
