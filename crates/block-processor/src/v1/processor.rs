@@ -1,10 +1,17 @@
 use crate::{Chain, metrics};
-use alloy::{consensus::BlockHeader, primitives::B256};
+use alloy::{
+    consensus::BlockHeader,
+    primitives::{Address, B256, map::HashSet},
+};
+use core::fmt;
 use eyre::ContextCompat;
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::{
     primitives::EthPrimitives,
-    providers::{BlockNumReader, BlockReader, ExecutionOutcome, HeaderProvider, ProviderFactory},
+    providers::{
+        BlockNumReader, BlockReader, ExecutionOutcome, HeaderProvider, ProviderFactory,
+        StateProviderFactory,
+    },
     revm::{database::StateProviderDatabase, db::StateBuilder},
 };
 use reth_chainspec::{ChainSpec, EthereumHardforks};
@@ -16,14 +23,12 @@ use signet_evm::{BlockResult, EvmNeedsCfg, SignetDriver};
 use signet_extract::{Extractor, Extracts};
 use signet_journal::HostJournal;
 use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 use trevm::revm::primitives::hardfork::SpecId;
 
 /// A block processor that listens to host chain commits and processes
 /// Signet blocks accordingly.
-#[derive(Debug)]
 pub struct SignetBlockProcessor<Db>
 where
     Db: NodeTypesDbTrait,
@@ -37,11 +42,23 @@ where
     /// A [`ProviderFactory`] instance to allow RU database access.
     ru_provider: ProviderFactory<SignetNodeTypes<Db>>,
 
+    /// A [`ProviderFactory`] instance to allow Host database access.
+    host_provider: Box<dyn StateProviderFactory>,
+
     /// The slot calculator.
     slot_calculator: SlotCalculator,
 
     /// A handle to the blob cacher.
     blob_cacher: CacheHandle,
+}
+
+impl<Db> fmt::Debug for SignetBlockProcessor<Db>
+where
+    Db: NodeTypesDbTrait,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SignetBlockProcessor").finish()
+    }
 }
 
 impl<Db> SignetBlockProcessor<Db>
@@ -53,10 +70,11 @@ where
         constants: SignetSystemConstants,
         chain_spec: Arc<ChainSpec>,
         ru_provider: ProviderFactory<SignetNodeTypes<Db>>,
+        host_provider: Box<dyn StateProviderFactory>,
         slot_calculator: SlotCalculator,
         blob_cacher: CacheHandle,
     ) -> Self {
-        Self { constants, chain_spec, ru_provider, slot_calculator, blob_cacher }
+        Self { constants, chain_spec, ru_provider, host_provider, slot_calculator, blob_cacher }
     }
 
     /// Get the active spec id at the given timestamp.
@@ -90,6 +108,12 @@ where
         trevm.set_spec_id(spec_id);
 
         Ok(trevm)
+    }
+
+    /// Check if the given address should be aliased.
+    fn should_alias(&self, host_height: u64, address: Address) -> eyre::Result<bool> {
+        let state = self.host_provider.history_by_block_number(host_height)?;
+        state.account_code(&address).map(|code| code.is_some()).map_err(Into::into)
     }
 
     /// Called when the host chain has committed a block or set of blocks.
@@ -239,8 +263,17 @@ where
             None => VecDeque::new(),
         };
 
+        let mut to_alias: HashSet<Address> = Default::default();
+        for transact in block_extracts.transacts() {
+            let addr = transact.host_sender();
+            if self.should_alias(host_height, addr)? {
+                to_alias.insert(addr);
+            }
+        }
+
         let mut driver = SignetDriver::new(
             block_extracts,
+            to_alias,
             txns,
             parent_header.convert(),
             self.constants.clone(),

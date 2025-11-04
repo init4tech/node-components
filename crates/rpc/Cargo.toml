@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 signet-node-types.workspace = true
+signet-db.workspace = true
 
 signet-bundle.workspace = true
 signet-evm.workspace = true
@@ -20,6 +21,8 @@ ajj.workspace = true
 trevm.workspace = true
 
 alloy.workspace = true
+revm-inspectors.workspace = true
+
 reth.workspace = true
 reth-chainspec.workspace = true
 reth-db.workspace = true
@@ -42,8 +45,6 @@ tracing.workspace = true
 serde_json.workspace = true
 futures-util = "0.3.31"
 itertools.workspace = true
-revm-inspectors = "0.30.0"
-signet-db.workspace = true
 
 [dev-dependencies]
 signet-zenith.workspace = true

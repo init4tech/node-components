@@ -298,11 +298,12 @@ where
     ) -> Result<alloy::rpc::types::Transaction, EthApiError> {
         let sig = tx.signature();
 
-        let sender = if let Some(sender) = MagicSig::try_from_signature(sig).map(|s| s.sender()) {
-            sender
-        } else {
-            tx.recover_signer().map_err(|_| EthApiError::InvalidTransactionSignature)?
-        };
+        let sender =
+            if let Some(sender) = MagicSig::try_from_signature(sig).map(|s| s.rollup_sender()) {
+                sender
+            } else {
+                tx.recover_signer().map_err(|_| EthApiError::InvalidTransactionSignature)?
+            };
 
         let tx = Recovered::new_unchecked(tx, sender);
 
