@@ -46,22 +46,22 @@ signet-rpc = { version = "0.14", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
-signet-bundle = "0.14"
-signet-constants = "0.14"
-signet-evm = "0.14"
-signet-extract = "0.14"
-signet-test-utils = "0.14"
-signet-tx-cache = "0.14"
-signet-types = "0.14"
-signet-zenith = "0.14"
-signet-journal = "0.14"
+signet-bundle = "0.15"
+signet-constants = "0.15"
+signet-evm = "0.15"
+signet-extract = "0.15"
+signet-test-utils = "0.15"
+signet-tx-cache = "0.15"
+signet-types = "0.15"
+signet-zenith = "0.15"
+signet-journal = "0.15"
 
 # ajj
 ajj = { version = "0.3.4" }
 
 # trevm
-trevm = { version = "0.29.0", features = ["full_env_cfg"] }
-revm-inspectors = "0.30.0" # should be 1 more than trevm version, usually
+trevm = { version = "0.31.0", features = ["full_env_cfg"] }
+revm-inspectors = "0.32.0" # should be 1 more than trevm version, usually
 
 # Alloy periphery crates
 alloy = { version = "1.0.35", features = [
