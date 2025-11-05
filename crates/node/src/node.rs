@@ -11,7 +11,8 @@ use reth::{
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, CanonChainTracker,
         CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
-        NodePrimitivesProvider, ProviderFactory, providers::BlockchainProvider,
+        NodePrimitivesProvider, ProviderFactory, StateProviderFactory,
+        providers::BlockchainProvider,
     },
     rpc::types::engine::ForkchoiceState,
 };
@@ -173,11 +174,13 @@ where
             .wrap_err("failed to create blob cacher")?
             .spawn();
 
+        let bdsp: Box<dyn StateProviderFactory> = Box::new(ctx.provider().clone());
+
         let processor = SignetBlockProcessorV1::new(
             constants.clone(),
             config.chain_spec().clone(),
             factory.clone(),
-            Box::new(ctx.provider().clone()),
+            bdsp,
             config.slot_calculator(),
             blob_cacher,
         );

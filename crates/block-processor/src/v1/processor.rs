@@ -1,4 +1,4 @@
-use crate::{Chain, metrics};
+use crate::{AliasOracle, AliasOracleFactory, Chain, metrics};
 use alloy::{
     consensus::BlockHeader,
     primitives::{Address, B256, map::HashSet},
@@ -29,7 +29,7 @@ use trevm::revm::primitives::hardfork::SpecId;
 
 /// A block processor that listens to host chain commits and processes
 /// Signet blocks accordingly.
-pub struct SignetBlockProcessor<Db>
+pub struct SignetBlockProcessor<Db, Alias = Box<dyn StateProviderFactory>>
 where
     Db: NodeTypesDbTrait,
 {
@@ -43,7 +43,7 @@ where
     ru_provider: ProviderFactory<SignetNodeTypes<Db>>,
 
     /// A [`ProviderFactory`] instance to allow Host database access.
-    host_provider: Box<dyn StateProviderFactory>,
+    alias_oracle: Alias,
 
     /// The slot calculator.
     slot_calculator: SlotCalculator,
@@ -61,20 +61,21 @@ where
     }
 }
 
-impl<Db> SignetBlockProcessor<Db>
+impl<Db, Alias> SignetBlockProcessor<Db, Alias>
 where
     Db: NodeTypesDbTrait,
+    Alias: AliasOracleFactory,
 {
     /// Create a new [`SignetBlockProcessor`].
     pub const fn new(
         constants: SignetSystemConstants,
         chain_spec: Arc<ChainSpec>,
         ru_provider: ProviderFactory<SignetNodeTypes<Db>>,
-        host_provider: Box<dyn StateProviderFactory>,
+        alias_oracle: Alias,
         slot_calculator: SlotCalculator,
         blob_cacher: CacheHandle,
     ) -> Self {
-        Self { constants, chain_spec, ru_provider, host_provider, slot_calculator, blob_cacher }
+        Self { constants, chain_spec, ru_provider, alias_oracle, slot_calculator, blob_cacher }
     }
 
     /// Get the active spec id at the given timestamp.
@@ -111,9 +112,8 @@ where
     }
 
     /// Check if the given address should be aliased.
-    fn should_alias(&self, host_height: u64, address: Address) -> eyre::Result<bool> {
-        let state = self.host_provider.history_by_block_number(host_height)?;
-        state.account_code(&address).map(|code| code.is_some()).map_err(Into::into)
+    fn should_alias(&self, address: Address, host_height: u64) -> eyre::Result<bool> {
+        self.alias_oracle.create(host_height)?.should_alias(address)
     }
 
     /// Called when the host chain has committed a block or set of blocks.
@@ -263,10 +263,11 @@ where
             None => VecDeque::new(),
         };
 
+        // Determine which addresses need to be aliased.
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if self.should_alias(host_height, addr)? {
+            if !to_alias.contains(&addr) && self.should_alias(addr, host_height)? {
                 to_alias.insert(addr);
             }
         }
