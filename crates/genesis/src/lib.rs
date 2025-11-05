@@ -18,11 +18,19 @@ use init4_bin_base::utils::from_env::{
 use signet_constants::KnownChains;
 use std::{borrow::Cow, path::PathBuf, str::FromStr, sync::LazyLock};
 
+/// Signet mainnet genesis file.
+pub const MAINNET_GENESIS_JSON: &str = include_str!("./mainnet.genesis.json");
+
 /// Pecorino genesis file.
 pub const PECORINO_GENESIS_JSON: &str = include_str!("./pecorino.genesis.json");
 
 /// Local genesis file for testing purposes.
 pub const TEST_GENESIS_JSON: &str = include_str!("./local.genesis.json");
+
+/// Mainnet genesis for the Signet mainnet.
+pub static MAINNET_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(MAINNET_GENESIS_JSON).expect("Failed to parse mainnet genesis")
+});
 
 /// Genesis for the Pecorino testnet.
 pub static PECORINO_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
@@ -55,6 +63,8 @@ pub enum GenesisError {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub enum GenesisSpec {
+    /// Signet mainnet.
+    Mainnet,
     /// Pecorino testnet.
     Pecorino,
     /// Local testnet.
@@ -69,6 +79,7 @@ impl GenesisSpec {
     /// This will alwys return a valid string for [`KnownChains`].
     pub fn load_raw_genesis(&self) -> Result<Cow<'static, str>> {
         match self {
+            GenesisSpec::Mainnet => Ok(Cow::Borrowed(MAINNET_GENESIS_JSON)),
             GenesisSpec::Pecorino => Ok(Cow::Borrowed(PECORINO_GENESIS_JSON)),
             GenesisSpec::Test => Ok(Cow::Borrowed(TEST_GENESIS_JSON)),
             GenesisSpec::Path(path) => {
@@ -82,6 +93,7 @@ impl GenesisSpec {
     /// This will always return a valid genesis for [`KnownChains`].
     pub fn load_genesis(&self) -> Result<alloy::genesis::Genesis> {
         match self {
+            GenesisSpec::Mainnet => Ok(MAINNET_GENESIS.clone()),
             GenesisSpec::Pecorino => Ok(PECORINO_GENESIS.clone()),
             GenesisSpec::Test => Ok(TEST_GENESIS.clone()),
             GenesisSpec::Path(_) => self
