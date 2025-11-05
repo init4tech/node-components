@@ -14,7 +14,7 @@ use reth::{
     },
     revm::{database::StateProviderDatabase, db::StateBuilder},
 };
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use reth_chainspec::ChainSpec;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_blobber::{CacheHandle, ExtractableChainShim};
 use signet_constants::SignetSystemConstants;
@@ -80,11 +80,7 @@ where
 
     /// Get the active spec id at the given timestamp.
     fn spec_id(&self, timestamp: u64) -> SpecId {
-        if self.chain_spec.is_prague_active_at_timestamp(timestamp) {
-            SpecId::PRAGUE
-        } else {
-            SpecId::CANCUN
-        }
+        crate::revm_spec(&self.chain_spec, timestamp)
     }
 
     /// Make a [`StateProviderDatabase`] from the read-write provider, suitable
