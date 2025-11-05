@@ -8,9 +8,8 @@ use alloy::{
 };
 use serial_test::serial;
 use signet_node_tests::{
-    HostBlockSpec, RuBlockSpec, SignetTestContext,
-    aliases::{Erc20, TestErc20Instance},
-    run_test,
+    HostBlockSpec, RuBlockSpec, SignetTestContext, run_test,
+    types::{Erc20, TestErc20Instance},
 };
 use signet_types::constants::HostPermitted;
 use signet_zenith::RollupOrders;

@@ -4,7 +4,7 @@ use reth::{
     rpc::types::trace::geth::{CallConfig, GethDebugTracingOptions},
 };
 use serial_test::serial;
-use signet_node_tests::{aliases::Counter::incrementCall, rpc::rpc_test};
+use signet_node_tests::{rpc::rpc_test, types::Counter::incrementCall};
 use signet_test_utils::specs::{HostBlockSpec, RuBlockSpec};
 
 #[serial]

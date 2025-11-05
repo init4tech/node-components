@@ -11,9 +11,6 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-/// Test aliases and type definitions.
-pub mod aliases;
-
 /// Test constants.
 pub mod constants;
 
@@ -27,6 +24,9 @@ pub mod convert;
 /// Signet node RPC server utilities and helpers.
 pub mod rpc;
 pub use rpc::rpc_test;
+
+/// Test aliases and type definitions.
+pub mod types;
 
 /// Utility functions and test harnesses.
 pub mod utils;

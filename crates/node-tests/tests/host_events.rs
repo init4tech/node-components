@@ -14,13 +14,16 @@ use serial_test::serial;
 use signet_db::{DbSignetEvent, SignetEvents};
 use signet_node_tests::{
     HostBlockSpec, SignetTestContext,
-    aliases::{Counter, TestCounterInstance},
     constants::{DEFAULT_REWARD_ADDRESS, TEST_CONSTANTS},
     run_test,
+    types::{Counter, TestCounterInstance},
     utils::{adjust_usd_decimals, adjust_usd_decimals_u256},
 };
 use signet_test_utils::{chain::USDC_RECORD, contracts::counter::COUNTER_BYTECODE};
-use signet_types::constants::{HostPermitted, RollupPermitted};
+use signet_types::{
+    constants::{HostPermitted, RollupPermitted},
+    unalias_address,
+};
 use signet_zenith::{MINTER_ADDRESS, Passage, Transactor, mintCall};
 
 alloy::sol! {
@@ -207,11 +210,24 @@ async fn test_transact() {
     run_test(|ctx| async move {
         // set up user
         let user = ctx.addresses[0];
+
+        // Getting a little cute here. We ensure that the ALIASED version is
+        // one of the standard test addresses, so we don't have to set up any
+        // extra accounts.
+        let aliased = ctx.addresses[1];
+        let host_contract = unalias_address(aliased);
+
+        // Indicate to the block processor that this address should be aliased
+        ctx.set_should_alias(host_contract, true);
+
         let mut user_nonce = ctx.track_nonce(user, Some("user"));
         let mut user_bal = ctx.track_balance(user, Some("user"));
 
+        let mut aliased_nonce = ctx.track_nonce(aliased, Some("aliased"));
+        let mut aliased_bal = ctx.track_balance(aliased, Some("aliased"));
+
         // Deploy a contract to interact with
-        let deployer = ctx.addresses[1];
+        let deployer = ctx.addresses[2];
 
         // Assert that the counter is zero
         let contract = ctx.deploy_counter(deployer).await;
@@ -219,19 +235,19 @@ async fn test_transact() {
         assert_eq!(contract.count().call().await.unwrap(), U256::ZERO);
 
         // Transact that calls the context and increments it.
-        let block = HostBlockSpec::new(ctx.constants()).simple_transact(
-            user,
-            contract_addr,
-            Counter::incrementCall::SELECTOR,
-            0,
-        );
+        let block = HostBlockSpec::new(ctx.constants())
+            .simple_transact(user, contract_addr, Counter::incrementCall::SELECTOR, 0)
+            .simple_transact(host_contract, contract_addr, Counter::incrementCall::SELECTOR, 0);
 
         ctx.process_block(block).await.unwrap();
 
         user_nonce.assert_incremented();
         user_bal.assert_decrease();
 
-        assert_eq!(contract.count().call().await.unwrap(), U256::from(1));
+        aliased_nonce.assert_incremented();
+        aliased_bal.assert_decrease();
+
+        assert_eq!(contract.count().call().await.unwrap(), U256::from(2));
 
         // check the RPC response
         let block = ctx
@@ -258,6 +274,20 @@ async fn test_transact() {
         assert_eq!(transact_tx.to().unwrap(), contract_addr);
         assert_eq!(transact_tx.value(), U256::ZERO);
         assert_eq!(transact_tx.input(), &Bytes::from(Counter::incrementCall::SELECTOR));
+
+        let aliased_transact_tx = &txns[1];
+        assert_eq!(aliased_transact_tx.from(), aliased);
+        assert_eq!(aliased_transact_tx.to().unwrap(), contract_addr);
+        assert_eq!(aliased_transact_tx.value(), U256::ZERO);
+        assert_eq!(aliased_transact_tx.input(), &Bytes::from(Counter::incrementCall::SELECTOR));
+
+        let aliased_tx_hash = aliased_transact_tx.tx_hash();
+        let aliased_transact_tx =
+            ctx.alloy_provider.get_transaction_by_hash(aliased_tx_hash).await.unwrap().unwrap();
+        assert_eq!(aliased_transact_tx.from(), aliased);
+        assert_eq!(aliased_transact_tx.to().unwrap(), contract_addr);
+        assert_eq!(aliased_transact_tx.value(), U256::ZERO);
+        assert_eq!(aliased_transact_tx.input(), &Bytes::from(Counter::incrementCall::SELECTOR));
     })
     .await;
 }

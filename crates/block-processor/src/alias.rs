@@ -12,25 +12,32 @@ pub trait AliasOracle {
     fn should_alias(&self, address: Address) -> eyre::Result<bool>;
 }
 
+/// Default implementation of [`AliasOracle`] for any type implementing
+/// [`StateProvider`]. This implementation checks if the address has bytecode
+/// associated with it, and if so, whether that bytecode matches the pattern
+/// for a 7702 delegation contract. If it is a delegation contract, it is not
+/// aliased; otherwise, it is aliased.
 impl AliasOracle for Box<dyn StateProvider> {
     fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+        // No account at this address.
         let Some(acct) = self.basic_account(&address)? else { return Ok(false) };
+        // Get the bytecode hash for this account.
         let bch = match acct.bytecode_hash {
             Some(hash) => hash,
+            // No bytecode hash; not a contract.
             None => return Ok(false),
         };
+        // No code at this address.
         if bch == KECCAK_EMPTY {
             return Ok(false);
         }
+        // Fetch the code associated with this bytecode hash.
         let code = self
             .bytecode_by_hash(&bch)?
             .ok_or_eyre("code not found. This indicates a corrupted database")?;
 
-        // Check for 7702 delegations.
-        if code.len() != 23 || !code.bytecode().starts_with(&[0xef, 0x01, 0x00]) {
-            return Ok(true);
-        }
-        Ok(false)
+        // If not a 7702 delegation contract, alias it.
+        Ok(!code.is_eip7702())
     }
 }
 
@@ -62,6 +69,13 @@ impl AliasOracleFactory for Box<dyn StateProviderFactory> {
     type Oracle = Box<dyn StateProvider>;
 
     fn create(&self) -> eyre::Result<Self::Oracle> {
+        // NB: This becomes a problem if anyone ever birthday attacks a
+        // contract/EOA pair (c.f. EIP-3607). In practice this is unlikely to
+        // happen for the foreseeable future, and if it does we can revisit
+        // this decision.
+        // We considered taking the host height as an argument to this method,
+        // but this would require all nodes to be archive nodes in order to
+        // sync, which is less than ideal
         self.state_by_block_number_or_tag(alloy::eips::BlockNumberOrTag::Latest).map_err(Into::into)
     }
 }
