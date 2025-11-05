@@ -1,7 +1,7 @@
 use crate::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
-    aliases::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
     convert::ToRethPrimitive,
+    types::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
     utils::create_test_provider_factory_with_chain_spec,
 };
 use alloy::{
@@ -481,6 +481,7 @@ impl<'a> NonceChecks<'a> {
     }
 
     /// Assert that the nonce of the address has increased.
+    #[track_caller]
     pub fn assert_increase_by(&mut self, amount: u64) {
         let old_nonce = self.update_nonce();
         let expected = old_nonce + amount;
@@ -496,6 +497,7 @@ impl<'a> NonceChecks<'a> {
     }
 
     /// Assert that the nonce of the address has increased by 1.
+    #[track_caller]
     pub fn assert_incremented(&mut self) {
         self.assert_increase_by(1);
     }

@@ -6,9 +6,7 @@ use alloy::{
     rpc::types::eth::TransactionRequest,
 };
 use serial_test::serial;
-use signet_node_tests::{
-    HostBlockSpec, RuBlockSpec, aliases::TestCounterInstance, utils::run_test,
-};
+use signet_node_tests::{HostBlockSpec, RuBlockSpec, types::TestCounterInstance, utils::run_test};
 use signet_test_utils::contracts::counter::{COUNTER_BYTECODE, COUNTER_DEPLOY_CODE};
 
 const USER_A: Address = Address::repeat_byte(0x39);

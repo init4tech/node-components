@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.12.4"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,27 +34,27 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.12", path = "crates/blobber" }
-signet-block-processor = { version = "0.12", path = "crates/block-processor" }
-signet-db = { version = "0.12", path = "crates/db" }
-signet-genesis = { version = "0.12", path = "crates/genesis" }
-signet-node = { version = "0.12", path = "crates/node" }
-signet-node-config = { version = "0.12", path = "crates/node-config" }
-signet-node-tests = { version = "0.12", path = "crates/node-tests" }
-signet-node-types = { version = "0.12", path = "crates/node-types" }
-signet-rpc = { version = "0.12", path = "crates/rpc" }
+signet-blobber = { version = "0.14", path = "crates/blobber" }
+signet-block-processor = { version = "0.14", path = "crates/block-processor" }
+signet-db = { version = "0.14", path = "crates/db" }
+signet-genesis = { version = "0.14", path = "crates/genesis" }
+signet-node = { version = "0.14", path = "crates/node" }
+signet-node-config = { version = "0.14", path = "crates/node-config" }
+signet-node-tests = { version = "0.14", path = "crates/node-tests" }
+signet-node-types = { version = "0.14", path = "crates/node-types" }
+signet-rpc = { version = "0.14", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
-signet-bundle = "0.13"
-signet-constants = "0.13"
-signet-evm = "0.13"
-signet-extract = "0.13"
-signet-test-utils = "0.13"
-signet-tx-cache = "0.13"
-signet-types = "0.13"
-signet-zenith = "0.13"
-signet-journal = "0.13"
+signet-bundle = "0.14"
+signet-constants = "0.14"
+signet-evm = "0.14"
+signet-extract = "0.14"
+signet-test-utils = "0.14"
+signet-tx-cache = "0.14"
+signet-types = "0.14"
+signet-zenith = "0.14"
+signet-journal = "0.14"
 
 # ajj
 ajj = { version = "0.3.4" }
