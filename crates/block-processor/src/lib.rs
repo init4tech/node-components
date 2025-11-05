@@ -16,6 +16,9 @@ pub(crate) mod metrics;
 mod alias;
 pub use alias::{AliasOracle, AliasOracleFactory};
 
+mod utils;
+pub use utils::revm_spec;
+
 mod v1;
 pub use v1::SignetBlockProcessor as SignetBlockProcessorV1;
 

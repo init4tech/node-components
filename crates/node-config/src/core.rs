@@ -1,7 +1,7 @@
 use alloy::genesis::Genesis;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
 use reth::providers::providers::StaticFileProvider;
-use reth_chainspec::{ChainSpec, EthereumHardforks};
+use reth_chainspec::ChainSpec;
 use reth_node_api::NodePrimitives;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
@@ -215,11 +215,7 @@ impl SignetNodeConfig {
 
     /// Get the current spec id for the Signet Node chain.
     pub fn spec_id(&self, timestamp: u64) -> SpecId {
-        if self.chain_spec().is_prague_active_at_timestamp(timestamp) {
-            SpecId::PRAGUE
-        } else {
-            SpecId::CANCUN
-        }
+        signet_block_processor::revm_spec(self.chain_spec(), timestamp)
     }
 }
 

@@ -173,7 +173,7 @@ where
 
     /// Get the EVM spec ID for a given block.
     pub fn evm_spec_id(&self, header: &Header) -> SpecId {
-        reth_evm_ethereum::revm_spec(&self.chain_spec(), header)
+        signet_block_processor::revm_spec(&self.chain_spec(), header.timestamp())
     }
 
     /// Access the subscription manager.
