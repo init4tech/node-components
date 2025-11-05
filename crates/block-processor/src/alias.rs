@@ -55,14 +55,14 @@ pub trait AliasOracleFactory: Send + Sync + 'static {
     type Oracle: AliasOracle;
 
     /// Create a new [`AliasOracle`].
-    fn create(&self, block_height: u64) -> eyre::Result<Self::Oracle>;
+    fn create(&self) -> eyre::Result<Self::Oracle>;
 }
 
 impl AliasOracleFactory for Box<dyn StateProviderFactory> {
     type Oracle = Box<dyn StateProvider>;
 
-    fn create(&self, block_height: u64) -> eyre::Result<Self::Oracle> {
-        self.state_by_block_number_or_tag(block_height.into()).map_err(Into::into)
+    fn create(&self) -> eyre::Result<Self::Oracle> {
+        self.state_by_block_number_or_tag(alloy::eips::BlockNumberOrTag::Latest).map_err(Into::into)
     }
 }
 
@@ -70,7 +70,7 @@ impl AliasOracleFactory for Box<dyn StateProviderFactory> {
 impl AliasOracleFactory for HashSet<Address> {
     type Oracle = HashSet<Address>;
 
-    fn create(&self, _block_height: u64) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> eyre::Result<Self::Oracle> {
         Ok(self.clone())
     }
 }
@@ -81,10 +81,10 @@ where
 {
     type Oracle = T::Oracle;
 
-    fn create(&self, block_height: u64) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> eyre::Result<Self::Oracle> {
         let guard =
             self.lock().map_err(|_| eyre::eyre!("failed to lock AliasOracleFactory mutex"))?;
-        guard.create(block_height)
+        guard.create()
     }
 }
 
@@ -94,7 +94,7 @@ where
 {
     type Oracle = T::Oracle;
 
-    fn create(&self, block_height: u64) -> eyre::Result<Self::Oracle> {
-        self.as_ref().create(block_height)
+    fn create(&self) -> eyre::Result<Self::Oracle> {
+        self.as_ref().create()
     }
 }
