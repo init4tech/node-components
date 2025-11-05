@@ -6,7 +6,7 @@ use alloy::{
     primitives::{Address, B256, U256},
     signers::Signature,
 };
-use reth::providers::{BlockNumReader, BlockReader};
+use reth::providers::{BlockNumReader, BlockReader, HeaderProvider, TransactionsProvider};
 use signet_constants::test_utils::{DEPLOY_HEIGHT, RU_CHAIN_ID};
 use signet_db::RuWriter;
 use signet_types::primitives::{RecoveredBlock, SealedBlock, SealedHeader};
@@ -55,9 +55,10 @@ fn test_insert_signet_block() {
         senders: std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect(),
     };
 
-    writer
-        .insert_signet_block(header, &block, journal_hash, reth::providers::StorageLocation::Both)
-        .unwrap();
+    writer.insert_signet_block(header, &block, journal_hash).unwrap();
+    writer.commit().unwrap();
+
+    let writer = factory.provider_rw().unwrap();
 
     // Check basic updates
     assert_eq!(writer.last_block_number().unwrap(), block.number());
@@ -65,6 +66,11 @@ fn test_insert_signet_block() {
     assert_eq!(writer.get_journal_hash(block.number()).unwrap(), Some(journal_hash));
     // This tests resolving `BlockId::Latest`
     assert_eq!(writer.best_block_number().unwrap(), block.number());
+
+    let txns = writer.transactions_by_block(block.number().into()).unwrap().unwrap();
+    let header_ = writer.header_by_number(block.number()).unwrap().unwrap();
+    dbg!(header_);
+    let block_ = writer.block(block.number().into()).unwrap().unwrap();
 
     // Check that the block can be loaded back
     let loaded_block = writer

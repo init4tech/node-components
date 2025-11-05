@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,15 +34,15 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.14", path = "crates/blobber" }
-signet-block-processor = { version = "0.14", path = "crates/block-processor" }
-signet-db = { version = "0.14", path = "crates/db" }
-signet-genesis = { version = "0.14", path = "crates/genesis" }
-signet-node = { version = "0.14", path = "crates/node" }
-signet-node-config = { version = "0.14", path = "crates/node-config" }
-signet-node-tests = { version = "0.14", path = "crates/node-tests" }
-signet-node-types = { version = "0.14", path = "crates/node-types" }
-signet-rpc = { version = "0.14", path = "crates/rpc" }
+signet-blobber = { version = "0.15", path = "crates/blobber" }
+signet-block-processor = { version = "0.15", path = "crates/block-processor" }
+signet-db = { version = "0.15", path = "crates/db" }
+signet-genesis = { version = "0.15", path = "crates/genesis" }
+signet-node = { version = "0.15", path = "crates/node" }
+signet-node-config = { version = "0.15", path = "crates/node-config" }
+signet-node-tests = { version = "0.15", path = "crates/node-tests" }
+signet-node-types = { version = "0.15", path = "crates/node-types" }
+signet-rpc = { version = "0.15", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
@@ -74,22 +74,22 @@ alloy = { version = "1.0.35", features = [
 alloy-contract = { version = "1.0.35", features = ["pubsub"] }
 
 # Reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.3" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.0" }
 
 # Foundry periphery
 foundry-blob-explorers = "0.17"

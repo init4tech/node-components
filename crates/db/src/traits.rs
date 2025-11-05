@@ -1,7 +1,7 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
 use alloy::primitives::{B256, BlockNumber};
 use itertools::Itertools;
-use reth::providers::{OriginalValuesKnown, ProviderResult, StorageLocation};
+use reth::providers::{OriginalValuesKnown, ProviderResult};
 use reth_db::models::StoredBlockBodyIndices;
 use signet_evm::BlockResult;
 use signet_node_types::NodeTypesDbTrait;
@@ -44,15 +44,10 @@ pub trait RuWriter {
         header: Option<Zenith::BlockHeader>,
         block: &RecoveredBlock,
         journal_hash: B256,
-        write_to: StorageLocation,
     ) -> ProviderResult<StoredBlockBodyIndices>;
 
     /// Append a zenith block body to the DB.
-    fn append_signet_block_body(
-        &self,
-        body: (BlockNumber, &RecoveredBlock),
-        write_to: StorageLocation,
-    ) -> ProviderResult<()>;
+    fn append_signet_block_body(&self, body: (BlockNumber, &RecoveredBlock)) -> ProviderResult<()>;
 
     /// Get zenith headers from the DB.
     fn get_signet_headers(
@@ -64,15 +59,10 @@ pub trait RuWriter {
     fn take_signet_headers_above(
         &self,
         target: BlockNumber,
-        remove_from: StorageLocation,
     ) -> ProviderResult<Vec<(BlockNumber, Zenith::BlockHeader)>>;
 
     /// Remove [`Zenith::BlockHeader`] objects above the specified height from the DB.
-    fn remove_signet_headers_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<()>;
+    fn remove_signet_headers_above(&self, target: BlockNumber) -> ProviderResult<()>;
 
     /// Store an enter event in the DB.
     fn insert_enter(&self, height: u64, index: u64, exit: Passage::Enter) -> ProviderResult<()>;
@@ -158,16 +148,11 @@ pub trait RuWriter {
     fn take_signet_events_above(
         &self,
         target: BlockNumber,
-        remove_from: StorageLocation,
     ) -> ProviderResult<Vec<(BlockNumber, DbSignetEvent)>>;
 
     /// Remove [`Passage::EnterToken`], [`Passage::Enter`] and
     /// [`Transactor::Transact`] events above the specified height from the DB.
-    fn remove_signet_events_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<()>;
+    fn remove_signet_events_above(&self, target: BlockNumber) -> ProviderResult<()>;
 
     /// Get extraction results from the DB.
     fn get_extraction_results(
@@ -214,13 +199,12 @@ pub trait RuWriter {
     fn take_extraction_results_above(
         &self,
         target: BlockNumber,
-        remove_from: StorageLocation,
     ) -> ProviderResult<BTreeMap<BlockNumber, DbExtractionResults>> {
         let range = target..=(1 + self.last_block_number()?);
 
         let items = self.get_extraction_results(range)?;
         trace!(count = items.len(), "got extraction results");
-        self.remove_extraction_results_above(target, remove_from)?;
+        self.remove_extraction_results_above(target)?;
         trace!("removed extraction results");
         Ok(items)
     }
@@ -232,13 +216,9 @@ pub trait RuWriter {
     /// - [`Passage::Enter`] events
     /// - [`Transactor::Transact`] events
     /// - [`Passage::EnterToken`] events
-    fn remove_extraction_results_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<()> {
-        self.remove_signet_headers_above(target, remove_from)?;
-        self.remove_signet_events_above(target, remove_from)?;
+    fn remove_extraction_results_above(&self, target: BlockNumber) -> ProviderResult<()> {
+        self.remove_signet_headers_above(target)?;
+        self.remove_signet_events_above(target)?;
         Ok(())
     }
 
@@ -256,18 +236,10 @@ pub trait RuWriter {
 
     /// Take the block and execution range from the DB, reverting the blocks
     /// and returning the removed information
-    fn ru_take_blocks_and_execution_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<RuChain>;
+    fn ru_take_blocks_and_execution_above(&self, target: BlockNumber) -> ProviderResult<RuChain>;
 
     /// Remove the block and execution range from the DB.
-    fn ru_remove_blocks_and_execution_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<()>;
+    fn ru_remove_blocks_and_execution_above(&self, target: BlockNumber) -> ProviderResult<()>;
 
     /// Write the state of the rollup to the database.
     ///
@@ -279,7 +251,6 @@ pub trait RuWriter {
         &self,
         execution_outcome: &signet_evm::ExecutionOutcome,
         is_value_known: OriginalValuesKnown,
-        write_receipts_to: StorageLocation,
     ) -> ProviderResult<()>;
 }
 

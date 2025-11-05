@@ -4,15 +4,15 @@ use crate::{
     traits::RuWriter,
 };
 use alloy::{
-    consensus::{BlockHeader, TxReceipt},
-    primitives::{Address, B256, BlockNumber, U256, map::HashSet},
+    consensus::BlockHeader,
+    primitives::{Address, B256, BlockNumber},
 };
 use reth::{
     primitives::StaticFileSegment,
     providers::{
         BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain, DBProvider,
         HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult, StageCheckpointWriter,
-        StateWriter, StaticFileProviderFactory, StaticFileWriter, StorageLocation,
+        StateWriter, StaticFileProviderFactory, StaticFileWriter,
     },
 };
 use reth_db::{
@@ -30,7 +30,7 @@ use signet_zenith::{
     Transactor::Transact,
     Zenith,
 };
-use std::ops::RangeInclusive;
+use std::ops::{Not, RangeInclusive};
 use tracing::{debug, instrument, trace, warn};
 
 impl<Db> RuWriter for SignetDbRw<Db>
@@ -144,14 +144,13 @@ where
         header: Option<Zenith::BlockHeader>,
         block: &RecoveredBlock,
         journal_hash: B256,
-        write_to: StorageLocation,
     ) -> ProviderResult<StoredBlockBodyIndices> {
         // Implementation largely copied from
         // `BlockWriter::insert_block`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // Last reviewed at tag v1.8.1
+        // Last reviewed at tag v1.9.0
         let block_number = block.number();
 
         // SIGNET-SPECIFIC
@@ -159,7 +158,6 @@ where
         if let Some(header) = header {
             self.insert_signet_header(header, block_number)?;
         }
-
         // SIGNET-SPECIFIC
         // Put journal hash into the DB
         self.tx_ref().put::<crate::JournalHashes>(block_number, journal_hash)?;
@@ -167,24 +165,10 @@ where
         let block_hash = block.block.header.hash();
         let block_header = block.block.header.header();
 
-        if write_to.database() {
-            self.tx_ref().put::<tables::CanonicalHeaders>(block_number, block_hash)?;
-            self.tx_ref().put::<tables::Headers>(block_number, block_header.clone())?;
-            // NB: while this is meaningless for zenith blocks, it is necessary for
-            // the RPC server to function properly. If the TTD for a block is not
-            // set, the RPC server will return an error indicating that the block
-            // is not found.
-            self.tx_ref()
-                .put::<tables::HeaderTerminalDifficulties>(block_number, U256::ZERO.into())?;
-        }
+        self.static_file_provider()
+            .get_writer(block_number, StaticFileSegment::Headers)?
+            .append_header(block_header, &block_hash)?;
 
-        if write_to.static_files() {
-            let sf = self.static_file_provider();
-            let mut writer = sf.get_writer(block_number, StaticFileSegment::Headers)?;
-            writer.append_header(block_header, U256::ZERO, &block_hash)?;
-        }
-
-        // Append the block number corresponding to a header on the DB
         self.tx_ref().put::<tables::HeaderNumbers>(block_hash, block_number)?;
 
         let mut next_tx_num = self
@@ -211,7 +195,7 @@ where
             next_tx_num += 1;
         }
 
-        self.append_signet_block_body((block_number, block), write_to)?;
+        self.append_signet_block_body((block_number, block))?;
 
         debug!(?block_number, "Inserted block");
 
@@ -219,35 +203,23 @@ where
     }
 
     /// Appends the body of a signet block to the database.
-    fn append_signet_block_body(
-        &self,
-        body: (BlockNumber, &RecoveredBlock),
-        write_to: StorageLocation,
-    ) -> ProviderResult<()> {
+    fn append_signet_block_body(&self, body: (BlockNumber, &RecoveredBlock)) -> ProviderResult<()> {
         // Implementation largely copied from
         // `DatabaseProvider::append_block_bodies`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed, and the implementation has been
         // modified to work with a single signet block.
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
 
+        let from_block = body.0;
         let sf = self.static_file_provider();
 
         // Initialize writer if we will be writing transactions to staticfiles
-        let mut tx_static_writer = write_to
-            .static_files()
-            .then(|| sf.get_writer(body.0, StaticFileSegment::Transactions))
-            .transpose()?;
+        let mut tx_writer = sf.get_writer(from_block, StaticFileSegment::Transactions)?;
 
         let mut block_indices_cursor = self.tx_ref().cursor_write::<tables::BlockBodyIndices>()?;
         let mut tx_block_cursor = self.tx_ref().cursor_write::<tables::TransactionBlocks>()?;
-
-        // Initialize curosr if we will be writing transactions to database
-        let mut tx_cursor = write_to
-            .database()
-            .then(|| self.tx_ref().cursor_write::<tables::Transactions>())
-            .transpose()?;
 
         let block_number = body.0;
         let block = body.1;
@@ -255,14 +227,11 @@ where
         // Get id for the next tx_num or zero if there are no transactions.
         let mut next_tx_num = tx_block_cursor.last()?.map(|(n, _)| n + 1).unwrap_or_default();
 
-        // Increment block on static file header if we're writing to static files.
-        if let Some(writer) = tx_static_writer.as_mut() {
-            writer.increment_block(block_number)?;
-        }
+        // Increment block on static file header
+        tx_writer.increment_block(block_number)?;
 
-        let tx_count = block.block.body.transactions.len();
-        let block_indices =
-            StoredBlockBodyIndices { first_tx_num: next_tx_num, tx_count: tx_count as u64 };
+        let tx_count = block.block.body.transactions.len() as u64;
+        let block_indices = StoredBlockBodyIndices { first_tx_num: next_tx_num, tx_count };
 
         // insert block meta
         block_indices_cursor.append(block_number, &block_indices)?;
@@ -274,13 +243,7 @@ where
 
         // Write transactions
         for transaction in block.block.body.transactions() {
-            if let Some(writer) = tx_static_writer.as_mut() {
-                writer.append_transaction(next_tx_num, transaction)?;
-            }
-
-            if let Some(cursor) = tx_cursor.as_mut() {
-                cursor.append(next_tx_num, transaction)?;
-            }
+            tx_writer.append_transaction(next_tx_num, transaction)?;
 
             // Increment transaction id for each transaction
             next_tx_num += 1;
@@ -326,7 +289,6 @@ where
     fn take_signet_headers_above(
         &self,
         target: BlockNumber,
-        _remove_from: StorageLocation,
     ) -> ProviderResult<Vec<(BlockNumber, Zenith::BlockHeader)>> {
         // Implementation largely copied from
         // `DatabaseProvider::get_or_take`
@@ -347,11 +309,7 @@ where
     }
 
     /// Remove [`Zenith::BlockHeader`] objects above the specified height from the DB.
-    fn remove_signet_headers_above(
-        &self,
-        target: BlockNumber,
-        _remove_from: StorageLocation,
-    ) -> ProviderResult<()> {
+    fn remove_signet_headers_above(&self, target: BlockNumber) -> ProviderResult<()> {
         self.remove::<ZenithHeaders>(target + 1..)?;
         Ok(())
     }
@@ -373,11 +331,10 @@ where
     fn take_signet_events_above(
         &self,
         target: BlockNumber,
-        remove_from: StorageLocation,
     ) -> ProviderResult<Vec<(BlockNumber, DbSignetEvent)>> {
         let range = target + 1..=self.last_block_number()?;
         let items = self.get_signet_events(range)?;
-        self.remove_signet_events_above(target, remove_from)?;
+        self.remove_signet_events_above(target)?;
         Ok(items)
     }
 
@@ -385,11 +342,7 @@ where
     /// [`Transactor::Transact`] events above the specified height from the DB.
     ///
     /// [`Transactor::Transact`]: signet_zenith::Transactor::Transact
-    fn remove_signet_events_above(
-        &self,
-        target: BlockNumber,
-        _remove_from: StorageLocation,
-    ) -> ProviderResult<()> {
+    fn remove_signet_events_above(&self, target: BlockNumber) -> ProviderResult<()> {
         self.remove::<SignetEvents>(target + 1..)?;
         Ok(())
     }
@@ -419,15 +372,15 @@ where
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
 
         let BlockResult { sealed_block: block, execution_outcome, .. } = block_result;
 
         let ru_height = block.number();
-        self.insert_signet_block(header, block, journal_hash, StorageLocation::Database)?;
+        self.insert_signet_block(header, block, journal_hash)?;
 
         // Write the state and match the storage location that Reth uses.
-        self.ru_write_state(execution_outcome, OriginalValuesKnown::No, StorageLocation::Database)?;
+        self.ru_write_state(execution_outcome, OriginalValuesKnown::No)?;
 
         // NB: At this point, reth writes hashed state and trie updates. Signet
         // skips this. We re-use these tables to write the enters, enter tokens,
@@ -462,22 +415,18 @@ where
     }
 
     #[instrument(skip(self))]
-    fn ru_take_blocks_and_execution_above(
-        &self,
-        target: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<RuChain> {
+    fn ru_take_blocks_and_execution_above(&self, target: BlockNumber) -> ProviderResult<RuChain> {
         // Implementation largely copied from
         // `BlockExecutionWriter::take_block_and_execution_above`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
 
         let range = target + 1..=self.last_block_number()?;
 
         // This block is copied from `unwind_trie_state_range`
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
         {
             let changed_accounts = self
                 .tx_ref()
@@ -489,14 +438,14 @@ where
             // root calculation, which we don't use.
             self.unwind_account_history_indices(changed_accounts.iter())?;
 
-            let storage_range = BlockNumberAddress::range(range.clone());
+            let storage_start = BlockNumberAddress((target, Address::ZERO));
 
             // Unwind storage history indices. Similarly, we don't need to
             // unwind storage hashes, since we don't use them.
             let changed_storages = self
                 .tx_ref()
                 .cursor_read::<tables::StorageChangeSets>()?
-                .walk_range(storage_range)?
+                .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
             self.unwind_storage_history_indices(changed_storages.iter().copied())?;
@@ -506,7 +455,7 @@ where
 
         trace!("trie state unwound");
 
-        let execution_state = self.take_state_above(target, remove_from)?;
+        let execution_state = self.take_state_above(target)?;
 
         trace!("state taken");
 
@@ -517,14 +466,14 @@ where
 
         // remove block bodies it is needed for both get block range and get block execution results
         // that is why it is deleted afterwards.
-        self.remove_blocks_above(target, remove_from)?;
+        self.remove_blocks_above(target)?;
 
         trace!("blocks removed");
 
+        // SIGNET-SPECIFIC
         // This is a Signet-specific addition that removes the enters,
         // entertokens, zenith headers, and transact events.
-        let ru_info =
-            self.take_extraction_results_above(target, remove_from)?.into_iter().collect();
+        let ru_info = self.take_extraction_results_above(target)?.into_iter().collect();
 
         trace!("extraction results taken");
 
@@ -539,51 +488,53 @@ where
     }
 
     #[instrument(skip(self))]
-    fn ru_remove_blocks_and_execution_above(
-        &self,
-        block: BlockNumber,
-        remove_from: StorageLocation,
-    ) -> ProviderResult<()> {
+    fn ru_remove_blocks_and_execution_above(&self, target: BlockNumber) -> ProviderResult<()> {
         // Implementation largely copied from
         // `BlockExecutionWriter::remove_block_and_execution_above`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         // duration metrics have been removed
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
+
+        let range = target + 1..=self.last_block_number()?;
 
         // This block is copied from `unwind_trie_state_range`
         //
-        // last reviewed at tag v1.8.1
+        // last reviewed at tag v1.9.0
         {
-            let range = block + 1..=self.last_block_number()?;
             let changed_accounts = self
                 .tx_ref()
                 .cursor_read::<tables::AccountChangeSets>()?
                 .walk_range(range.clone())?
                 .collect::<Result<Vec<_>, _>>()?;
-
+            // There's no need to also unwind account hashes, since that is
+            // only useful for filling intermediate tables that deal with state
+            // root calculation, which we don't use.
             self.unwind_account_history_indices(changed_accounts.iter())?;
 
-            let storage_range = BlockNumberAddress::range(range.clone());
+            let storage_start = BlockNumberAddress((target, Address::ZERO));
 
-            // Unwind storage history indices.
+            // Unwind storage history indices. Similarly, we don't need to
+            // unwind storage hashes, since we don't use them.
             let changed_storages = self
                 .tx_ref()
                 .cursor_read::<tables::StorageChangeSets>()?
-                .walk_range(storage_range)?
+                .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
             self.unwind_storage_history_indices(changed_storages.iter().copied())?;
+
+            // We also skip calculating the reverted root here.
         }
 
-        self.remove_state_above(block, remove_from)?;
-        self.remove_blocks_above(block, remove_from)?;
+        self.remove_state_above(target)?;
+        self.remove_blocks_above(target)?;
 
         // Signet specific:
-        self.remove_extraction_results_above(block, remove_from)?;
+        self.remove_extraction_results_above(target)?;
 
         // Update pipeline stages
-        self.update_pipeline_stages(block, true)?;
+        self.update_pipeline_stages(target, true)?;
 
         Ok(())
     }
@@ -592,13 +543,12 @@ where
         &self,
         execution_outcome: &signet_evm::ExecutionOutcome,
         is_value_known: OriginalValuesKnown,
-        write_receipts_to: StorageLocation,
     ) -> ProviderResult<()> {
         // Implementation largely copied from
         // `StateWriter::write_state` for `DatabaseProvider`
         // in `reth/crates/storage/provider/src/providers/database/provider.rs`
         //
-        // Last reviewed at tag v1.8.1
+        // Last reviewed at tag v1.9.0
         let first_block = execution_outcome.first_block();
         let block_count = execution_outcome.len() as u64;
         let last_block = execution_outcome.last_block();
@@ -633,14 +583,8 @@ where
         //
         // We are writing to database if requested or if there's any kind of receipt pruning
         // configured
-        let mut receipts_cursor = (write_receipts_to.database() || has_receipts_pruning)
-            .then(|| self.tx_ref().cursor_write::<tables::Receipts<reth::primitives::Receipt>>())
-            .transpose()?;
-
-        // Prepare receipts static writer if we are going to write receipts to static files
-        //
-        // We are writing to static files if requested and if there's no receipt pruning configured
-        let should_static = write_receipts_to.static_files() && !has_receipts_pruning;
+        let mut receipts_cursor =
+            self.tx_ref().cursor_write::<tables::Receipts<reth::primitives::Receipt>>()?;
 
         // SIGNET: This is a departure from Reth's implementation. Becuase their
         // impl is on `DatabaseProvider`, it has access to the static file
@@ -649,26 +593,17 @@ where
         // to borrow from the inner, only to clone it. So we break up the
         // static file provider into a separate variable, and then use it to
         // create the static file writer.
-        let sfp = should_static.then(|| self.0.static_file_provider());
-        let mut receipts_static_writer = sfp
-            .as_ref()
-            .map(|sfp| sfp.get_writer(first_block, StaticFileSegment::Receipts))
-            .transpose()?;
+        let sfp = self.0.static_file_provider();
 
-        let has_contract_log_filter = !self.prune_modes_ref().receipts_log_filter.is_empty();
-        let contract_log_pruner =
-            self.prune_modes_ref().receipts_log_filter.group_by_block(tip, None)?;
+        let mut receipts_static_writer = has_receipts_pruning
+            .not()
+            .then(|| sfp.get_writer(first_block, StaticFileSegment::Receipts))
+            .transpose()?;
 
         // All receipts from the last 128 blocks are required for blockchain tree, even with
         // [`PruneSegment::ContractLogs`].
         let prunable_receipts =
             PruneMode::Distance(MINIMUM_PRUNING_DISTANCE).should_prune(first_block, tip);
-
-        // Prepare set of addresses which logs should not be pruned.
-        let mut allowed_addresses: HashSet<Address, _> = HashSet::new();
-        for (_, addresses) in contract_log_pruner.range(..first_block) {
-            allowed_addresses.extend(addresses.iter().copied());
-        }
 
         for (idx, (receipts, first_tx_index)) in
             execution_outcome.receipts().iter().zip(block_indices).enumerate()
@@ -690,28 +625,13 @@ where
                 continue;
             }
 
-            // If there are new addresses to retain after this block number, track them
-            if let Some(new_addresses) = contract_log_pruner.get(&block_number) {
-                allowed_addresses.extend(new_addresses.iter().copied());
-            }
-
             for (idx, receipt) in receipts.iter().map(DataCompat::clone_convert).enumerate() {
                 let receipt_idx = first_tx_index + idx as u64;
-                // Skip writing receipt if log filter is active and it does not have any logs to
-                // retain
-                if prunable_receipts
-                    && has_contract_log_filter
-                    && !receipt.logs().iter().any(|log| allowed_addresses.contains(&log.address))
-                {
-                    continue;
-                }
 
                 if let Some(writer) = &mut receipts_static_writer {
                     writer.append_receipt(receipt_idx, &receipt)?;
-                }
-
-                if let Some(cursor) = &mut receipts_cursor {
-                    cursor.append(receipt_idx, &receipt)?;
+                } else {
+                    receipts_cursor.append(receipt_idx, &receipt)?;
                 }
             }
         }

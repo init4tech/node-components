@@ -660,10 +660,7 @@ where
 
         let mut reverted = None;
         self.ru_provider.provider_rw()?.update(|writer| {
-            reverted = Some(writer.ru_take_blocks_and_execution_above(
-                target,
-                reth::providers::StorageLocation::Both,
-            )?);
+            reverted = Some(writer.ru_take_blocks_and_execution_above(target)?);
             Ok(())
         })?;
 
