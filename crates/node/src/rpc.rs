@@ -1,16 +1,18 @@
 use crate::SignetNode;
 use reth::{primitives::EthPrimitives, rpc::builder::config::RethRpcServerConfig};
 use reth_node_api::{FullNodeComponents, NodeTypes};
+use signet_block_processor::AliasOracleFactory;
 use signet_node_types::NodeTypesDbTrait;
 use signet_rpc::{RpcCtx, RpcServerGuard, ServeConfig};
 use signet_tx_cache::client::TxCache;
 use tracing::info;
 
-impl<Host, Db> SignetNode<Host, Db>
+impl<Host, Db, AliasOracle> SignetNode<Host, Db, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
     Db: NodeTypesDbTrait,
+    AliasOracle: AliasOracleFactory,
 {
     /// Start the RPC server.
     pub async fn start_rpc(&mut self) -> eyre::Result<()> {
