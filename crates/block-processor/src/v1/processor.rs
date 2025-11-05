@@ -112,8 +112,8 @@ where
     }
 
     /// Check if the given address should be aliased.
-    fn should_alias(&self, address: Address, host_height: u64) -> eyre::Result<bool> {
-        self.alias_oracle.create(host_height)?.should_alias(address)
+    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+        self.alias_oracle.create()?.should_alias(address)
     }
 
     /// Called when the host chain has committed a block or set of blocks.
@@ -267,7 +267,7 @@ where
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if !to_alias.contains(&addr) && self.should_alias(addr, host_height)? {
+            if !to_alias.contains(&addr) && self.should_alias(addr)? {
                 to_alias.insert(addr);
             }
         }
