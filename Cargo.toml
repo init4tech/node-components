@@ -46,15 +46,15 @@ signet-rpc = { version = "0.14", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
-signet-bundle = "0.15"
-signet-constants = "0.15"
-signet-evm = "0.15"
-signet-extract = "0.15"
-signet-test-utils = "0.15"
-signet-tx-cache = "0.15"
-signet-types = "0.15"
-signet-zenith = "0.15"
-signet-journal = "0.15"
+signet-bundle = "0.14"
+signet-constants = "0.14"
+signet-evm = "0.14"
+signet-extract = "0.14"
+signet-test-utils = "0.14"
+signet-tx-cache = "0.14"
+signet-types = "0.14"
+signet-zenith = "0.14"
+signet-journal = "0.14"
 
 # ajj
 ajj = { version = "0.3.4" }
@@ -127,7 +127,7 @@ uuid = "1.16.0"
 alloy-rlp = "0.3.11"
 tempfile = "3.17.0"
 
-[patch.crates-io]
+# [patch.crates-io]
 # signet-bundle = { path = "../sdk/crates/bundle"}
 # signet-constants = { path = "../sdk/crates/constants"}
 # signet-evm = { path = "../sdk/crates/evm"}

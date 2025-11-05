@@ -4,7 +4,13 @@ use reth_chainspec::EthereumHardforks;
 /// Equivalent to [`reth_evm_ethereum::revm_spec`], however, always starts at
 /// [`SpecId::PRAGUE`] and transitions to [`SpecId::OSAKA`].
 pub fn revm_spec(chain_spec: &reth::chainspec::ChainSpec, timestamp: u64) -> SpecId {
-    if chain_spec.is_osaka_active_at_timestamp(timestamp) { SpecId::OSAKA } else { SpecId::PRAGUE }
+    if chain_spec.is_amsterdam_active_at_timestamp(timestamp) {
+        SpecId::AMSTERDAM
+    } else if chain_spec.is_osaka_active_at_timestamp(timestamp) {
+        SpecId::OSAKA
+    } else {
+        SpecId::PRAGUE
+    }
 }
 
 /// This is simply a compile-time assertion to ensure that all SpecIds are
@@ -32,6 +38,7 @@ const fn assert_in_range(spec_id: SpecId) {
         | SpecId::SHANGHAI
         | SpecId::CANCUN
         | SpecId::PRAGUE
-        | SpecId::OSAKA => {}
+        | SpecId::OSAKA
+        | SpecId::AMSTERDAM => {}
     }
 }
