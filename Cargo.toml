@@ -46,15 +46,15 @@ signet-rpc = { version = "0.12", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.13.1", features = ["alloy"] }
 
-signet-bundle = "0.12"
-signet-constants = "0.12"
-signet-evm = "0.12"
-signet-extract = "0.12"
-signet-test-utils = "0.12"
-signet-tx-cache = "0.12"
-signet-types = "0.12"
-signet-zenith = "0.12"
-signet-journal = "0.12"
+signet-bundle = "0.13"
+signet-constants = "0.13"
+signet-evm = "0.13"
+signet-extract = "0.13"
+signet-test-utils = "0.13"
+signet-tx-cache = "0.13"
+signet-types = "0.13"
+signet-zenith = "0.13"
+signet-journal = "0.13"
 
 # ajj
 ajj = { version = "0.3.4" }
