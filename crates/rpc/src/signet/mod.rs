@@ -15,8 +15,5 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new()
-        .route("sendBundle", send_bundle)
-        .route("sendOrder", send_order)
-        .route("callBundle", call_bundle)
+    ajj::Router::new().route("sendOrder", send_order).route("callBundle", call_bundle)
 }
