@@ -5,35 +5,11 @@ use crate::{
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use reth_node_api::FullNodeComponents;
-use signet_bundle::{
-    SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse, SignetEthBundle,
-};
+use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
 use signet_node_types::Pnt;
 use signet_types::SignedOrder;
 use std::time::Duration;
 use tokio::select;
-
-pub(super) async fn send_bundle<Host, Signet>(
-    hctx: HandlerCtx,
-    bundle: SignetEthBundle,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<(), String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = |hctx: HandlerCtx| async move {
-        let Some(tx_cache) = ctx.signet().tx_cache() else {
-            return Err(SignetError::TxCacheUrlNotProvided.into_string());
-        };
-
-        hctx.spawn(async move { tx_cache.forward_bundle(bundle).await.map_err(|e| e.to_string()) });
-
-        Ok(())
-    };
-
-    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
-}
 
 pub(super) async fn send_order<Host, Signet>(
     hctx: HandlerCtx,
