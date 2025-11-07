@@ -24,7 +24,7 @@ use reth_db::{PlainAccountState, transaction::DbTxMut};
 use reth_exex_test_utils::{Adapter, TestExExHandle, TmpDB as TmpDb};
 use reth_node_api::FullNodeComponents;
 use signet_db::DbProviderExt;
-use signet_node::SignetNode;
+use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
 use signet_node_types::{NodeStatus, SignetNodeTypes};
 use signet_test_utils::contracts::counter::COUNTER_DEPLOY_CODE;
@@ -104,15 +104,12 @@ impl SignetTestContext {
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
-        // instantiate Signet Node, booting rpc
-        let (node, mut node_status) = SignetNode::new(
-            ctx,
-            cfg.clone(),
-            factory.clone(),
-            Arc::clone(&alias_oracle),
-            Default::default(),
-        )
-        .unwrap();
+        let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
+            .with_ctx(ctx)
+            .with_factory(factory.clone())
+            .with_alias_oracle(Arc::clone(&alias_oracle))
+            .build()
+            .unwrap();
 
         // Spawn the node, and wait for it to indicate RPC readiness.
         let node = tokio::spawn(node.start());
