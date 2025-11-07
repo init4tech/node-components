@@ -44,7 +44,7 @@ signet-node-tests = { version = "0.14", path = "crates/node-tests" }
 signet-node-types = { version = "0.14", path = "crates/node-types" }
 signet-rpc = { version = "0.14", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.13.1", features = ["alloy"] }
+init4-bin-base = { version = "0.17.0", features = ["alloy"] }
 
 signet-bundle = "0.14"
 signet-constants = "0.14"
