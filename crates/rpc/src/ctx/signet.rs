@@ -173,7 +173,7 @@ where
 
     /// Get the EVM spec ID for a given block.
     pub fn evm_spec_id(&self, header: &Header) -> SpecId {
-        reth_evm_ethereum::revm_spec(&self.chain_spec(), header)
+        signet_block_processor::revm_spec(&self.chain_spec(), header.timestamp())
     }
 
     /// Access the subscription manager.
@@ -298,11 +298,12 @@ where
     ) -> Result<alloy::rpc::types::Transaction, EthApiError> {
         let sig = tx.signature();
 
-        let sender = if let Some(sender) = MagicSig::try_from_signature(sig).map(|s| s.sender()) {
-            sender
-        } else {
-            tx.recover_signer().map_err(|_| EthApiError::InvalidTransactionSignature)?
-        };
+        let sender =
+            if let Some(sender) = MagicSig::try_from_signature(sig).map(|s| s.rollup_sender()) {
+                sender
+            } else {
+                tx.recover_signer().map_err(|_| EthApiError::InvalidTransactionSignature)?
+            };
 
         let tx = Recovered::new_unchecked(tx, sender);
 

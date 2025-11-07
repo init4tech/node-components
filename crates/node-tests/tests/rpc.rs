@@ -17,9 +17,9 @@ use reth::providers::{BlockNumReader, BlockReader, TransactionsProvider};
 use serial_test::serial;
 use signet_node_tests::{
     SignetTestContext,
-    aliases::{Counter, TestCounterInstance},
     constants::TEST_CONSTANTS,
     rpc_test,
+    types::{Counter, TestCounterInstance},
 };
 use signet_test_utils::contracts::counter::{COUNTER_BYTECODE, COUNTER_DEPLOY_CODE};
 use tokio::try_join;

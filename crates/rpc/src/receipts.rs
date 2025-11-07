@@ -22,7 +22,7 @@ pub fn build_signet_receipt(
     // in which case they'll use [`MagicSig`]s to preserve the sender with additional metadata.
     // Therefore, in case recovering the signer fails, we try to parse the signature as a magic signature.
     let from = MagicSig::try_from_signature(transaction.signature())
-        .map(|magic_sig| magic_sig.sender())
+        .map(|magic_sig| magic_sig.rollup_sender())
         .or_else(|| transaction.recover_signer_unchecked().ok())
         .ok_or_else(|| EthApiError::InvalidTransactionSignature)?;
 

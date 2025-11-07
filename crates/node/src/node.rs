@@ -11,7 +11,8 @@ use reth::{
     providers::{
         BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, CanonChainTracker,
         CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
-        NodePrimitivesProvider, ProviderFactory, providers::BlockchainProvider,
+        NodePrimitivesProvider, ProviderFactory, StateProviderFactory,
+        providers::BlockchainProvider,
     },
     rpc::types::engine::ForkchoiceState,
 };
@@ -21,7 +22,7 @@ use reth_db_common::init;
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use signet_blobber::BlobFetcher;
-use signet_block_processor::SignetBlockProcessorV1;
+use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_db::{DbProviderExt, RuChain, RuWriter};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
@@ -41,7 +42,7 @@ type ExExNotification<Host> = reth_exex::ExExNotification<PrimitivesOf<Host>>;
 type Chain<Host> = reth::providers::Chain<PrimitivesOf<Host>>;
 
 /// Signet context and configuration.
-pub struct SignetNode<Host, Db>
+pub struct SignetNode<Host, Db, AliasOracle = Box<dyn StateProviderFactory>>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
@@ -71,13 +72,13 @@ where
     pub(crate) status: watch::Sender<NodeStatus>,
 
     /// The block processor
-    pub(crate) processor: SignetBlockProcessorV1<Db>,
+    pub(crate) processor: SignetBlockProcessorV1<Db, AliasOracle>,
 
     /// A reqwest client, used by the blob fetch and the tx cache forwarder.
     pub(crate) client: reqwest::Client,
 }
 
-impl<Host, Db> fmt::Debug for SignetNode<Host, Db>
+impl<Host, Db, AliasOracle> fmt::Debug for SignetNode<Host, Db, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
@@ -88,7 +89,7 @@ where
     }
 }
 
-impl<Host, Db> NodePrimitivesProvider for SignetNode<Host, Db>
+impl<Host, Db, AliasOracle> NodePrimitivesProvider for SignetNode<Host, Db, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
@@ -97,22 +98,24 @@ where
     type Primitives = EthPrimitives;
 }
 
-impl<Host, Db> CanonStateSubscriptions for SignetNode<Host, Db>
+impl<Host, Db, AliasOracle> CanonStateSubscriptions for SignetNode<Host, Db, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
     Db: NodeTypesDbTrait,
+    AliasOracle: AliasOracleFactory,
 {
     fn subscribe_to_canonical_state(&self) -> CanonStateNotifications<Self::Primitives> {
         self.bp.subscribe_to_canonical_state()
     }
 }
 
-impl<Host, Db> SignetNode<Host, Db>
+impl<Host, Db, AliasOracle> SignetNode<Host, Db, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
     Db: NodeTypesDbTrait,
+    AliasOracle: AliasOracleFactory,
 {
     /// Create a new Signet instance.
     ///
@@ -123,6 +126,7 @@ where
         ctx: ExExContext<Host>,
         config: SignetNodeConfig,
         factory: ProviderFactory<SignetNodeTypes<Db>>,
+        alias_oracle: AliasOracle,
         client: reqwest::Client,
     ) -> eyre::Result<(Self, tokio::sync::watch::Receiver<NodeStatus>)> {
         let constants =
@@ -177,6 +181,7 @@ where
             constants.clone(),
             config.chain_spec().clone(),
             factory.clone(),
+            alias_oracle,
             config.slot_calculator(),
             blob_cacher,
         );
@@ -655,10 +660,7 @@ where
 
         let mut reverted = None;
         self.ru_provider.provider_rw()?.update(|writer| {
-            reverted = Some(writer.ru_take_blocks_and_execution_above(
-                target,
-                reth::providers::StorageLocation::Both,
-            )?);
+            reverted = Some(writer.ru_take_blocks_and_execution_above(target)?);
             Ok(())
         })?;
 

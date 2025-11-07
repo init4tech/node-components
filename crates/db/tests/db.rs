@@ -55,19 +55,20 @@ fn test_insert_signet_block() {
         senders: std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect(),
     };
 
-    writer
-        .insert_signet_block(header, &block, journal_hash, reth::providers::StorageLocation::Both)
-        .unwrap();
+    writer.insert_signet_block(header, &block, journal_hash).unwrap();
+    writer.commit().unwrap();
+
+    let reader = factory.provider_rw().unwrap();
 
     // Check basic updates
-    assert_eq!(writer.last_block_number().unwrap(), block.number());
-    assert_eq!(writer.latest_journal_hash().unwrap(), journal_hash);
-    assert_eq!(writer.get_journal_hash(block.number()).unwrap(), Some(journal_hash));
+    assert_eq!(reader.last_block_number().unwrap(), block.number());
+    assert_eq!(reader.latest_journal_hash().unwrap(), journal_hash);
+    assert_eq!(reader.get_journal_hash(block.number()).unwrap(), Some(journal_hash));
     // This tests resolving `BlockId::Latest`
-    assert_eq!(writer.best_block_number().unwrap(), block.number());
+    assert_eq!(reader.best_block_number().unwrap(), block.number());
 
     // Check that the block can be loaded back
-    let loaded_block = writer
+    let loaded_block = reader
         .recovered_block_range(block.number()..=block.number())
         .unwrap()
         .first()
@@ -77,6 +78,6 @@ fn test_insert_signet_block() {
     assert_eq!(loaded_block.body().transactions.len(), block.block.body.transactions.len());
 
     // Check that the ZenithHeader can be loaded back
-    let loaded_header = writer.get_signet_header(block.number()).unwrap();
+    let loaded_header = reader.get_signet_header(block.number()).unwrap();
     assert_eq!(loaded_header, header);
 }

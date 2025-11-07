@@ -1,4 +1,4 @@
-use crate::{aliases::TestCounterInstance, context::SignetTestContext, utils::run_test};
+use crate::{context::SignetTestContext, types::TestCounterInstance, utils::run_test};
 
 /// A test helper that sets up a Signet test context, deploys the Counter
 /// contract, and then runs the provided async function `f` with the context and

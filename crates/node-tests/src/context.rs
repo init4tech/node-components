@@ -1,14 +1,14 @@
 use crate::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
-    aliases::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
     convert::ToRethPrimitive,
+    types::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
     utils::create_test_provider_factory_with_chain_spec,
 };
 use alloy::{
     consensus::{BlockHeader, TxEnvelope, constants::ETH_TO_WEI},
     genesis::{Genesis, GenesisAccount},
     network::{Ethereum, EthereumWallet, TransactionBuilder as _},
-    primitives::{Address, I256, Sign, U256, keccak256},
+    primitives::{Address, I256, Sign, U256, keccak256, map::HashSet},
     providers::{
         Provider as _, ProviderBuilder, SendableTx,
         fillers::{BlobGasFiller, SimpleNonceManager},
@@ -31,7 +31,7 @@ use signet_test_utils::contracts::counter::COUNTER_DEPLOY_CODE;
 use signet_types::constants::{HostPermitted, RollupPermitted, SignetSystemConstants};
 use signet_zenith::{HostOrders::OrdersInstance, RollupPassage::RollupPassageInstance};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -74,7 +74,10 @@ pub struct SignetTestContext {
     /// The current host block height
     pub height: AtomicU64,
 
-    /// Test addreses, copied from [`signet_types::test_utils::TEST_USERS`] for
+    /// The alias oracle used by the Signet Node instance.
+    pub alias_oracle: Arc<Mutex<HashSet<Address>>>,
+
+    /// Test addresses, copied from [`signet_types::test_utils::TEST_USERS`] for
     /// convenience
     pub addresses: [Address; 10],
 }
@@ -99,9 +102,17 @@ impl SignetTestContext {
 
         let factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
 
+        let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
+
         // instantiate Signet Node, booting rpc
-        let (node, mut node_status) =
-            SignetNode::new(ctx, cfg.clone(), factory.clone(), Default::default()).unwrap();
+        let (node, mut node_status) = SignetNode::new(
+            ctx,
+            cfg.clone(),
+            factory.clone(),
+            Arc::clone(&alias_oracle),
+            Default::default(),
+        )
+        .unwrap();
 
         // Spawn the node, and wait for it to indicate RPC readiness.
         let node = tokio::spawn(node.start());
@@ -152,10 +163,22 @@ impl SignetTestContext {
             constants,
             height: AtomicU64::new(cfg.constants().unwrap().host_deploy_height()),
 
+            alias_oracle,
             addresses,
         };
 
         (this, node)
+    }
+
+    /// Set whether an address should be aliased. This will be propagated to
+    /// the running node.
+    pub fn set_should_alias(&self, address: Address, should_alias: bool) {
+        let mut guard = self.alias_oracle.lock().expect("failed to lock alias oracle mutex");
+        if should_alias {
+            guard.insert(address);
+        } else {
+            guard.remove(&address);
+        }
     }
 
     /// Clone the Signet system constants
@@ -458,6 +481,7 @@ impl<'a> NonceChecks<'a> {
     }
 
     /// Assert that the nonce of the address has increased.
+    #[track_caller]
     pub fn assert_increase_by(&mut self, amount: u64) {
         let old_nonce = self.update_nonce();
         let expected = old_nonce + amount;
@@ -473,6 +497,7 @@ impl<'a> NonceChecks<'a> {
     }
 
     /// Assert that the nonce of the address has increased by 1.
+    #[track_caller]
     pub fn assert_incremented(&mut self) {
         self.assert_increase_by(1);
     }
