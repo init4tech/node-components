@@ -9,16 +9,13 @@ use futures_util::StreamExt;
 use reth::{
     primitives::EthPrimitives,
     providers::{
-        BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, CanonChainTracker,
-        CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions, HeaderProvider,
-        NodePrimitivesProvider, ProviderFactory, StateProviderFactory,
-        providers::BlockchainProvider,
+        BlockIdReader, BlockNumReader, BlockReader, CanonChainTracker, CanonStateNotification,
+        CanonStateNotifications, CanonStateSubscriptions, HeaderProvider, NodePrimitivesProvider,
+        ProviderFactory, StateProviderFactory, providers::BlockchainProvider,
     },
     rpc::types::engine::ForkchoiceState,
 };
 use reth_chainspec::EthChainSpec;
-use reth_db::transaction::DbTxMut;
-use reth_db_common::init;
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use signet_blobber::BlobFetcher;
@@ -117,12 +114,20 @@ where
     Db: NodeTypesDbTrait,
     AliasOracle: AliasOracleFactory,
 {
-    /// Create a new Signet instance.
+    /// Create a new Signet instance. It is strongly recommend that you use the
+    /// [`SignetNodeBuilder`] instead of this function.
+    ///
+    /// This function does NOT initialize the genesis state. As such it is NOT
+    /// safe to use directly. The genesis state in the `factory` MUST be
+    /// initialized BEFORE calling this function.
     ///
     /// # Panics
     ///
     /// If invoked outside a tokio runtime.
-    pub fn new(
+    ///
+    /// [`SignetNodeBuilder`]: crate::builder::SignetNodeBuilder
+    #[doc(hidden)]
+    pub fn new_unsafe(
         ctx: ExExContext<Host>,
         config: SignetNodeConfig,
         factory: ProviderFactory<SignetNodeTypes<Db>>,
@@ -131,39 +136,6 @@ where
     ) -> eyre::Result<(Self, tokio::sync::watch::Receiver<NodeStatus>)> {
         let constants =
             config.constants().wrap_err("failed to load signet constants from genesis")?;
-
-        // This check appears redundant with the same check made in
-        // `init_genesis`, but is not. We init the genesis DB state but then we
-        // drop some of it, and reuse those tables for our own nefarious
-        // purposes. If we attempt to drop those tables AFTER we have reused
-        // them, we will get a key deser error (as the tables will contain keys
-        // the old schema does not permit). This check ensures we only attempt
-        // to drop the tables once.
-        if matches!(
-            factory.block_hash(0),
-            Ok(None)
-                | Err(reth::providers::ProviderError::MissingStaticFileBlock(
-                    reth::primitives::StaticFileSegment::Headers,
-                    0
-                ))
-        ) {
-            init::init_genesis(&factory)?;
-
-            factory.provider_rw()?.update(
-                |writer: &mut reth::providers::DatabaseProviderRW<Db, SignetNodeTypes<Db>>| {
-                    writer.tx_mut().clear::<reth_db::tables::HashedAccounts>()?;
-                    writer.tx_mut().clear::<reth_db::tables::HashedStorages>()?;
-                    writer.tx_mut().clear::<reth_db::tables::AccountsTrie>()?;
-
-                    writer.tx_ref().put::<signet_db::JournalHashes>(0, GENESIS_JOURNAL_HASH)?;
-                    // we do not need to pre-populate the `ZenithHeaders` or
-                    // `SignetEvents` tables, as missing data is legal in those
-                    // tables
-
-                    Ok(())
-                },
-            )?;
-        }
 
         let bp: BlockchainProvider<SignetNodeTypes<Db>> = BlockchainProvider::new(factory.clone())?;
 
