@@ -1,5 +1,9 @@
-use reth::providers::DatabaseProviderRW;
+use reth::{
+    providers::{DatabaseProviderRW, StateProviderBox},
+    revm::database::StateProviderDatabase,
+};
 use signet_node_types::SignetNodeTypes;
+use trevm::revm::database::State;
 
 /// A Convenience alias for a [`DatabaseProviderRW`] using [`SignetNodeTypes`].
 pub type SignetDbRw<Db> = DatabaseProviderRW<Db, SignetNodeTypes<Db>>;
@@ -8,6 +12,4 @@ pub type SignetDbRw<Db> = DatabaseProviderRW<Db, SignetNodeTypes<Db>>;
 /// trevm.
 ///
 /// [`StateProviderBox`]: reth::providers::StateProviderBox
-pub type RuRevmState = trevm::revm::database::State<
-    reth::revm::database::StateProviderDatabase<reth::providers::StateProviderBox>,
->;
+pub type RuRevmState = State<StateProviderDatabase<StateProviderBox>>;

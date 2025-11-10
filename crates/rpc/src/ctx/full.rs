@@ -14,7 +14,10 @@ use signet_tx_cache::client::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
-use trevm::{helpers::Ctx, revm::Inspector};
+use trevm::{
+    helpers::Ctx,
+    revm::{Inspector, inspector::NoOpInspector},
+};
 
 /// State location when instantiating an EVM instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,7 +251,7 @@ where
         state: LoadState,
         header: &Header,
     ) -> Result<EvmNeedsTx<RuRevmState>, EthApiError> {
-        self.trevm_with_inspector(state, header, trevm::revm::inspector::NoOpInspector)
+        self.trevm_with_inspector(state, header, NoOpInspector)
     }
 }
 

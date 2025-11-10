@@ -1,5 +1,5 @@
-use reth::revm::primitives::hardfork::SpecId;
 use reth_chainspec::EthereumHardforks;
+use trevm::revm::primitives::hardfork::SpecId;
 
 /// Equivalent to [`reth_evm_ethereum::revm_spec`], however, always starts at
 /// [`SpecId::PRAGUE`] and transitions to [`SpecId::OSAKA`].
