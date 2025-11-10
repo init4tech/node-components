@@ -30,7 +30,7 @@ use signet_evm::EvmErrored;
 use signet_node_types::Pnt;
 use std::borrow::Cow;
 use tracing::{Instrument, debug, trace_span};
-use trevm::revm::context::result::ExecutionResult;
+use trevm::{EstimationResult, MIN_TRANSACTION_GAS, revm::context::result::ExecutionResult};
 
 /// Args for `eth_estimateGas` and `eth_call`.
 #[derive(Debug, Deserialize)]
@@ -407,7 +407,7 @@ where
 /// - Otherwise, do nothing
 const fn normalize_gas_stateless(request: &mut TransactionRequest, max_gas: u64) {
     match request.gas {
-        Some(..trevm::MIN_TRANSACTION_GAS) => request.gas = None,
+        Some(..MIN_TRANSACTION_GAS) => request.gas = None,
         Some(val) if val > max_gas => request.gas = Some(max_gas),
         _ => {}
     }
@@ -568,16 +568,14 @@ where
         let (estimate, _) = response_tri!(trevm.estimate_gas().map_err(EvmErrored::into_error));
 
         match estimate {
-            trevm::EstimationResult::Success { limit, .. } => {
-                ResponsePayload::Success(U64::from(limit))
-            }
-            trevm::EstimationResult::Revert { reason, .. } => {
+            EstimationResult::Success { limit, .. } => ResponsePayload::Success(U64::from(limit)),
+            EstimationResult::Revert { reason, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution reverted".into(),
                     reason.clone().into(),
                 )
             }
-            trevm::EstimationResult::Halt { reason, .. } => {
+            EstimationResult::Halt { reason, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution halted".into(),
                     format!("{reason:?}").into(),

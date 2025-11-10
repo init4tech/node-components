@@ -3,16 +3,13 @@
 //! In particular the `debug_trace_call` function.
 
 use crate::DebugError;
-use reth::{
-    revm::{DatabaseRef, context::ContextTr},
-    rpc::{
-        server_types::eth::EthApiError,
-        types::{
-            TransactionInfo,
-            trace::geth::{
-                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
-                GethDebugTracerType, GethDebugTracingOptions, GethTrace, NoopFrame,
-            },
+use reth::rpc::{
+    server_types::eth::EthApiError,
+    types::{
+        TransactionInfo,
+        trace::geth::{
+            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig, GethDebugTracerType,
+            GethDebugTracingOptions, GethTrace, NoopFrame,
         },
     },
 };
@@ -23,7 +20,7 @@ use signet_evm::{EvmNeedsTx, EvmReady};
 use tracing::instrument;
 use trevm::{
     helpers::Ctx,
-    revm::{Database, DatabaseCommit, Inspector},
+    revm::{Database, DatabaseCommit, DatabaseRef, Inspector, context::ContextTr},
 };
 
 /// Trace a transaction using the provided EVM and tracing options.

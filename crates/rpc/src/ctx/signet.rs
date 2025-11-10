@@ -21,7 +21,7 @@ use reth::{
         ProviderError, ProviderResult, ReceiptProvider, StateProviderFactory, TransactionsProvider,
         providers::BlockchainProvider,
     },
-    revm::{database::StateProviderDatabase, primitives::hardfork::SpecId},
+    revm::database::StateProviderDatabase,
     rpc::{
         eth::{filter::EthFilterError, helpers::types::EthRpcConverter},
         server_types::eth::{
@@ -48,7 +48,7 @@ use std::{marker::PhantomData, sync::Arc};
 use tracing::{Level, instrument, trace};
 use trevm::{
     Cfg,
-    revm::{context::CfgEnv, database::StateBuilder},
+    revm::{context::CfgEnv, database::StateBuilder, primitives::hardfork::SpecId},
 };
 
 /// The maximum number of headers we read at once when handling a range filter.
