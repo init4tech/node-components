@@ -129,9 +129,13 @@ where
             return Ok(None);
         }
 
+        let start_time = std::time::Instant::now();
+
         let extractor = Extractor::new(self.constants.clone());
         let shim = ExtractableChainShim::new(chain);
         let outputs = extractor.extract_signet(&shim);
+
+        metrics::record_extraction_time(&start_time);
 
         // TODO: ENG-481 Inherit prune modes from Reth configuration.
         // https://linear.app/initiates/issue/ENG-481/inherit-prune-modes-from-reth-node
@@ -168,6 +172,8 @@ where
             }
 
             metrics::record_extracts(&block_extracts);
+
+            let start_time = std::time::Instant::now();
             current = block_extracts.ru_height;
             let spec_id = self.spec_id(block_extracts.host_block.timestamp());
 
@@ -181,7 +187,7 @@ where
 
             tracing::trace!("Running EVM");
             let block_result = self.run_evm(&block_extracts, spec_id).instrument(span).await?;
-            metrics::record_block_result(&block_result);
+            metrics::record_block_result(&block_result, &start_time);
 
             tracing::trace!("Committing EVM results");
             let journal =

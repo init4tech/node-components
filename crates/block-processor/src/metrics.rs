@@ -14,6 +14,7 @@
 //!   - transact events processed
 //!   - Transaction counts per builder block
 
+use alloy::consensus::BlockHeader;
 use metrics::{Counter, Histogram, counter, describe_counter, describe_histogram, histogram};
 use signet_evm::BlockResult;
 use signet_extract::{Extractable, Extracts, HasTxns};
@@ -56,6 +57,16 @@ const ENTER_TOKEN_PROCESSED_HELP: &str =
 const TRANSACT_PROCESSED: &str = "signet.block_processor.transact_events.processed";
 const TRANSACT_PROCESSED_HELP: &str = "Histogram of number of transact events processed per block";
 
+const EXTRACTION_TIME: &str = "signet.block_processor.extraction.time";
+const EXTRACTION_TIME_HELP: &str = "Time taken to extract signet outputs from a host notification. Note: sometimes the extraction includes multiple blocks.";
+
+const PROCESSING_TIME: &str = "signet.block_processor.processing.time";
+const PROCESSING_TIME_HELP: &str =
+    "Time taken to process a single signet block from extracts, in milliseconds.";
+
+const BLOCK_GAS_USED: &str = "signet.block_processor.block.gas_used";
+const BLOCK_GAS_USED_HELP: &str = "Gas used per signet block processed.";
+
 static DESCRIBE: LazyLock<()> = LazyLock::new(|| {
     describe_counter!(BUILDER_BLOCKS_EXTRACTED, BUILDER_BLOCKS_EXTRACTED_HELP);
     describe_counter!(BLOCKS_PROCESSED, BLOCKS_PROCESSED_HELP);
@@ -69,6 +80,9 @@ static DESCRIBE: LazyLock<()> = LazyLock::new(|| {
     describe_histogram!(ENTER_PROCESSED, ENTER_PROCESSED_HELP);
     describe_histogram!(ENTER_TOKEN_PROCESSED, ENTER_TOKEN_PROCESSED_HELP);
     describe_histogram!(TRANSACT_PROCESSED, TRANSACT_PROCESSED_HELP);
+    describe_histogram!(EXTRACTION_TIME, EXTRACTION_TIME_HELP);
+    describe_histogram!(PROCESSING_TIME, PROCESSING_TIME_HELP);
+    describe_histogram!(BLOCK_GAS_USED, BLOCK_GAS_USED_HELP);
 });
 
 fn blocks_extracted() -> Counter {
@@ -170,6 +184,33 @@ fn record_transacts_processed(value: u64) {
     transacts_processed().record(value as f64);
 }
 
+fn extraction_time() -> Histogram {
+    LazyLock::force(&DESCRIBE);
+    histogram!(EXTRACTION_TIME)
+}
+
+pub(crate) fn record_extraction_time(started_at: &std::time::Instant) {
+    extraction_time().record(started_at.elapsed().as_millis() as f64);
+}
+
+fn processing_time() -> Histogram {
+    LazyLock::force(&DESCRIBE);
+    histogram!(PROCESSING_TIME)
+}
+
+fn record_processing_time(started_at: &std::time::Instant) {
+    processing_time().record(started_at.elapsed().as_millis() as f64);
+}
+
+fn block_gas_used() -> Histogram {
+    LazyLock::force(&DESCRIBE);
+    histogram!(BLOCK_GAS_USED)
+}
+
+fn record_block_gas_used(value: u64) {
+    block_gas_used().record(value as f64);
+}
+
 pub(crate) fn record_extracts<T: Extractable>(extracts: &Extracts<'_, T>) {
     record_enter_extracts(extracts.enters.len() as u64);
     record_enter_token_events(extracts.enter_tokens.len() as u64);
@@ -181,9 +222,10 @@ pub(crate) fn record_extracts<T: Extractable>(extracts: &Extracts<'_, T>) {
     }
 }
 
-pub(crate) fn record_block_result(block: &BlockResult) {
+pub(crate) fn record_block_result(block: &BlockResult, started_at: &std::time::Instant) {
     inc_blocks_processed();
     inc_transactions_processed(block.sealed_block.transactions().len() as u64);
+    record_processing_time(started_at);
 
     // find the index of the first magic sig transaction
     // That index is the count of builder block transactions
@@ -212,6 +254,7 @@ pub(crate) fn record_block_result(block: &BlockResult) {
         };
     }
 
+    record_block_gas_used(block.sealed_block().gas_used());
     record_transactions_per_builder_block(txns_processed as u64);
     record_enters_processed(enters);
     record_enter_token_processed(enter_tokens);
