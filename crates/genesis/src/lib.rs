@@ -21,6 +21,9 @@ use std::{borrow::Cow, path::PathBuf, str::FromStr, sync::LazyLock};
 /// Signet mainnet genesis file.
 pub const MAINNET_GENESIS_JSON: &str = include_str!("./mainnet.genesis.json");
 
+/// Signet mainnet host genesis file.
+pub const MAINNET_HOST_GENESIS_JSON: &str = include_str!("./mainnet.host.genesis.json");
+
 /// Pecorino genesis file.
 pub const PECORINO_GENESIS_JSON: &str = include_str!("./pecorino.genesis.json");
 
@@ -33,6 +36,11 @@ pub const TEST_GENESIS_JSON: &str = include_str!("./local.genesis.json");
 /// Mainnet genesis for the Signet mainnet.
 pub static MAINNET_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(MAINNET_GENESIS_JSON).expect("Failed to parse mainnet genesis")
+});
+
+/// Signet mainnet host genesis for the Signet mainnet.
+pub static MAINNET_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(MAINNET_HOST_GENESIS_JSON).expect("Failed to parse mainnet host genesis")
 });
 
 /// Genesis for the Pecorino testnet.
