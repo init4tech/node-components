@@ -24,6 +24,9 @@ pub const MAINNET_GENESIS_JSON: &str = include_str!("./mainnet.genesis.json");
 /// Pecorino genesis file.
 pub const PECORINO_GENESIS_JSON: &str = include_str!("./pecorino.genesis.json");
 
+/// Pecorino host genesis file.
+pub const PECORINO_HOST_GENESIS_JSON: &str = include_str!("./pecorino.host.genesis.json");
+
 /// Local genesis file for testing purposes.
 pub const TEST_GENESIS_JSON: &str = include_str!("./local.genesis.json");
 
@@ -35,6 +38,11 @@ pub static MAINNET_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
 /// Genesis for the Pecorino testnet.
 pub static PECORINO_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(PECORINO_GENESIS_JSON).expect("Failed to parse pecorino genesis")
+});
+
+/// Genesis for the Pecorino host testnet.
+pub static PECORINO_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(PECORINO_HOST_GENESIS_JSON).expect("Failed to parse pecorino host genesis")
 });
 
 /// Test genesis for local testing.
