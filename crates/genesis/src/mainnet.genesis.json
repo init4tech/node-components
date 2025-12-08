@@ -21,6 +21,7 @@
     "shanghaiTime": "0x0",
     "cancunTime": "0x0",
     "pragueTime": "0x0",
+    "osakaTime": "0x0",
     "terminalTotalDifficulty": null,
     "terminalTotalDifficultyPassed": false,
     "ethash": null,
