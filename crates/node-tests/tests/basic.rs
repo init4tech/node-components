@@ -70,7 +70,7 @@ async fn test_basic_reorg() {
 async fn test_genesis_allocs() {
     run_test(|ctx| async move {
         let genesis = GenesisSpec::Test.load_genesis().expect("Failed to load genesis");
-        ctx.verify_allocs(&genesis);
+        ctx.verify_allocs(&genesis.rollup);
     })
     .await;
 }

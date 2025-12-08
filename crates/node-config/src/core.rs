@@ -196,10 +196,10 @@ impl SignetNodeConfig {
         self.ipc_endpoint = Some(endpoint);
     }
 
-    /// Returns the genesis configuration if any has been loaded
+    /// Returns the rollup genesis configuration if any has been loaded.
     pub fn genesis(&self) -> &'static Genesis {
         static ONCE: OnceLock<Genesis> = OnceLock::new();
-        ONCE.get_or_init(|| self.genesis.load_genesis().expect("Failed to load genesis"))
+        ONCE.get_or_init(|| self.genesis.load_genesis().expect("Failed to load genesis").rollup)
     }
 
     /// Create a new chain spec for the Signet Node chain.
