@@ -316,7 +316,7 @@ impl SignetTestContext {
         let contract_address = deployer.create(self.nonce(deployer));
         let tx = TransactionRequest::default()
             .from(deployer)
-            .gas_limit(21_000_000)
+            .gas_limit(16_000_000)
             .with_deploy_code(COUNTER_DEPLOY_CODE);
 
         let (_tx, _receipt) = self.process_alloy_tx(&tx).await.unwrap();
@@ -329,7 +329,7 @@ impl SignetTestContext {
         let contract_address = deployer.create(self.nonce(deployer));
         let tx = TransactionRequest::default()
             .from(deployer)
-            .gas_limit(21_000_000)
+            .gas_limit(16_000_000)
             .with_deploy_code(Log::BYTECODE.clone());
 
         let (_tx, _receipt) = self.process_alloy_tx(&tx).await.unwrap();
