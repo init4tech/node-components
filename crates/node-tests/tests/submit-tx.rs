@@ -52,7 +52,7 @@ async fn test_deploy_contract() {
             .from(deployer)
             .max_priority_fee_per_gas(GWEI_TO_WEI.into())
             .max_fee_per_gas(GWEI_TO_WEI.into())
-            .gas_limit(21_000_000)
+            .gas_limit(16_000_000)
             .with_deploy_code(COUNTER_DEPLOY_CODE);
 
         let (tx, receipt) = ctx.process_alloy_tx(&tx).await.unwrap();
