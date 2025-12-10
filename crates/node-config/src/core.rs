@@ -198,7 +198,7 @@ impl SignetNodeConfig {
 
     /// Returns the rollup genesis configuration if any has been loaded.
     pub fn genesis(&self) -> &'static Genesis {
-        static ONCE: OnceLock<Genesis> = OnceLock::new();
+        static ONCE: OnceLock<Cow<'static, Genesis>> = OnceLock::new();
         ONCE.get_or_init(|| self.genesis.load_genesis().expect("Failed to load genesis").rollup)
     }
 
@@ -222,6 +222,7 @@ impl SignetNodeConfig {
 #[cfg(test)]
 mod defaults {
     use super::*;
+    use signet_types::constants::KnownChains;
 
     impl Default for SignetNodeConfig {
         fn default() -> Self {
@@ -233,7 +234,7 @@ mod defaults {
                 http_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT),
                 ws_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT + 1),
                 ipc_endpoint: None,
-                genesis: GenesisSpec::Test,
+                genesis: GenesisSpec::Known(KnownChains::Test),
 
                 slot_calculator: SlotCalculator::new(0, 0, 12),
             }

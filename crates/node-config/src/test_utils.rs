@@ -3,6 +3,7 @@ use init4_bin_base::utils::calc::SlotCalculator;
 use reth_db::test_utils::tempdir_path;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
+use signet_types::constants::KnownChains;
 use std::borrow::Cow;
 
 /// Make a test config
@@ -25,6 +26,6 @@ const TEST_CONFIG: SignetNodeConfig = SignetNodeConfig::new(
     31391, // NOP
     31392, // NOP
     Some(Cow::Borrowed("/trethNOP")),
-    GenesisSpec::Test,
+    GenesisSpec::Known(KnownChains::Test),
     SlotCalculator::new(0, 0, 12),
 );

@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.14.4"
+version = "0.16.0-rc.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,33 +34,33 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.14", path = "crates/blobber" }
-signet-block-processor = { version = "0.14", path = "crates/block-processor" }
-signet-db = { version = "0.14", path = "crates/db" }
-signet-genesis = { version = "0.14", path = "crates/genesis" }
-signet-node = { version = "0.14", path = "crates/node" }
-signet-node-config = { version = "0.14", path = "crates/node-config" }
-signet-node-tests = { version = "0.14", path = "crates/node-tests" }
-signet-node-types = { version = "0.14", path = "crates/node-types" }
-signet-rpc = { version = "0.14", path = "crates/rpc" }
+signet-blobber = { version = "0.16.0-rc.1", path = "crates/blobber" }
+signet-block-processor = { version = "0.16.0-rc.1", path = "crates/block-processor" }
+signet-db = { version = "0.16.0-rc.1", path = "crates/db" }
+signet-genesis = { version = "0.16.0-rc.1", path = "crates/genesis" }
+signet-node = { version = "0.16.0-rc.1", path = "crates/node" }
+signet-node-config = { version = "0.16.0-rc.1", path = "crates/node-config" }
+signet-node-tests = { version = "0.16.0-rc.1", path = "crates/node-tests" }
+signet-node-types = { version = "0.16.0-rc.1", path = "crates/node-types" }
+signet-rpc = { version = "0.16.0-rc.1", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.17.0", features = ["alloy"] }
 
-signet-bundle = "0.14"
-signet-constants = "0.14"
-signet-evm = "0.14"
-signet-extract = "0.14"
-signet-test-utils = "0.14"
-signet-tx-cache = "0.14"
-signet-types = "0.14"
-signet-zenith = "0.14"
-signet-journal = "0.14"
+signet-bundle = "0.16.0-rc.1"
+signet-constants = "0.16.0-rc.1"
+signet-evm = "0.16.0-rc.1"
+signet-extract = "0.16.0-rc.1"
+signet-test-utils = "0.16.0-rc.1"
+signet-tx-cache = "0.16.0-rc.1"
+signet-types = "0.16.0-rc.1"
+signet-zenith = "0.16.0-rc.1"
+signet-journal = "0.16.0-rc.1"
 
 # ajj
 ajj = { version = "0.3.4" }
 
 # trevm
-trevm = { version = "0.31.0", features = ["full_env_cfg"] }
+trevm = { version = "0.31.2", features = ["full_env_cfg"] }
 revm-inspectors = "0.32.0" # should be 1 more than trevm version, usually
 
 # Alloy periphery crates
