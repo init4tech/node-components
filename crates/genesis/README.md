@@ -20,8 +20,9 @@ This library contains the following:
 
 ```
 # use signet_genesis::GenesisSpec;
+# use signet_constants::KnownChains;
 # fn _main() -> Result<(), Box<dyn std::error::Error>> {
-let genesis = GenesisSpec::Parmigiana.load_genesis()?;
+let genesis = GenesisSpec::Known(KnownChains::Parmigiana).load_genesis()?;
 // Access rollup (L2/Signet) genesis
 let rollup = &genesis.rollup;
 // Access host (L1/Ethereum) genesis
