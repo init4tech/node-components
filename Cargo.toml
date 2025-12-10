@@ -34,15 +34,15 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.16.0-rc.1", path = "crates/blobber" }
-signet-block-processor = { version = "0.16.0-rc.1", path = "crates/block-processor" }
-signet-db = { version = "0.16.0-rc.1", path = "crates/db" }
-signet-genesis = { version = "0.16.0-rc.1", path = "crates/genesis" }
-signet-node = { version = "0.16.0-rc.1", path = "crates/node" }
-signet-node-config = { version = "0.16.0-rc.1", path = "crates/node-config" }
-signet-node-tests = { version = "0.16.0-rc.1", path = "crates/node-tests" }
-signet-node-types = { version = "0.16.0-rc.1", path = "crates/node-types" }
-signet-rpc = { version = "0.16.0-rc.1", path = "crates/rpc" }
+signet-blobber = { version = "0.16.0-rc.2", path = "crates/blobber" }
+signet-block-processor = { version = "0.16.0-rc.2", path = "crates/block-processor" }
+signet-db = { version = "0.16.0-rc.2", path = "crates/db" }
+signet-genesis = { version = "0.16.0-rc.2", path = "crates/genesis" }
+signet-node = { version = "0.16.0-rc.2", path = "crates/node" }
+signet-node-config = { version = "0.16.0-rc.2", path = "crates/node-config" }
+signet-node-tests = { version = "0.16.0-rc.2", path = "crates/node-tests" }
+signet-node-types = { version = "0.16.0-rc.2", path = "crates/node-types" }
+signet-rpc = { version = "0.16.0-rc.2", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.18.0-rc.1", features = ["alloy"] }
 
