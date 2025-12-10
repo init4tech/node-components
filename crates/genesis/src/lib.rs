@@ -46,6 +46,18 @@ pub static MAINNET_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(MAINNET_HOST_GENESIS_JSON).expect("Failed to parse mainnet host genesis")
 });
 
+/// Genesis for the Parmigiana testnet.
+pub static PARMIGIANA_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("./parmigiana.genesis.json"))
+        .expect("Failed to parse parmigiana genesis")
+});
+
+/// Genesis for the Parmigiana host testnet.
+pub static PARMIGIANA_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("./parmigiana.host.genesis.json"))
+        .expect("Failed to parse parmigiana host genesis")
+});
+
 /// Genesis for the Pecorino testnet.
 pub static PECORINO_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(PECORINO_GENESIS_JSON).expect("Failed to parse pecorino genesis")
@@ -90,9 +102,9 @@ pub enum GenesisError {
 #[derive(Debug, Clone)]
 pub struct NetworkGenesis {
     /// The rollup genesis configuration.
-    pub rollup: Genesis,
+    pub rollup: Cow<'static, Genesis>,
     /// The host genesis configuration.
-    pub host: Genesis,
+    pub host: Cow<'static, Genesis>,
 }
 
 /// Raw genesis JSON strings for a network.
@@ -108,12 +120,8 @@ pub struct RawNetworkGenesis {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
 pub enum GenesisSpec {
-    /// Signet mainnet.
-    Mainnet,
-    /// Pecorino testnet.
-    Pecorino,
-    /// Local testnet.
-    Test,
+    /// Known chain genesis configurations.
+    Known(#[serde(deserialize_with = "known_from_str")] KnownChains),
     /// Custom paths to genesis files.
     Custom {
         /// Path to the rollup genesis file.
@@ -123,21 +131,34 @@ pub enum GenesisSpec {
     },
 }
 
+fn known_from_str<'de, D>(deserializer: D) -> std::result::Result<KnownChains, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = <String as serde::Deserialize>::deserialize(deserializer)?;
+    KnownChains::from_str(&s).map_err(serde::de::Error::custom)
+}
+
 impl GenesisSpec {
     /// Load the raw genesis JSON strings from the specified source.
     ///
     /// Returns both rollup and host genesis JSON strings.
     pub fn load_raw_genesis(&self) -> Result<RawNetworkGenesis> {
         match self {
-            GenesisSpec::Mainnet => Ok(RawNetworkGenesis {
+            GenesisSpec::Known(KnownChains::Mainnet) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(MAINNET_GENESIS_JSON),
                 host: Cow::Borrowed(MAINNET_HOST_GENESIS_JSON),
             }),
-            GenesisSpec::Pecorino => Ok(RawNetworkGenesis {
+            GenesisSpec::Known(KnownChains::Parmigiana) => Ok(RawNetworkGenesis {
+                rollup: Cow::Borrowed(include_str!("./parmigiana.genesis.json")),
+                host: Cow::Borrowed(include_str!("./parmigiana.host.genesis.json")),
+            }),
+            #[allow(deprecated)]
+            GenesisSpec::Known(KnownChains::Pecorino) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(PECORINO_GENESIS_JSON),
                 host: Cow::Borrowed(PECORINO_HOST_GENESIS_JSON),
             }),
-            GenesisSpec::Test => Ok(RawNetworkGenesis {
+            GenesisSpec::Known(KnownChains::Test) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(TEST_GENESIS_JSON),
                 host: Cow::Borrowed(TEST_HOST_GENESIS_JSON),
             }),
@@ -153,21 +174,27 @@ impl GenesisSpec {
     /// Returns both rollup and host genesis configurations.
     pub fn load_genesis(&self) -> Result<NetworkGenesis> {
         match self {
-            GenesisSpec::Mainnet => Ok(NetworkGenesis {
-                rollup: MAINNET_GENESIS.clone(),
-                host: MAINNET_HOST_GENESIS.clone(),
+            GenesisSpec::Known(KnownChains::Mainnet) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*MAINNET_GENESIS),
+                host: Cow::Borrowed(&*MAINNET_HOST_GENESIS),
             }),
-            GenesisSpec::Pecorino => Ok(NetworkGenesis {
-                rollup: PECORINO_GENESIS.clone(),
-                host: PECORINO_HOST_GENESIS.clone(),
+            GenesisSpec::Known(KnownChains::Parmigiana) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*PARMIGIANA_GENESIS),
+                host: Cow::Borrowed(&*PARMIGIANA_HOST_GENESIS),
             }),
-            GenesisSpec::Test => {
-                Ok(NetworkGenesis { rollup: TEST_GENESIS.clone(), host: TEST_HOST_GENESIS.clone() })
-            }
+            #[allow(deprecated)]
+            GenesisSpec::Known(KnownChains::Pecorino) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*PECORINO_GENESIS),
+                host: Cow::Borrowed(&*PECORINO_HOST_GENESIS),
+            }),
+            GenesisSpec::Known(KnownChains::Test) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*TEST_GENESIS),
+                host: Cow::Borrowed(&*TEST_HOST_GENESIS),
+            }),
             GenesisSpec::Custom { .. } => self.load_raw_genesis().and_then(|genesis| {
                 Ok(NetworkGenesis {
-                    rollup: serde_json::from_str(&genesis.rollup)?,
-                    host: serde_json::from_str(&genesis.host)?,
+                    rollup: Cow::Owned(serde_json::from_str(&genesis.rollup)?),
+                    host: Cow::Owned(serde_json::from_str(&genesis.host)?),
                 })
             }),
         }
@@ -240,9 +267,6 @@ impl FromEnv for GenesisSpec {
 
 impl From<KnownChains> for GenesisSpec {
     fn from(known: KnownChains) -> Self {
-        match known {
-            KnownChains::Pecorino => GenesisSpec::Pecorino,
-            KnownChains::Test => GenesisSpec::Test,
-        }
+        Self::Known(known)
     }
 }

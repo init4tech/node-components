@@ -10,7 +10,7 @@ use alloy::{
     signers::Signer,
 };
 use serial_test::serial;
-use signet_constants::RollupPermitted;
+use signet_constants::{KnownChains, RollupPermitted};
 use signet_genesis::GenesisSpec;
 use signet_node_tests::{HostBlockSpec, run_test, utils::adjust_usd_decimals};
 
@@ -69,7 +69,8 @@ async fn test_basic_reorg() {
 #[tokio::test]
 async fn test_genesis_allocs() {
     run_test(|ctx| async move {
-        let genesis = GenesisSpec::Test.load_genesis().expect("Failed to load genesis");
+        let genesis =
+            GenesisSpec::Known(KnownChains::Test).load_genesis().expect("Failed to load genesis");
         ctx.verify_allocs(&genesis.rollup);
     })
     .await;
