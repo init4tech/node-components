@@ -32,9 +32,9 @@
           "chainId": 3151908,
           "deployHeight": 0,
           "zenith": "0x143A5BE4E559cA49Dbf0966d4B9C398425C5Fc19",
-          "orders": "0x28524D2a753925Ef000C3f0F811cDf452C6256aF",
-          "passage": "0x0B4fc18e78c585687E01c172a1087Ea687943db9",
-          "transactor": "0x96f44ddc3Bc8892371305531F1a6d8ca2331fE6C",
+          "orders": "0x96f44ddc3Bc8892371305531F1a6d8ca2331fE6C",
+          "passage": "0x28524D2a753925Ef000C3f0F811cDf452C6256aF",
+          "transactor": "0x0B4fc18e78c585687E01c172a1087Ea687943db9",
           "tokens": {
             "usds": [
               {
