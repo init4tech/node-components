@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.16.0-rc.1"
+version = "0.16.0-rc.2"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -44,7 +44,7 @@ signet-node-tests = { version = "0.16.0-rc.1", path = "crates/node-tests" }
 signet-node-types = { version = "0.16.0-rc.1", path = "crates/node-types" }
 signet-rpc = { version = "0.16.0-rc.1", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.17.0", features = ["alloy"] }
+init4-bin-base = { version = "0.18.0-rc.1", features = ["alloy"] }
 
 signet-bundle = "0.16.0-rc.1"
 signet-constants = "0.16.0-rc.1"
