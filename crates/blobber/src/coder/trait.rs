@@ -51,7 +51,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Blobs, utils::tests::PYLON_BLOB_RESPONSE};
+    use crate::{Blobs, test::PYLON_BLOB_RESPONSE};
     use alloy::{
         consensus::{Blob, BlobTransactionSidecar, Bytes48, SimpleCoder},
         primitives::{Address, B256, U256, b256},
