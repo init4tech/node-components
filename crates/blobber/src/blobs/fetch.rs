@@ -1,10 +1,10 @@
-use crate::{BlobFetcherBuilder, FetchError, FetchResult, utils::extract_blobs_from_bundle};
+use crate::{BlobFetcherBuilder, FetchError, FetchResult};
 use alloy::{
     consensus::{Blob, BlobTransactionSidecar},
     eips::eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     primitives::{B256, TxHash},
 };
-use reth::{rpc::types::beacon::sidecar::BeaconBlobBundle, transaction_pool::TransactionPool};
+use reth::{rpc::types::beacon::sidecar::GetBlobsResponse, transaction_pool::TransactionPool};
 use std::{ops::Deref, sync::Arc};
 use tokio::select;
 use tracing::instrument;
@@ -218,15 +218,24 @@ where
             return Err(FetchError::ConsensusClientUrlNotSet);
         };
 
-        let url = url
-            .join(&format!("/eth/v1/beacon/blob_sidecars/{slot}"))
-            .map_err(FetchError::UrlParse)?;
+        let mut url =
+            url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
+
+        url.query_pairs_mut()
+            .extend_pairs(versioned_hashes.iter().map(|hash| ("versioned_hash", hash.to_string())));
 
         let response = self.client.get(url).header("accept", "application/json").send().await?;
 
-        let response: BeaconBlobBundle = response.json().await?;
+        let response: GetBlobsResponse = response.json().await?;
 
-        extract_blobs_from_bundle(response, versioned_hashes)
+        debug_assert!(
+            response.data.len() == versioned_hashes.len(),
+            "Expected {} blobs, got {}",
+            versioned_hashes.len(),
+            response.data.len()
+        );
+
+        Ok(Arc::new(response.data).into())
     }
 }
 
