@@ -41,6 +41,7 @@ where
     };
 
     match built_in {
+        GethDebugBuiltInTracerType::Erc7562Tracer => trace_erc7562(trevm).map_err(Into::into),
         GethDebugBuiltInTracerType::FourByteTracer => trace_four_byte(trevm).map_err(Into::into),
         GethDebugBuiltInTracerType::CallTracer => {
             trace_call(&config.tracer_config, trevm).map_err(Into::into)
@@ -62,6 +63,17 @@ where
             trace_mux(&config.tracer_config, trevm, tx_info).map_err(Into::into)
         }
     }
+}
+
+fn trace_erc7562<Db, Insp>(
+    _trevm: EvmReady<Db, Insp>,
+) -> Result<(GethTrace, EvmNeedsTx<Db, Insp>), EthApiError>
+where
+    Db: Database + DatabaseCommit,
+    Insp: Inspector<Ctx<Db>>,
+{
+    // ERC-7562 tracing is not yet implemented.
+    Err(EthApiError::Unsupported("ERC-7562 tracing is not yet implemented"))
 }
 
 /// Traces a call using [`GethDebugBuiltInTracerType::FourByteTracer`].

@@ -280,7 +280,7 @@ mod tests {
         let encoded_transactions =
             encode(vec![sign_tx_with_key_pair(wallet.clone(), tx).encoded_2718()]);
 
-        let result = SidecarBuilder::<SimpleCoder>::from_slice(&encoded_transactions).build();
+        let result = SidecarBuilder::<SimpleCoder>::from_slice(&encoded_transactions).build_4844();
         assert!(result.is_ok());
 
         let mut mock_transaction = MockTransaction::eip4844_with_sidecar(result.unwrap().into());
