@@ -30,7 +30,7 @@
     "signetConstants": {
       "host": {
         "chainId": 1,
-        "deployHeight": 23734244,
+        "deployHeight": 0,
         "zenith": "0xBCe84D45d7be8859bcBd838d4a7b3448B55E6869",
         "orders": "0x96f44ddc3Bc8892371305531F1a6d8ca2331fE6C",
         "passage": "0x02a64d6e2c30d2B07ddBD177b24D9D0f6439CcbD",
