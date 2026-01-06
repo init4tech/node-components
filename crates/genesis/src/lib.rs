@@ -270,3 +270,24 @@ impl From<KnownChains> for GenesisSpec {
         Self::Known(known)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use signet_constants::SignetSystemConstants;
+
+    #[test]
+    fn load_files() {
+        for key in [
+            KnownChains::Mainnet,
+            KnownChains::Parmigiana,
+            #[allow(deprecated)]
+            KnownChains::Pecorino,
+            KnownChains::Test,
+        ] {
+            let genesis =
+                GenesisSpec::from(key).load_genesis().expect("Failed to load genesis").rollup;
+            SignetSystemConstants::try_from_genesis(&genesis).unwrap();
+        }
+    }
+}
