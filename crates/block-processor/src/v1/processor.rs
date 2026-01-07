@@ -248,10 +248,13 @@ where
             .wrap_err("parent ru block not present in DB")
             .inspect_err(|e| error!(%e))?;
 
-        let slot = self.slot_calculator.slot_ending_at(timestamp).expect("host chain has started");
-
         let txns = match &block_extracts.submitted {
             Some(submitted) => {
+                // NB: Pre-merge blocks do not have predictable slot times.
+                let slot = self
+                    .slot_calculator
+                    .slot_ending_at(timestamp)
+                    .expect("expect submitted events only occur post-merge");
                 self.blob_cacher
                     .signet_block(block_extracts.host_block.number(), slot, submitted)
                     .await?
