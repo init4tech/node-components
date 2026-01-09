@@ -26,11 +26,12 @@ pub use error::{BlobberError, BlobberResult};
 mod shim;
 pub use shim::ExtractableChainShim;
 
-pub(crate) mod utils;
-
 #[cfg(test)]
 mod test {
-    use crate::utils::tests::BLOBSCAN_BLOB_RESPONSE;
+    pub(crate) const BLOBSCAN_BLOB_RESPONSE: &str =
+        include_str!("../../../tests/artifacts/blob.json");
+    pub(crate) const PYLON_BLOB_RESPONSE: &str =
+        include_str!("../../../tests/artifacts/pylon_blob.json");
     use foundry_blob_explorers::TransactionDetails;
 
     // Sanity check on dependency compatibility.
