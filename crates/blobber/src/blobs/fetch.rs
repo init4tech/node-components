@@ -221,8 +221,9 @@ where
         let mut url =
             url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
 
-        url.query_pairs_mut()
-            .extend_pairs(versioned_hashes.iter().map(|hash| ("versioned_hash", hash.to_string())));
+        let versioned_hashes =
+            versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
+        url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
 
         let response = self.client.get(url).header("accept", "application/json").send().await?;
 
