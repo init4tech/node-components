@@ -43,10 +43,11 @@ where
 
         debug!("Checking static file consistency.");
 
-        let last_good_height: Option<BlockNumber> = None;
+        let mut last_good_height: Option<BlockNumber> = None;
 
-        let update_last_good_height = |new_height: BlockNumber| {
-            last_good_height.map(|current| current.max(new_height)).or(Some(new_height))
+        let mut update_last_good_height = |new_height: BlockNumber| {
+            last_good_height =
+                last_good_height.map(|current| current.min(new_height)).or(Some(new_height));
         };
 
         for segment in StaticFileSegment::iter() {
@@ -168,7 +169,7 @@ where
 ///    then [`None`] will be returned.
 ///
 /// [`TxNumber`]: alloy::primitives::TxNumber
-#[instrument(skip(this), fields(table = T::NAME))]
+#[instrument(skip(this, segment), fields(table = T::NAME))]
 fn ensure_invariants<Db, T: Table<Key = u64>>(
     this: &ProviderFactory<SignetNodeTypes<Db>>,
     segment: StaticFileSegment,

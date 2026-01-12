@@ -64,14 +64,14 @@ trevm = { version = "0.31.2", features = ["full_env_cfg"] }
 revm-inspectors = "0.32.0" # should be 1 more than trevm version, usually
 
 # Alloy periphery crates
-alloy = { version = "1.0.35", features = [
+alloy = { version = "1.4.0", features = [
     "full",
     "rpc-types-beacon",
     "rpc-types-mev",
     "genesis",
     "arbitrary",
 ] }
-alloy-contract = { version = "1.0.35", features = ["pubsub"] }
+alloy-contract = { version = "1.4.0", features = ["pubsub"] }
 
 # Reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
