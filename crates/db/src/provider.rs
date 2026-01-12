@@ -55,6 +55,7 @@ where
         self.tx_ref().get::<JournalHashes>(ru_height).map_err(Into::into)
     }
 
+    #[track_caller]
     fn latest_journal_hash(&self) -> ProviderResult<B256> {
         let latest_height = self.last_block_number()?;
         Ok(self

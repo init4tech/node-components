@@ -20,7 +20,7 @@ use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use signet_blobber::BlobFetcher;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
-use signet_db::{DbProviderExt, RuChain, RuWriter};
+use signet_db::{DbProviderExt, ProviderConsistencyExt, RuChain, RuWriter};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
 use signet_rpc::RpcServerGuard;
@@ -179,6 +179,8 @@ where
     /// errors.
     #[instrument(skip(self), fields(host = ?self.host.config.chain.chain()))]
     pub async fn start(mut self) -> eyre::Result<()> {
+        self.ru_provider.ru_check_consistency()?;
+
         // This exists only to bypass the `tracing::instrument(err)` macro to
         // ensure that full sources get reported.
         self.start_inner().await.inspect_err(|err| {

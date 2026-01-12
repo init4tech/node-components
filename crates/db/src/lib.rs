@@ -17,6 +17,9 @@ pub use aliases::{RuRevmState, SignetDbRw};
 mod chain;
 pub use chain::{DbExtractionResults, RuChain};
 
+mod consistency;
+pub use consistency::ProviderConsistencyExt;
+
 mod convert;
 pub use convert::DataCompat;
 

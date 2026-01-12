@@ -89,6 +89,7 @@ reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
 reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
+reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.1" }
 
 # Foundry periphery
