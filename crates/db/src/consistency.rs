@@ -87,7 +87,7 @@ where
             // The updated `highest_block` may have decreased if we healed from a pruning
             // interruption.
             let mut highest_block = sfp.get_highest_static_file_block(segment);
-            span.record("highest_block", &highest_block);
+            span.record("highest_block", highest_block);
 
             if initial_highest_block != highest_block {
                 update_last_good_height(highest_block.unwrap_or_default());
@@ -100,7 +100,7 @@ where
             // being able to update the last block of the static file segment.
             let highest_tx = sfp.get_highest_static_file_tx(segment);
             if let Some(highest_tx) = highest_tx {
-                span.record("highest_tx", &highest_tx);
+                span.record("highest_tx", highest_tx);
                 let mut last_block = highest_block.unwrap_or_default();
                 loop {
                     if let Some(indices) = self.block_body_indices(last_block)? {
@@ -191,13 +191,7 @@ where
             // database, then we have most likely lost static file data and
             // need to unwind so we can load it again
             if !(db_first_entry <= highest_entry || highest_entry + 1 == db_first_entry) {
-                info!(
-                    ?db_first_entry,
-                    ?highest_entry,
-                    unwind_target = highest_block,
-                    ?segment,
-                    "Setting unwind target."
-                );
+                info!(unwind_target = highest_block, "Setting unwind target.");
                 return Ok(Some(highest_block));
             }
         }

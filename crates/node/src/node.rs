@@ -2,7 +2,7 @@ use crate::metrics;
 use alloy::{
     consensus::BlockHeader,
     eips::NumHash,
-    primitives::{B256, b256},
+    primitives::{B256, BlockNumber, b256},
 };
 use eyre::Context;
 use futures_util::StreamExt;
@@ -25,7 +25,7 @@ use signet_node_config::SignetNodeConfig;
 use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
 use signet_rpc::RpcServerGuard;
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
-use std::{fmt, sync::Arc};
+use std::{fmt, mem::MaybeUninit, sync::Arc};
 use tokio::sync::watch;
 use tracing::{debug, info, instrument};
 
@@ -179,7 +179,9 @@ where
     /// errors.
     #[instrument(skip(self), fields(host = ?self.host.config.chain.chain()))]
     pub async fn start(mut self) -> eyre::Result<()> {
-        self.ru_provider.ru_check_consistency()?;
+        if let Some(height) = self.ru_provider.ru_check_consistency()? {
+            self.unwind_to(height).wrap_err("failed to unwind RU database to consistent state")?;
+        }
 
         // This exists only to bypass the `tracing::instrument(err)` macro to
         // ensure that full sources get reported.
@@ -299,8 +301,7 @@ where
         // NB: REVERTS MUST RUN FIRST
         let mut reverted = None;
         if let Some(chain) = notification.reverted_chain() {
-            reverted =
-                self.on_host_revert(&chain).await.wrap_err("error encountered during revert")?;
+            reverted = self.on_host_revert(&chain).wrap_err("error encountered during revert")?;
         }
 
         let mut committed = None;
@@ -614,9 +615,23 @@ where
         }
     }
 
+    /// Unwind the RU chain DB to the target block number.
+    fn unwind_to(&self, target: BlockNumber) -> eyre::Result<RuChain> {
+        let mut reverted = MaybeUninit::uninit();
+        self.ru_provider
+            .provider_rw()?
+            .update(|writer| {
+                reverted.write(writer.ru_take_blocks_and_execution_above(target)?);
+                Ok(())
+            })
+            // SAFETY: if the closure above returns Ok, reverted is initialized.
+            .map(|_| unsafe { reverted.assume_init() })
+            .map_err(Into::into)
+    }
+
     /// Called when the host chain has reverted a block or set of blocks.
     #[instrument(skip_all, fields(first = chain.first().number(), tip = chain.tip().number()))]
-    pub async fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<Option<RuChain>> {
+    pub fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<Option<RuChain>> {
         // If the end is before the RU genesis, we don't need to do anything at
         // all.
         if chain.tip().number() <= self.constants.host_deploy_height() {
@@ -632,12 +647,6 @@ where
             .unwrap_or_default() // 0 if the block is before the deploy height
             .saturating_sub(1); // still 0 if 0, otherwise the block BEFORE.
 
-        let mut reverted = None;
-        self.ru_provider.provider_rw()?.update(|writer| {
-            reverted = Some(writer.ru_take_blocks_and_execution_above(target)?);
-            Ok(())
-        })?;
-
-        Ok(reverted)
+        self.unwind_to(target).map(Some)
     }
 }
