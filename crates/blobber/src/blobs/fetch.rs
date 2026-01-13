@@ -212,6 +212,8 @@ where
     ///
     /// This method returns whatever blobs the consensus client provides, even
     /// if fewer than requested. Use this when partial blob results are acceptable.
+    ///
+    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
     #[instrument(skip_all)]
     #[allow(dead_code)]
     async fn get_blobs_from_cl(
@@ -243,33 +245,22 @@ where
     /// This method enforces that the consensus client returns exactly the
     /// number of blobs requested. If the count doesn't match, returns
     /// [`FetchError::BlobCountMismatch`].
+    ///
+    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
     #[instrument(skip_all)]
     async fn get_blobs_from_cl_exact(
         &self,
         slot: usize,
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
-        let Some(url) = &self.cl_url else {
-            return Err(FetchError::ConsensusClientUrlNotSet);
-        };
-
-        let mut url =
-            url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
-
         let expected = versioned_hashes.len();
-        let versioned_hashes =
-            versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
-        url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
+        let blobs = self.get_blobs_from_cl(slot, versioned_hashes).await?;
 
-        let response = self.client.get(url).header("accept", "application/json").send().await?;
-
-        let response: GetBlobsResponse = response.json().await?;
-
-        if response.data.len() != expected {
-            return Err(FetchError::BlobCountMismatch { expected, actual: response.data.len() });
+        if blobs.len() != expected {
+            return Err(FetchError::BlobCountMismatch { expected, actual: blobs.len() });
         }
 
-        Ok(Arc::new(response.data).into())
+        Ok(blobs)
     }
 }
 
