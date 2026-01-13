@@ -85,7 +85,6 @@ reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1
 reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }

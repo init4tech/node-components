@@ -1,0 +1,17 @@
+[package]
+name = "signet-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+alloy.workspace = true
+bytes = "1.11.0"
+reth.workspace = true
+reth-db.workspace = true
+reth-db-api.workspace = true
+thiserror.workspace = true
