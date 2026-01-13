@@ -144,10 +144,10 @@ where
         // height, so we don't need compute the start from the notification.
         let mut start = None;
         let mut current = 0;
+        let last_ru_height = self.ru_provider.last_block_number()?;
         let mut prev_block_journal = self.ru_provider.provider_rw()?.latest_journal_hash()?;
 
         let mut net_outcome = ExecutionOutcome::default();
-        let last_ru_height = self.ru_provider.last_block_number()?;
 
         // There might be a case where we can get a notification that starts
         // "lower" than our last processed block,
@@ -183,13 +183,14 @@ where
                 ru_height = block_extracts.ru_height,
                 host_height = block_extracts.host_block.number(),
                 has_ru_block = block_extracts.submitted.is_some(),
+                height_before_notification = last_ru_height,
             );
 
-            tracing::trace!("Running EVM");
-            let block_result = self.run_evm(&block_extracts, spec_id).instrument(span).await?;
+            let block_result =
+                self.run_evm(&block_extracts, spec_id).instrument(span.clone()).await?;
             metrics::record_block_result(&block_result, &start_time);
 
-            tracing::trace!("Committing EVM results");
+            let _ = span.enter();
             let journal =
                 self.commit_evm_results(&block_extracts, &block_result, prev_block_journal)?;
 

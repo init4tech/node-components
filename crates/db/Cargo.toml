@@ -23,6 +23,7 @@ alloy.workspace = true
 reth.workspace = true
 reth-db.workspace = true
 reth-prune-types.workspace = true
+reth-stages-types.workspace = true
 
 itertools.workspace = true
 serde.workspace = true
