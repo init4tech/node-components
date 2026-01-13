@@ -1,10 +1,10 @@
-use crate::{BlobFetcherBuilder, FetchError, FetchResult, utils::extract_blobs_from_bundle};
+use crate::{BlobFetcherBuilder, FetchError, FetchResult};
 use alloy::{
     consensus::{Blob, BlobTransactionSidecar},
     eips::eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
     primitives::{B256, TxHash},
 };
-use reth::{rpc::types::beacon::sidecar::BeaconBlobBundle, transaction_pool::TransactionPool};
+use reth::{rpc::types::beacon::sidecar::GetBlobsResponse, transaction_pool::TransactionPool};
 use std::{ops::Deref, sync::Arc};
 use tokio::select;
 use tracing::instrument;
@@ -166,7 +166,7 @@ where
             Ok(blobs) = self.get_blobs_from_explorer(tx_hash) => {
                  Ok(blobs)
             }
-            Ok(blobs) = self.get_blobs_from_cl(slot, versioned_hashes) => {
+            Ok(blobs) = self.get_blobs_from_cl_exact(slot, versioned_hashes) => {
                  Ok(blobs)
             }
             Ok(blobs) = self.get_blobs_from_pylon(tx_hash) => {
@@ -207,7 +207,13 @@ where
             .map_err(Into::into)
     }
 
-    /// Queries the connected consensus client for the blob transaction
+    /// Queries the consensus client for blobs at a given slot, filtering by
+    /// versioned hashes (best-effort).
+    ///
+    /// This method returns whatever blobs the consensus client provides, even
+    /// if fewer than requested. Use this when partial blob results are acceptable.
+    ///
+    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
     #[instrument(skip_all)]
     async fn get_blobs_from_cl(
         &self,
@@ -218,15 +224,42 @@ where
             return Err(FetchError::ConsensusClientUrlNotSet);
         };
 
-        let url = url
-            .join(&format!("/eth/v1/beacon/blob_sidecars/{slot}"))
-            .map_err(FetchError::UrlParse)?;
+        let mut url =
+            url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
+
+        let versioned_hashes =
+            versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
+        url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
 
         let response = self.client.get(url).header("accept", "application/json").send().await?;
 
-        let response: BeaconBlobBundle = response.json().await?;
+        let response: GetBlobsResponse = response.json().await?;
 
-        extract_blobs_from_bundle(response, versioned_hashes)
+        Ok(Arc::new(response.data).into())
+    }
+
+    /// Queries the consensus client for blobs at a given slot, filtering by
+    /// versioned hashes (exact match required).
+    ///
+    /// This method enforces that the consensus client returns exactly the
+    /// number of blobs requested. If the count doesn't match, returns
+    /// [`FetchError::BlobCountMismatch`].
+    ///
+    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
+    #[instrument(skip_all)]
+    async fn get_blobs_from_cl_exact(
+        &self,
+        slot: usize,
+        versioned_hashes: &[B256],
+    ) -> FetchResult<Blobs> {
+        let expected = versioned_hashes.len();
+        let blobs = self.get_blobs_from_cl(slot, versioned_hashes).await?;
+
+        if blobs.len() != expected {
+            return Err(FetchError::BlobCountMismatch { expected, actual: blobs.len() });
+        }
+
+        Ok(blobs)
     }
 }
 

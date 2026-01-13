@@ -26,6 +26,14 @@ pub enum FetchError {
     /// Pylon client URL not set error.
     #[error("Pylon client URL not set")]
     PylonClientUrlNotSet,
+    /// Blob count mismatch from the consensus client.
+    #[error("Blob count mismatch: expected {expected}, got {actual} from the consensus client")]
+    BlobCountMismatch {
+        /// Expected number of blobs.
+        expected: usize,
+        /// Actual number of blobs received.
+        actual: usize,
+    },
 }
 
 impl From<BlobStoreError> for FetchError {
