@@ -215,7 +215,6 @@ where
     ///
     /// We assume the CL will NEVER return unrelated blobs, only correct ones.
     #[instrument(skip_all)]
-    #[allow(dead_code)]
     async fn get_blobs_from_cl(
         &self,
         slot: usize,
