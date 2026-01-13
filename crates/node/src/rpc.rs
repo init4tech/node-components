@@ -4,7 +4,7 @@ use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
 use signet_node_types::NodeTypesDbTrait;
 use signet_rpc::{RpcCtx, RpcServerGuard, ServeConfig};
-use signet_tx_cache::client::TxCache;
+use signet_tx_cache::TxCache;
 use tracing::info;
 
 impl<Host, Db, AliasOracle> SignetNode<Host, Db, AliasOracle>
