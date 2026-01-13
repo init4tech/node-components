@@ -166,7 +166,7 @@ where
             Ok(blobs) = self.get_blobs_from_explorer(tx_hash) => {
                  Ok(blobs)
             }
-            Ok(blobs) = self.get_blobs_from_cl(slot, versioned_hashes) => {
+            Ok(blobs) = self.get_blobs_from_cl_exact(slot, versioned_hashes) => {
                  Ok(blobs)
             }
             Ok(blobs) = self.get_blobs_from_pylon(tx_hash) => {
@@ -207,9 +207,44 @@ where
             .map_err(Into::into)
     }
 
-    /// Queries the connected consensus client for the blob transaction
+    /// Queries the consensus client for blobs at a given slot, filtering by
+    /// versioned hashes (best-effort).
+    ///
+    /// This method returns whatever blobs the consensus client provides, even
+    /// if fewer than requested. Use this when partial blob results are acceptable.
     #[instrument(skip_all)]
+    #[allow(dead_code)]
     async fn get_blobs_from_cl(
+        &self,
+        slot: usize,
+        versioned_hashes: &[B256],
+    ) -> FetchResult<Blobs> {
+        let Some(url) = &self.cl_url else {
+            return Err(FetchError::ConsensusClientUrlNotSet);
+        };
+
+        let mut url =
+            url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
+
+        let versioned_hashes =
+            versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
+        url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
+
+        let response = self.client.get(url).header("accept", "application/json").send().await?;
+
+        let response: GetBlobsResponse = response.json().await?;
+
+        Ok(Arc::new(response.data).into())
+    }
+
+    /// Queries the consensus client for blobs at a given slot, filtering by
+    /// versioned hashes (exact match required).
+    ///
+    /// This method enforces that the consensus client returns exactly the
+    /// number of blobs requested. If the count doesn't match, returns
+    /// [`FetchError::BlobCountMismatch`].
+    #[instrument(skip_all)]
+    async fn get_blobs_from_cl_exact(
         &self,
         slot: usize,
         versioned_hashes: &[B256],
