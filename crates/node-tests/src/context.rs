@@ -142,7 +142,7 @@ impl SignetTestContext {
         // after RPC booted, we can create the alloy provider
         let alloy_provider = ProviderBuilder::new_with_network()
             .disable_recommended_fillers()
-            .filler(BlobGasFiller)
+            .filler(BlobGasFiller::default())
             .with_gas_estimation()
             .with_nonce_management(SimpleNonceManager::default())
             .with_chain_id(constants.ru_chain_id())
