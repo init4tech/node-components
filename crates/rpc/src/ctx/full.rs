@@ -10,7 +10,7 @@ use reth_node_api::FullNodeComponents;
 use signet_db::RuRevmState;
 use signet_evm::EvmNeedsTx;
 use signet_node_types::Pnt;
-use signet_tx_cache::TxCache;
+use signet_tx_cache::client::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
