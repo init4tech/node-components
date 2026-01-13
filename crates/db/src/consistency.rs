@@ -16,7 +16,7 @@ use tracing::{debug, info, info_span, instrument, warn};
 /// provider. Consistency checks are MANDATORY on node startup to ensure that
 /// the static file segments and database are in sync.
 ///
-/// in general, this should not be implemented outside this crate.
+/// In general, this should not be implemented outside this crate.
 pub trait ProviderConsistencyExt {
     /// Check the consistency of the static file segments and return the last
     /// known-good block number.
