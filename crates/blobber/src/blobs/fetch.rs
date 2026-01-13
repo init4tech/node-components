@@ -221,6 +221,7 @@ where
         let mut url =
             url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
 
+        let expected = versioned_hashes.len();
         let versioned_hashes =
             versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
         url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
@@ -229,12 +230,9 @@ where
 
         let response: GetBlobsResponse = response.json().await?;
 
-        debug_assert!(
-            response.data.len() == versioned_hashes.len(),
-            "Expected {} blobs, got {}",
-            versioned_hashes.len(),
-            response.data.len()
-        );
+        if response.data.len() != expected {
+            return Err(FetchError::BlobCountMismatch { expected, actual: response.data.len() });
+        }
 
         Ok(Arc::new(response.data).into())
     }
