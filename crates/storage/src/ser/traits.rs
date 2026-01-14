@@ -57,6 +57,11 @@ pub trait KeySer: Ord + Sized {
 
 /// Trait for value serialization.
 pub trait ValSer {
+    /// The encoded size of the value in bytes. This MUST be accurate, as it is
+    /// used to allocate buffers for serialization. Inaccurate sizes may result
+    /// in panics.
+    fn encoded_size(&self) -> usize;
+
     /// Serialize the value into bytes.
     fn encode_value_to<B>(&self, buf: &mut B)
     where
@@ -69,7 +74,7 @@ pub trait ValSer {
         buf.freeze().into()
     }
 
-    /// Deserialize the value from bytes, advancing the `data` slice.
+    /// Deserialize the value from bytes.
     fn decode_value(data: &[u8]) -> Result<Self, DeserError>
     where
         Self: Sized;
@@ -89,11 +94,13 @@ pub trait ValSer {
     }
 
     /// Deserialize the value from bytes, ensuring all bytes are consumed.
-    fn decode_value_exact(data: &mut &[u8]) -> Result<Self, DeserError>
+    fn decode_value_exact(data: &[u8]) -> Result<Self, DeserError>
     where
         Self: Sized,
     {
         let val = Self::decode_value(data)?;
-        data.is_empty().then_some(val).ok_or(DeserError::InexactDeser { extra_bytes: data.len() })
+        (val.encoded_size() == data.len())
+            .then_some(val)
+            .ok_or(DeserError::InexactDeser { extra_bytes: data.len() })
     }
 }
