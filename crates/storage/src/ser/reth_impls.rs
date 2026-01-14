@@ -1395,4 +1395,428 @@ impl ValSer for TransactionSigned {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{
+        Address, B256, Bloom, Bytes as AlloBytes, Signature, TxKind, U256, keccak256,
+    };
+    use alloy::{
+        consensus::{TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxLegacy},
+        eips::{
+            eip2930::{AccessList, AccessListItem},
+            eip7702::{Authorization, SignedAuthorization},
+        },
+    };
+    use reth::primitives::{Account, Header, Log, LogData, TxType};
+    use reth::revm::bytecode::JumpTable;
+    use reth_db_api::{BlockNumberList, models::StoredBlockBodyIndices};
 
+    /// Generic roundtrip test for any ValSer type
+    #[track_caller]
+    fn test_roundtrip<T>(original: &T)
+    where
+        T: ValSer + PartialEq + std::fmt::Debug,
+    {
+        // Encode
+        let mut buf = bytes::BytesMut::new();
+        original.encode_value_to(&mut buf);
+        let encoded = buf.freeze();
+
+        // Assert that the encoded size matches
+        assert_eq!(
+            original.encoded_size(),
+            encoded.len(),
+            "Encoded size mismatch: expected {}, got {}",
+            original.encoded_size(),
+            encoded.len()
+        );
+
+        // Decode
+        let decoded = T::decode_value(&encoded).expect("Failed to decode value");
+
+        // Assert equality
+        assert_eq!(*original, decoded, "Roundtrip failed");
+    }
+
+    #[test]
+    fn test_blocknumberlist_roundtrips() {
+        // Empty list
+        test_roundtrip(&BlockNumberList::empty());
+
+        // Single item
+        let mut single = BlockNumberList::empty();
+        single.push(42u64).unwrap();
+        test_roundtrip(&single);
+
+        // Multiple items
+        let mut multiple = BlockNumberList::empty();
+        for i in [0, 1, 255, 256, 65535, 65536, u64::MAX] {
+            multiple.push(i).unwrap();
+        }
+        test_roundtrip(&multiple);
+    }
+
+    #[test]
+    fn test_account_roundtrips() {
+        // Default account
+        test_roundtrip(&Account::default());
+
+        // Account with values
+        let account = Account {
+            nonce: 42,
+            balance: U256::from(123456789u64),
+            bytecode_hash: Some(keccak256(b"hello world")),
+        };
+        test_roundtrip(&account);
+
+        // Account with max values
+        let max_account = Account {
+            nonce: u64::MAX,
+            balance: U256::MAX,
+            bytecode_hash: Some(B256::from([0xFF; 32])),
+        };
+        test_roundtrip(&max_account);
+    }
+
+    #[test]
+    fn test_header_roundtrips() {
+        // Default header
+        test_roundtrip(&Header::default());
+
+        // Header with some values
+        let header = Header {
+            number: 12345,
+            gas_limit: 8000000,
+            timestamp: 1234567890,
+            difficulty: U256::from(1000000u64),
+            ..Default::default()
+        };
+        test_roundtrip(&header);
+    }
+
+    #[test]
+    fn test_logdata_roundtrips() {
+        // Empty log data
+        test_roundtrip(&LogData::new_unchecked(vec![], AlloBytes::new()));
+
+        // Log data with one topic
+        test_roundtrip(&LogData::new_unchecked(
+            vec![B256::from([1; 32])],
+            AlloBytes::from_static(b"hello"),
+        ));
+
+        // Log data with multiple topics
+        test_roundtrip(&LogData::new_unchecked(
+            vec![
+                B256::from([1; 32]),
+                B256::from([2; 32]),
+                B256::from([3; 32]),
+                B256::from([4; 32]),
+            ],
+            AlloBytes::from_static(b"world"),
+        ));
+    }
+
+    #[test]
+    fn test_log_roundtrips() {
+        let log_data = LogData::new_unchecked(
+            vec![B256::from([1; 32]), B256::from([2; 32])],
+            AlloBytes::from_static(b"test log data"),
+        );
+        let log = Log { address: Address::from([0x42; 20]), data: log_data };
+        test_roundtrip(&log);
+    }
+
+    #[test]
+    fn test_txtype_roundtrips() {
+        test_roundtrip(&TxType::Legacy);
+        test_roundtrip(&TxType::Eip2930);
+        test_roundtrip(&TxType::Eip1559);
+        test_roundtrip(&TxType::Eip4844);
+        test_roundtrip(&TxType::Eip7702);
+    }
+
+    #[test]
+    fn test_stored_block_body_indices_roundtrips() {
+        test_roundtrip(&StoredBlockBodyIndices { first_tx_num: 0, tx_count: 0 });
+
+        test_roundtrip(&StoredBlockBodyIndices { first_tx_num: 12345, tx_count: 67890 });
+
+        test_roundtrip(&StoredBlockBodyIndices { first_tx_num: u64::MAX, tx_count: u64::MAX });
+    }
+
+    #[test]
+    fn test_signature_roundtrips() {
+        test_roundtrip(&Signature::test_signature());
+
+        // Zero signature
+        let zero_sig = Signature::new(U256::ZERO, U256::ZERO, false);
+        test_roundtrip(&zero_sig);
+
+        // Max signature
+        let max_sig = Signature::new(U256::MAX, U256::MAX, true);
+        test_roundtrip(&max_sig);
+    }
+
+    #[test]
+    fn test_txkind_roundtrips() {
+        test_roundtrip(&TxKind::Create);
+        test_roundtrip(&TxKind::Call(Address::ZERO));
+        test_roundtrip(&TxKind::Call(Address::from([0xFF; 20])));
+    }
+
+    #[test]
+    fn test_accesslist_roundtrips() {
+        // Empty access list
+        test_roundtrip(&AccessList::default());
+
+        // Access list with one item
+        let item = AccessListItem {
+            address: Address::from([0x12; 20]),
+            storage_keys: vec![B256::from([0x34; 32])],
+        };
+        test_roundtrip(&AccessList(vec![item]));
+
+        // Access list with multiple items and keys
+        let items = vec![
+            AccessListItem {
+                address: Address::repeat_byte(11),
+                storage_keys: vec![B256::from([0x22; 32]), B256::from([0x33; 32])],
+            },
+            AccessListItem { address: Address::from([0x44; 20]), storage_keys: vec![] },
+            AccessListItem {
+                address: Address::from([0x55; 20]),
+                storage_keys: vec![B256::from([0x66; 32])],
+            },
+        ];
+        test_roundtrip(&AccessList(items));
+    }
+
+    #[test]
+    fn test_authorization_roundtrips() {
+        test_roundtrip(&Authorization {
+            chain_id: U256::from(1u64),
+            address: Address::repeat_byte(11),
+            nonce: 0,
+        });
+
+        test_roundtrip(&Authorization {
+            chain_id: U256::MAX,
+            address: Address::from([0xFF; 20]),
+            nonce: u64::MAX,
+        });
+    }
+
+    #[test]
+    fn test_signed_authorization_roundtrips() {
+        let auth = Authorization {
+            chain_id: U256::from(1u64),
+            address: Address::repeat_byte(11),
+            nonce: 42,
+        };
+        let signed_auth =
+            SignedAuthorization::new_unchecked(auth, 1, U256::from(12345u64), U256::from(67890u64));
+        test_roundtrip(&signed_auth);
+    }
+
+    #[test]
+    fn test_tx_legacy_roundtrips() {
+        test_roundtrip(&TxLegacy::default());
+
+        let tx = TxLegacy {
+            chain_id: Some(1),
+            nonce: 42,
+            gas_price: 20_000_000_000,
+            gas_limit: 21000u64,
+            to: TxKind::Call(Address::repeat_byte(11)),
+            value: U256::from(1000000000000000000u64), // 1 ETH in wei
+            input: AlloBytes::from_static(b"hello world"),
+        };
+        test_roundtrip(&tx);
+    }
+
+    #[test]
+    fn test_tx_eip2930_roundtrips() {
+        test_roundtrip(&TxEip2930::default());
+
+        let access_list = AccessList(vec![AccessListItem {
+            address: Address::from([0x22; 20]),
+            storage_keys: vec![B256::from([0x33; 32])],
+        }]);
+
+        let tx = TxEip2930 {
+            chain_id: 1,
+            nonce: 42,
+            gas_price: 20_000_000_000,
+            gas_limit: 21000u64,
+            to: TxKind::Call(Address::repeat_byte(11)),
+            value: U256::from(1000000000000000000u64),
+            input: AlloBytes::from_static(b"eip2930 tx"),
+            access_list,
+        };
+        test_roundtrip(&tx);
+    }
+
+    #[test]
+    fn test_tx_eip1559_roundtrips() {
+        test_roundtrip(&TxEip1559::default());
+
+        let tx = TxEip1559 {
+            chain_id: 1,
+            nonce: 42,
+            gas_limit: 21000u64,
+            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: 2_000_000_000,
+            to: TxKind::Call(Address::repeat_byte(11)),
+            value: U256::from(1000000000000000000u64),
+            input: AlloBytes::from_static(b"eip1559 tx"),
+            access_list: AccessList::default(),
+        };
+        test_roundtrip(&tx);
+    }
+
+    #[test]
+    fn test_tx_eip4844_roundtrips() {
+        test_roundtrip(&TxEip4844::default());
+
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 42,
+            gas_limit: 21000u64,
+            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: 2_000_000_000,
+            to: Address::repeat_byte(11),
+            value: U256::from(1000000000000000000u64),
+            input: AlloBytes::from_static(b"eip4844 tx"),
+            access_list: AccessList::default(),
+            blob_versioned_hashes: vec![B256::from([0x44; 32])],
+            max_fee_per_blob_gas: 1_000_000,
+        };
+        test_roundtrip(&tx);
+    }
+
+    #[test]
+    fn test_tx_eip7702_roundtrips() {
+        test_roundtrip(&TxEip7702::default());
+
+        let auth = SignedAuthorization::new_unchecked(
+            Authorization {
+                chain_id: U256::from(1u64),
+                address: Address::from([0x77; 20]),
+                nonce: 0,
+            },
+            1,
+            U256::from(12345u64),
+            U256::from(67890u64),
+        );
+
+        let tx = TxEip7702 {
+            chain_id: 1,
+            nonce: 42,
+            gas_limit: 21000u64,
+            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: 2_000_000_000,
+            to: Address::repeat_byte(11),
+            value: U256::from(1000000000000000000u64),
+            input: AlloBytes::from_static(b"eip7702 tx"),
+            access_list: AccessList::default(),
+            authorization_list: vec![auth],
+        };
+        test_roundtrip(&tx);
+    }
+
+    #[test]
+    fn test_jump_table_roundtrips() {
+        // Empty jump table
+        test_roundtrip(&JumpTable::default());
+
+        // Jump table with some jumps
+        let jump_table = JumpTable::from_slice(&[0b10101010, 0b01010101], 16);
+        test_roundtrip(&jump_table);
+    }
+
+    #[test]
+    fn test_complex_combinations() {
+        // Test a complex Header with all fields populated
+        let header = Header {
+            number: 12345,
+            gas_limit: 8000000,
+            timestamp: 1234567890,
+            difficulty: U256::from(1000000u64),
+            parent_hash: keccak256(b"parent"),
+            ommers_hash: keccak256(b"ommers"),
+            beneficiary: Address::from([0xBE; 20]),
+            state_root: keccak256(b"state"),
+            transactions_root: keccak256(b"txs"),
+            receipts_root: keccak256(b"receipts"),
+            logs_bloom: Bloom::default(),
+            gas_used: 7999999,
+            mix_hash: keccak256(b"mix"),
+            nonce: [0x42; 8].into(),
+            extra_data: AlloBytes::from_static(b"extra data"),
+            base_fee_per_gas: Some(1000000000),
+            withdrawals_root: Some(keccak256(b"withdrawals_root")),
+            blob_gas_used: Some(500000),
+            excess_blob_gas: Some(10000),
+            parent_beacon_block_root: Some(keccak256(b"parent_beacon_block_root")),
+            requests_hash: Some(keccak256(b"requests_hash")),
+        };
+        test_roundtrip(&header);
+
+        // Test a complex EIP-1559 transaction
+        let access_list = AccessList(vec![
+            AccessListItem {
+                address: Address::repeat_byte(11),
+                storage_keys: vec![B256::from([0x22; 32]), B256::from([0x33; 32])],
+            },
+            AccessListItem { address: Address::from([0x44; 20]), storage_keys: vec![] },
+        ]);
+
+        let complex_tx = TxEip1559 {
+            chain_id: 1,
+            nonce: 123456,
+            gas_limit: 500000u64,
+            max_fee_per_gas: 50_000_000_000,
+            max_priority_fee_per_gas: 3_000_000_000,
+            to: TxKind::Create,
+            value: U256::ZERO,
+            input: AlloBytes::copy_from_slice(&[0xFF; 1000]), // Large input
+            access_list,
+        };
+        test_roundtrip(&complex_tx);
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // Very large access list
+        let large_storage_keys: Vec<B256> =
+            (0..1000).map(|i| B256::from(U256::from(i).to_be_bytes::<32>())).collect();
+        let large_access_list = AccessList(vec![AccessListItem {
+            address: Address::from([0xAA; 20]),
+            storage_keys: large_storage_keys,
+        }]);
+        test_roundtrip(&large_access_list);
+
+        // Transaction with maximum values
+        let max_tx = TxEip1559 {
+            chain_id: u64::MAX,
+            nonce: u64::MAX,
+            gas_limit: u64::MAX,
+            max_fee_per_gas: u128::MAX,
+            max_priority_fee_per_gas: u128::MAX,
+            to: TxKind::Call(Address::repeat_byte(0xFF)),
+            value: U256::MAX,
+            input: AlloBytes::copy_from_slice(&[0xFF; 10000]), // Very large input
+            access_list: AccessList::default(),
+        };
+        test_roundtrip(&max_tx);
+
+        // BlockNumberList with many numbers
+        let mut large_list = BlockNumberList::empty();
+        for i in 0..10000u64 {
+            large_list.push(i).unwrap();
+        }
+        test_roundtrip(&large_list);
+    }
+}

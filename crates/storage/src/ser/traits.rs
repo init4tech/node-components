@@ -6,6 +6,14 @@ pub const MAX_KEY_SIZE: usize = 64;
 
 /// Trait for key serialization with fixed-size keys of size no greater than 32
 /// bytes.
+///
+/// Keys must be FIXED SIZE, of size no greater than `MAX_KEY_SIZE` (64), and
+/// no less than 1. The serialization must preserve ordering, i.e., for any two
+/// keys `k1` and `k2`, if `k1 > k2`, then the byte representation of `k1`
+/// must be lexicographically greater than that of `k2`.
+///
+/// In practice, keys are often hashes, addresses, numbers, or composites
+/// of these.
 pub trait KeySer: Ord + Sized {
     /// The fixed size of the serialized key in bytes.
     /// Must satisfy `SIZE <= MAX_KEY_SIZE`.
@@ -21,16 +29,11 @@ pub trait KeySer: Ord + Sized {
         assert!(Self::SIZE > 0, "KeySer implementations must have SIZE > 0");
     };
 
-    /// Encode the key into the provided buffer.
-    ///
-    /// Writes exactly `SIZE` bytes to `buf[..SIZE]` and returns `SIZE`.
-    /// The encoding must preserve ordering: for any `k1, k2` where `k1 > k2`,
-    /// the bytes written by `k1` must be lexicographically greater than those
-    /// of `k2`.
+    /// Encode the key, optionally using the provided buffer.
     ///
     /// # Returns
     ///
-    /// A slice containing the encoded key. This may be a slice of buf, or may
+    /// A slice containing the encoded key. This may be a slice of `buf`, or may
     /// be borrowed from the key itself. This slice must be <= `SIZE` bytes.
     fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8];
 
@@ -56,10 +59,18 @@ pub trait KeySer: Ord + Sized {
 }
 
 /// Trait for value serialization.
+///
+/// Values can be of variable size, but must implement accurate size reporting.
+/// When serialized, value sizes must be self-describing. I.e. the value must
+/// tolerate being deserialized from a byte slice of arbitrary length, consuming
+/// only as many bytes as needed.
+///
+/// E.g. a correct implementation for an array serializes the length of the
+/// array first, so that the deserializer knows how many items to expect.
 pub trait ValSer {
     /// The encoded size of the value in bytes. This MUST be accurate, as it is
     /// used to allocate buffers for serialization. Inaccurate sizes may result
-    /// in panics.
+    /// in panics or incorrect behavior.
     fn encoded_size(&self) -> usize;
 
     /// Serialize the value into bytes.

@@ -1,4 +1,5 @@
 use crate::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
+use alloy::primitives::Bloom;
 use bytes::BufMut;
 
 macro_rules! delegate_val_to_key {
@@ -136,7 +137,7 @@ impl KeySer for alloy::primitives::Address {
     }
 }
 
-impl ValSer for alloy::primitives::Bloom {
+impl ValSer for Bloom {
     fn encoded_size(&self) -> usize {
         self.as_slice().len()
     }
@@ -152,11 +153,11 @@ impl ValSer for alloy::primitives::Bloom {
     where
         Self: Sized,
     {
-        if data.len() != 256 {
+        if data.len() < 256 {
             return Err(DeserError::InsufficientData { needed: 256, available: data.len() });
         }
         let mut bloom = Self::default();
-        bloom.as_mut_slice().copy_from_slice(data);
+        bloom.as_mut_slice().copy_from_slice(&data[..256]);
         Ok(bloom)
     }
 }
@@ -234,8 +235,9 @@ where
     where
         Self: Sized,
     {
-        let flag =
-            data.get(0).ok_or(DeserError::InsufficientData { needed: 1, available: data.len() })?;
+        let flag = data
+            .first()
+            .ok_or(DeserError::InsufficientData { needed: 1, available: data.len() })?;
         match flag {
             0 => Ok(None),
             1 => Ok(Some(T::decode_value(&data[1..])?)),
