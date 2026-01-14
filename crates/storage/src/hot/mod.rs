@@ -1,11 +1,11 @@
-mod db;
-pub use db::{HotDb, WriteGuard};
-
 mod db_traits;
 pub use db_traits::{HotDbReader, HotDbWriter};
 
 mod error;
-pub use error::{HotKvError, HotKvResult};
+pub use error::{HotKvError, HotKvReadError, HotKvResult};
+
+mod mem;
+pub use mem::{MemKv, MemKvRoTx, MemKvRwTx};
 
 mod reth_impl;
 

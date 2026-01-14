@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    hot::HotKvError,
+    hot::{HotKvError, HotKvReadError},
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
     tables::Table,
 };
@@ -34,9 +34,12 @@ pub trait HotKv {
 /// Trait for hot storage read transactions.
 pub trait HotKvRead {
     /// Error type for read operations.
-    type Error: std::error::Error + From<crate::ser::DeserError> + Send + Sync + 'static;
+    type Error: HotKvReadError;
 
     /// Get a raw value from a specific table.
+    ///
+    /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
+    /// allowed to panic if this is not the case.
     fn get_raw<'a>(&'a self, table: &str, key: &[u8])
     -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
 
@@ -91,7 +94,16 @@ pub trait HotKvRead {
 /// Trait for hot storage write transactions.
 pub trait HotKvWrite: HotKvRead {
     /// Queue a raw put operation.
+    ///
+    /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
+    /// allowed to panic if this is not the case.
     fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
+
+    /// Queue a raw delete operation.
+    ///
+    /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
+    /// allowed to panic if this is not the case.
+    fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error>;
 
     /// Queue a put operation for a specific table.
     fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
@@ -100,6 +112,14 @@ pub trait HotKvWrite: HotKvRead {
         let value_bytes = value.encoded();
 
         self.queue_raw_put(T::NAME, key_bytes, &value_bytes)
+    }
+
+    /// Queue a delete operation for a specific table.
+    fn queue_delete<T: Table>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
+        let mut key_buf = [0u8; MAX_KEY_SIZE];
+        let key_bytes = key.encode_key(&mut key_buf);
+
+        self.queue_raw_delete(T::NAME, key_bytes)
     }
 
     /// Queue many put operations for a specific table.

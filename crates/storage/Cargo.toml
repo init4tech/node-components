@@ -14,4 +14,5 @@ bytes = "1.11.0"
 reth.workspace = true
 reth-db.workspace = true
 reth-db-api.workspace = true
+reth-libmdbx.workspace = true
 thiserror.workspace = true
