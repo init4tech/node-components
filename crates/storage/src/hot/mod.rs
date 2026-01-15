@@ -7,7 +7,7 @@ pub use error::{HotKvError, HotKvReadError, HotKvResult};
 mod mem;
 pub use mem::{MemKv, MemKvRoTx, MemKvRwTx};
 
-mod reth_impl;
+mod mdbx;
 
 mod traits;
 pub use traits::{HotKv, HotKvRead, HotKvWrite};

@@ -18,29 +18,47 @@ use reth_db_api::{
     },
 };
 
-impl<T: KeySer> KeySer for ShardedKey<T> {
-    const SIZE: usize = T::SIZE + u64::SIZE;
+// Specialized impls for the sharded key types. This was implemented
+// generically, but there are only 2 types, and we can skip pushing a scratch
+// buffer to the stack this way.
+macro_rules! sharded_key {
+    ($ty:ty) => {
+        impl KeySer for ShardedKey<$ty> {
+            const SIZE: usize = <$ty as KeySer>::SIZE + u64::SIZE;
 
-    fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
-        let mut scratch = [0u8; MAX_KEY_SIZE];
+            fn encode_key<'a: 'c, 'b: 'c, 'c>(
+                &'a self,
+                buf: &'b mut [u8; MAX_KEY_SIZE],
+            ) -> &'c [u8] {
+                const SIZE: usize = <$ty as KeySer>::SIZE;
 
-        T::encode_key(&self.key, &mut scratch);
-        scratch[T::SIZE..Self::SIZE].copy_from_slice(&self.highest_block_number.to_be_bytes());
-        *buf = scratch;
+                let prefix = self.key.as_slice();
 
-        &buf[0..Self::SIZE]
-    }
+                buf[0..SIZE].copy_from_slice(prefix);
+                buf[SIZE..Self::SIZE].copy_from_slice(&self.highest_block_number.to_be_bytes());
 
-    fn decode_key(data: &[u8]) -> Result<Self, DeserError> {
-        if data.len() < Self::SIZE {
-            return Err(DeserError::InsufficientData { needed: Self::SIZE, available: data.len() });
+                &buf[0..Self::SIZE]
+            }
+
+            fn decode_key(data: &[u8]) -> Result<Self, DeserError> {
+                const SIZE: usize = <$ty as KeySer>::SIZE;
+                if data.len() < Self::SIZE {
+                    return Err(DeserError::InsufficientData {
+                        needed: Self::SIZE,
+                        available: data.len(),
+                    });
+                }
+
+                let key = <$ty as KeySer>::decode_key(&data[0..SIZE])?;
+                let highest_block_number = u64::decode_key(&data[SIZE..SIZE + 8])?;
+                Ok(Self { key, highest_block_number })
+            }
         }
-
-        let key = T::decode_key(&data[0..T::SIZE])?;
-        let highest_block_number = u64::decode_key(&data[T::SIZE..T::SIZE + 8])?;
-        Ok(Self { key, highest_block_number })
-    }
+    };
 }
+
+sharded_key!(B256);
+sharded_key!(Address);
 
 impl KeySer for StorageShardedKey {
     const SIZE: usize = Address::SIZE + B256::SIZE + u64::SIZE;

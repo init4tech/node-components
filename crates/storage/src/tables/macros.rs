@@ -8,6 +8,7 @@ macro_rules! tables {
 
         impl crate::tables::Table for $name {
             const NAME: &'static str = stringify!($name);
+
             type Key = $key;
             type Value = $value;
         }

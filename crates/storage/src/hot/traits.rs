@@ -105,6 +105,12 @@ pub trait HotKvWrite: HotKvRead {
     /// allowed to panic if this is not the case.
     fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error>;
 
+    /// Queue a raw clear operation for a specific table.
+    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error>;
+
+    /// Queue a raw create operation for a specific table.
+    fn queue_raw_create(&mut self, table: &str) -> Result<(), Self::Error>;
+
     /// Queue a put operation for a specific table.
     fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
@@ -140,6 +146,22 @@ pub trait HotKvWrite: HotKvRead {
         }
 
         Ok(())
+    }
+
+    /// Queue creation of a specific table.
+    fn queue_create<T>(&mut self) -> Result<(), Self::Error>
+    where
+        T: Table,
+    {
+        self.queue_raw_create(T::NAME)
+    }
+
+    /// Queue clearing all entries in a specific table.
+    fn queue_clear<T>(&mut self) -> Result<(), Self::Error>
+    where
+        T: Table,
+    {
+        self.queue_raw_clear(T::NAME)
     }
 
     /// Commit the queued operations.

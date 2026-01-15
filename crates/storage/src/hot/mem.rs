@@ -11,8 +11,8 @@ use std::{
 type Table = BTreeMap<[u8; MAX_KEY_SIZE], bytes::Bytes>;
 type Store = BTreeMap<String, Table>;
 
-type TableOp = BTreeMap<[u8; MAX_KEY_SIZE], QueuedOp>;
-type OpStore = BTreeMap<String, TableOp>;
+type TableOp = BTreeMap<[u8; MAX_KEY_SIZE], QueuedKvOp>;
+type OpStore = BTreeMap<String, QueuedTableOp>;
 
 /// A simple in-memory key-value store using a BTreeMap.
 ///
@@ -54,6 +54,9 @@ impl Default for MemKv {
 /// Read-only transaction for MemKv.
 pub struct MemKvRoTx {
     guard: RwLockReadGuard<'static, Store>,
+
+    // Keep the store alive while the transaction exists
+    _store: Arc<RwLock<Store>>,
 }
 
 impl core::fmt::Debug for MemKvRoTx {
@@ -70,25 +73,17 @@ unsafe impl Sync for MemKvRoTx {}
 pub struct MemKvRwTx {
     guard: RwLockWriteGuard<'static, Store>,
     queued_ops: OpStore,
+
+    // Keep the store alive while the transaction exists
+    _store: Arc<RwLock<Store>>,
 }
 
 impl MemKvRwTx {
     fn commit_inner(&mut self) {
         let ops = std::mem::take(&mut self.queued_ops);
 
-        for (table, table_ops) in ops.into_iter() {
-            for (key, op) in table_ops.into_iter() {
-                match op {
-                    QueuedOp::Put { value } => {
-                        self.guard.entry(table.clone()).or_default().insert(key, value);
-                    }
-                    QueuedOp::Delete => {
-                        if let Some(t) = self.guard.get_mut(&table) {
-                            t.remove(&key);
-                        }
-                    }
-                }
-            }
+        for (table, table_op) in ops.into_iter() {
+            table_op.apply(&table, &mut self.guard);
         }
     }
 
@@ -97,7 +92,7 @@ impl MemKvRwTx {
     pub fn downgrade(self) -> MemKvRoTx {
         let guard = RwLockWriteGuard::downgrade(self.guard);
 
-        MemKvRoTx { guard }
+        MemKvRoTx { guard, _store: self._store }
     }
 
     /// Commit the transaction and downgrade to a read-only transaction.
@@ -106,7 +101,7 @@ impl MemKvRwTx {
 
         let guard = RwLockWriteGuard::downgrade(self.guard);
 
-        MemKvRoTx { guard }
+        MemKvRoTx { guard, _store: self._store }
     }
 }
 
@@ -116,10 +111,88 @@ impl core::fmt::Debug for MemKvRwTx {
     }
 }
 
+/// Queued key-value operation
 #[derive(Debug, Clone)]
-enum QueuedOp {
+enum QueuedKvOp {
     Delete,
     Put { value: bytes::Bytes },
+}
+
+impl QueuedKvOp {
+    /// Apply the op to a table
+    fn apply(self, table: &mut Table, key: [u8; MAX_KEY_SIZE]) {
+        match self {
+            QueuedKvOp::Put { value } => {
+                table.insert(key, value);
+            }
+            QueuedKvOp::Delete => {
+                table.remove(&key);
+            }
+        }
+    }
+}
+
+/// Queued table operation
+#[derive(Debug)]
+enum QueuedTableOp {
+    Modify { ops: TableOp },
+    Clear { new_table: TableOp },
+}
+
+impl Default for QueuedTableOp {
+    fn default() -> Self {
+        QueuedTableOp::Modify { ops: TableOp::new() }
+    }
+}
+
+impl QueuedTableOp {
+    const fn is_clear(&self) -> bool {
+        matches!(self, QueuedTableOp::Clear { .. })
+    }
+
+    fn get(&self, key: &[u8; MAX_KEY_SIZE]) -> Option<&QueuedKvOp> {
+        match self {
+            QueuedTableOp::Modify { ops } => ops.get(key),
+            QueuedTableOp::Clear { new_table } => new_table.get(key),
+        }
+    }
+
+    fn put(&mut self, key: [u8; MAX_KEY_SIZE], op: QueuedKvOp) {
+        match self {
+            QueuedTableOp::Modify { ops } | QueuedTableOp::Clear { new_table: ops } => {
+                ops.insert(key, op);
+            }
+        }
+    }
+
+    fn delete(&mut self, key: [u8; MAX_KEY_SIZE]) {
+        match self {
+            QueuedTableOp::Modify { ops } | QueuedTableOp::Clear { new_table: ops } => {
+                ops.insert(key, QueuedKvOp::Delete);
+            }
+        }
+    }
+
+    /// Get mutable reference to the inner ops if applicable
+    fn apply(self, key: &str, store: &mut Store) {
+        match self {
+            QueuedTableOp::Modify { ops } => {
+                let table = store.entry(key.to_owned()).or_default();
+                for (key, op) in ops {
+                    op.apply(table, key);
+                }
+            }
+            QueuedTableOp::Clear { new_table } => {
+                let mut table = Table::new();
+                for (k, op) in new_table {
+                    op.apply(&mut table, k);
+                }
+
+                // replace the table entirely
+                store.insert(key.to_owned(), table);
+            }
+        }
+    }
 }
 
 // SAFETY: MemKvRwTx holds a write guard which ensures exclusive access
@@ -135,20 +208,21 @@ impl HotKv for MemKv {
             .try_read()
             .map_err(|_| HotKvError::Inner("Failed to acquire read lock".into()))?;
 
-        // SAFETY: We extend the lifetime to 'static, but the guard ensures the
-        // data remains valid for the lifetime of the transaction
+        // SAFETY: This is safe-ish, as we ensure the map is not dropped until
+        // the guard is also dropped.
         let guard: RwLockReadGuard<'static, Store> = unsafe { std::mem::transmute(guard) };
 
-        Ok(MemKvRoTx { guard })
+        Ok(MemKvRoTx { guard, _store: self.map.clone() })
     }
 
     fn writer(&self) -> Result<Self::RwTx, HotKvError> {
         let guard = self.map.try_write().map_err(|_| HotKvError::WriteLocked)?;
 
-        // SAFETY: We extend the lifetime to 'static, but the guard ensures exclusive access
+        // SAFETY: This is safe-ish, as we ensure the map is not dropped until
+        // the guard is also dropped.
         let guard: RwLockWriteGuard<'static, Store> = unsafe { std::mem::transmute(guard) };
 
-        Ok(MemKvRwTx { guard, queued_ops: OpStore::new() })
+        Ok(MemKvRwTx { guard, _store: self.map.clone(), queued_ops: OpStore::new() })
     }
 }
 
@@ -184,14 +258,20 @@ impl HotKvRead for MemKvRwTx {
         // Check queued operations first (read-your-writes consistency)
         let key = MemKv::key(key);
 
-        match self.queued_ops.get(table).and_then(|t| t.get(&key)) {
-            Some(QueuedOp::Put { value }) => {
-                return Ok(Some(Cow::Borrowed(value.as_ref())));
-            }
-            Some(QueuedOp::Delete) => {
+        if let Some(table) = self.queued_ops.get(table) {
+            if table.is_clear() {
                 return Ok(None);
             }
-            None => {}
+
+            match table.get(&key) {
+                Some(QueuedKvOp::Put { value }) => {
+                    return Ok(Some(Cow::Borrowed(value.as_ref())));
+                }
+                Some(QueuedKvOp::Delete) => {
+                    return Ok(None);
+                }
+                None => {}
+            }
         }
 
         // If not found in queued ops, check the underlying map
@@ -212,14 +292,24 @@ impl HotKvWrite for MemKvRwTx {
         self.queued_ops
             .entry(table.to_owned())
             .or_default()
-            .insert(key, QueuedOp::Put { value: value_bytes });
+            .put(key, QueuedKvOp::Put { value: value_bytes });
         Ok(())
     }
 
     fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
         let key = MemKv::key(key);
 
-        self.queued_ops.entry(table.to_owned()).or_default().insert(key, QueuedOp::Delete);
+        self.queued_ops.entry(table.to_owned()).or_default().delete(key);
+        Ok(())
+    }
+
+    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error> {
+        self.queued_ops
+            .insert(table.to_owned(), QueuedTableOp::Clear { new_table: TableOp::new() });
+        Ok(())
+    }
+
+    fn queue_raw_create(&mut self, _table: &str) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -245,6 +335,7 @@ mod tests {
 
     impl Table for TestTable {
         const NAME: &'static str = "test_table";
+
         type Key = u64;
         type Value = Bytes;
     }
@@ -632,6 +723,57 @@ mod tests {
             let value3 = ro_tx.get_raw("table2", &[7, 8, 9]).unwrap();
 
             assert!(value3.is_none());
+        }
+    }
+
+    #[test]
+    fn test_clear_table() {
+        let store = MemKv::new();
+
+        {
+            let mut writer = store.writer().unwrap();
+            writer.queue_raw_put("table1", &[1], b"value1").unwrap();
+            writer.queue_raw_put("table1", &[2], b"value2").unwrap();
+            writer.raw_commit().unwrap();
+        }
+
+        {
+            let reader = store.reader().unwrap();
+
+            let value1 = reader.get_raw("table1", &[1]).unwrap();
+            let value2 = reader.get_raw("table1", &[2]).unwrap();
+
+            assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
+            assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
+        }
+
+        {
+            let mut writer = store.writer().unwrap();
+
+            let value1 = writer.get_raw("table1", &[1]).unwrap();
+            let value2 = writer.get_raw("table1", &[2]).unwrap();
+
+            assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
+            assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
+
+            writer.queue_raw_clear("table1").unwrap();
+
+            let value1 = writer.get_raw("table1", &[1]).unwrap();
+            let value2 = writer.get_raw("table1", &[2]).unwrap();
+
+            assert!(value1.is_none());
+            assert!(value2.is_none());
+
+            writer.raw_commit().unwrap();
+        }
+
+        {
+            let reader = store.reader().unwrap();
+            let value1 = reader.get_raw("table1", &[1]).unwrap();
+            let value2 = reader.get_raw("table1", &[2]).unwrap();
+
+            assert!(value1.is_none());
+            assert!(value2.is_none());
         }
     }
 }
