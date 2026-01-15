@@ -47,6 +47,15 @@ impl MemKv {
         buf[..k.len()].copy_from_slice(k);
         buf
     }
+
+    #[track_caller]
+    fn dual_key(k1: &[u8], k2: &[u8]) -> [u8; MAX_KEY_SIZE] {
+        assert!(k1.len() + k2.len() <= MAX_KEY_SIZE, "Combined key length exceeds MAX_KEY_SIZE");
+        let mut buf = [0u8; MAX_KEY_SIZE];
+        buf[..k1.len()].copy_from_slice(k1);
+        buf[k1.len()..k1.len() + k2.len()].copy_from_slice(k2);
+        buf
+    }
 }
 
 impl Default for MemKv {
@@ -233,7 +242,7 @@ impl HotKv for MemKv {
 impl HotKvRead for MemKvRoTx {
     type Error = HotKvError;
 
-    fn get_raw<'a>(
+    fn raw_get<'a>(
         &'a self,
         table: &str,
         key: &[u8],
@@ -249,12 +258,22 @@ impl HotKvRead for MemKvRoTx {
             .and_then(|t| t.get(&key))
             .map(|bytes| Cow::Borrowed(bytes.as_ref())))
     }
+
+    fn raw_get_dual<'a>(
+        &'a self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
+        let key = MemKv::dual_key(key1, key2);
+        self.raw_get(table, &key)
+    }
 }
 
 impl HotKvRead for MemKvRwTx {
     type Error = HotKvError;
 
-    fn get_raw<'a>(
+    fn raw_get<'a>(
         &'a self,
         table: &str,
         key: &[u8],
@@ -285,6 +304,16 @@ impl HotKvRead for MemKvRwTx {
             .and_then(|t| t.get(&key))
             .map(|bytes| Cow::Borrowed(bytes.as_ref())))
     }
+
+    fn raw_get_dual<'a>(
+        &'a self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
+        let key = MemKv::dual_key(key1, key2);
+        self.raw_get(table, &key)
+    }
 }
 
 impl HotKvWrite for MemKvRwTx {
@@ -300,6 +329,17 @@ impl HotKvWrite for MemKvRwTx {
         Ok(())
     }
 
+    fn queue_raw_put_dual(
+        &mut self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error> {
+        let key = MemKv::dual_key(key1, key2);
+        self.queue_raw_put(table, &key, value)
+    }
+
     fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
         let key = MemKv::key(key);
 
@@ -313,7 +353,12 @@ impl HotKvWrite for MemKvRwTx {
         Ok(())
     }
 
-    fn queue_raw_create(&mut self, _table: &str) -> Result<(), Self::Error> {
+    fn queue_raw_create(
+        &mut self,
+        _table: &str,
+        _dual_key: bool,
+        _dual_fixed: bool,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -359,7 +404,7 @@ mod tests {
         let reader = store.reader().unwrap();
 
         // Empty store should return None for any key
-        assert!(reader.get_raw("test", &[1, 2, 3]).unwrap().is_none());
+        assert!(reader.raw_get("test", &[1, 2, 3]).unwrap().is_none());
     }
 
     #[test]
@@ -377,9 +422,9 @@ mod tests {
         // Read the data back
         {
             let reader = store.reader().unwrap();
-            let value1 = reader.get_raw("table1", &[1, 2, 3]).unwrap();
-            let value2 = reader.get_raw("table1", &[4, 5, 6]).unwrap();
-            let missing = reader.get_raw("table1", &[7, 8, 9]).unwrap();
+            let value1 = reader.raw_get("table1", &[1, 2, 3]).unwrap();
+            let value2 = reader.raw_get("table1", &[4, 5, 6]).unwrap();
+            let missing = reader.raw_get("table1", &[7, 8, 9]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
@@ -402,8 +447,8 @@ mod tests {
         // Read from different tables
         {
             let reader = store.reader().unwrap();
-            let value1 = reader.get_raw("table1", &[1]).unwrap();
-            let value2 = reader.get_raw("table2", &[1]).unwrap();
+            let value1 = reader.raw_get("table1", &[1]).unwrap();
+            let value2 = reader.raw_get("table2", &[1]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"table1_value" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"table2_value" as &[u8]));
@@ -431,7 +476,7 @@ mod tests {
         // Check the value was updated
         {
             let reader = store.reader().unwrap();
-            let value = reader.get_raw("table1", &[1]).unwrap();
+            let value = reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(value.as_deref(), Some(b"updated" as &[u8]));
         }
     }
@@ -445,7 +490,7 @@ mod tests {
         writer.queue_raw_put("table1", &[1], b"queued_value").unwrap();
 
         // Should be able to read the queued value
-        let value = writer.get_raw("table1", &[1]).unwrap();
+        let value = writer.raw_get("table1", &[1]).unwrap();
         assert_eq!(value.as_deref(), Some(b"queued_value" as &[u8]));
 
         writer.raw_commit().unwrap();
@@ -453,7 +498,7 @@ mod tests {
         // After commit, other readers should see it
         {
             let reader = store.reader().unwrap();
-            let value = reader.get_raw("table1", &[1]).unwrap();
+            let value = reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(value.as_deref(), Some(b"queued_value" as &[u8]));
         }
     }
@@ -557,8 +602,8 @@ mod tests {
         let reader1 = store.reader().unwrap();
         let reader2 = store.reader().unwrap();
 
-        let value1 = reader1.get_raw("table1", &[1]).unwrap();
-        let value2 = reader2.get_raw("table1", &[1]).unwrap();
+        let value1 = reader1.raw_get("table1", &[1]).unwrap();
+        let value2 = reader2.raw_get("table1", &[1]).unwrap();
 
         assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
         assert_eq!(value2.as_deref(), Some(b"value1" as &[u8]));
@@ -591,7 +636,7 @@ mod tests {
 
         {
             let reader = store.reader().unwrap();
-            let value = reader.get_raw("table1", &[1]).unwrap();
+            let value = reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(value.as_deref(), Some(b"" as &[u8]));
         }
     }
@@ -609,7 +654,7 @@ mod tests {
             writer.queue_raw_put("table1", &[1], b"third").unwrap();
 
             // Read-your-writes should return the latest value
-            let value = writer.get_raw("table1", &[1]).unwrap();
+            let value = writer.raw_get("table1", &[1]).unwrap();
             assert_eq!(value.as_deref(), Some(b"third" as &[u8]));
 
             writer.raw_commit().unwrap();
@@ -617,7 +662,7 @@ mod tests {
 
         {
             let reader = store.reader().unwrap();
-            let value = reader.get_raw("table1", &[1]).unwrap();
+            let value = reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(value.as_deref(), Some(b"third" as &[u8]));
         }
     }
@@ -636,7 +681,7 @@ mod tests {
         // Start a read transaction
         {
             let reader = store.reader().unwrap();
-            let original_value = reader.get_raw("table1", &[1]).unwrap();
+            let original_value = reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(original_value.as_deref(), Some(b"original" as &[u8]));
         }
 
@@ -651,7 +696,7 @@ mod tests {
         {
             // New reader should see the updated value
             let new_reader = store.reader().unwrap();
-            let updated_value = new_reader.get_raw("table1", &[1]).unwrap();
+            let updated_value = new_reader.raw_get("table1", &[1]).unwrap();
             assert_eq!(updated_value.as_deref(), Some(b"updated" as &[u8]));
         }
     }
@@ -669,7 +714,7 @@ mod tests {
         // Value should not be persisted
         {
             let reader = store.reader().unwrap();
-            let value = reader.get_raw("table1", &[1]).unwrap();
+            let value = reader.raw_get("table1", &[1]).unwrap();
             assert!(value.is_none());
         }
     }
@@ -687,8 +732,8 @@ mod tests {
 
         {
             let reader = store.reader().unwrap();
-            let value1 = reader.get_raw("table1", &[1]).unwrap();
-            let value2 = reader.get_raw("table2", &[2]).unwrap();
+            let value1 = reader.raw_get("table1", &[1]).unwrap();
+            let value2 = reader.raw_get("table2", &[2]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
@@ -708,8 +753,8 @@ mod tests {
             let ro_tx = rw_tx.commit_downgrade();
 
             // Read the data back
-            let value1 = ro_tx.get_raw("table1", &[1, 2, 3]).unwrap();
-            let value2 = ro_tx.get_raw("table1", &[4, 5, 6]).unwrap();
+            let value1 = ro_tx.raw_get("table1", &[1, 2, 3]).unwrap();
+            let value2 = ro_tx.raw_get("table1", &[4, 5, 6]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
@@ -724,7 +769,7 @@ mod tests {
             let ro_tx = rw_tx.downgrade();
 
             // Read the data back
-            let value3 = ro_tx.get_raw("table2", &[7, 8, 9]).unwrap();
+            let value3 = ro_tx.raw_get("table2", &[7, 8, 9]).unwrap();
 
             assert!(value3.is_none());
         }
@@ -744,8 +789,8 @@ mod tests {
         {
             let reader = store.reader().unwrap();
 
-            let value1 = reader.get_raw("table1", &[1]).unwrap();
-            let value2 = reader.get_raw("table1", &[2]).unwrap();
+            let value1 = reader.raw_get("table1", &[1]).unwrap();
+            let value2 = reader.raw_get("table1", &[2]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
@@ -754,16 +799,16 @@ mod tests {
         {
             let mut writer = store.writer().unwrap();
 
-            let value1 = writer.get_raw("table1", &[1]).unwrap();
-            let value2 = writer.get_raw("table1", &[2]).unwrap();
+            let value1 = writer.raw_get("table1", &[1]).unwrap();
+            let value2 = writer.raw_get("table1", &[2]).unwrap();
 
             assert_eq!(value1.as_deref(), Some(b"value1" as &[u8]));
             assert_eq!(value2.as_deref(), Some(b"value2" as &[u8]));
 
             writer.queue_raw_clear("table1").unwrap();
 
-            let value1 = writer.get_raw("table1", &[1]).unwrap();
-            let value2 = writer.get_raw("table1", &[2]).unwrap();
+            let value1 = writer.raw_get("table1", &[1]).unwrap();
+            let value2 = writer.raw_get("table1", &[2]).unwrap();
 
             assert!(value1.is_none());
             assert!(value2.is_none());
@@ -773,8 +818,8 @@ mod tests {
 
         {
             let reader = store.reader().unwrap();
-            let value1 = reader.get_raw("table1", &[1]).unwrap();
-            let value2 = reader.get_raw("table1", &[2]).unwrap();
+            let value1 = reader.raw_get("table1", &[1]).unwrap();
+            let value2 = reader.raw_get("table1", &[2]).unwrap();
 
             assert!(value1.is_none());
             assert!(value2.is_none());

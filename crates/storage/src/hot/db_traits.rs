@@ -1,10 +1,9 @@
 use crate::{
     hot::{HotKvRead, HotKvWrite},
-    tables::hot::{self as tables, AccountStorageKey},
+    tables::hot::{self as tables},
 };
 use alloy::primitives::{Address, B256, U256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader, StorageEntry};
-use std::borrow::Cow;
 
 /// Trait for database read operations.
 pub trait HotDbReader: sealed::Sealed {
@@ -67,12 +66,7 @@ where
     }
 
     fn get_storage(&self, address: &Address, key: &B256) -> Result<Option<U256>, Self::Error> {
-        let storage_key = AccountStorageKey {
-            address: std::borrow::Cow::Borrowed(address),
-            key: std::borrow::Cow::Borrowed(key),
-        };
-        let key = storage_key.encode_key();
-        self.get::<tables::PlainStorageState>(&key)
+        self.get_dual::<tables::PlainStorageState>(address, key)
     }
 }
 
@@ -147,9 +141,7 @@ where
         key: &B256,
         entry: &U256,
     ) -> Result<(), Self::Error> {
-        let storage_key =
-            AccountStorageKey { address: Cow::Borrowed(address), key: Cow::Borrowed(key) };
-        self.queue_put::<tables::PlainStorageState>(&storage_key.encode_key(), entry)
+        self.queue_put_dual::<tables::PlainStorageState>(address, key, entry)
     }
 
     fn commit(self) -> Result<(), Self::Error> {

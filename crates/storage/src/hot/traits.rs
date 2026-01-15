@@ -6,7 +6,7 @@ use crate::{
         revm::{RevmRead, RevmWrite},
     },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
-    tables::Table,
+    tables::{DualKeyed, Table},
 };
 
 /// Trait for hot storage. This is a KV store with read/write transactions.
@@ -68,8 +68,21 @@ pub trait HotKvRead {
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
     /// allowed to panic if this is not the case.
-    fn get_raw<'a>(&'a self, table: &str, key: &[u8])
+    ///
+    /// If the table is dual-keyed, the output may be implementation-defined.
+    fn raw_get<'a>(&'a self, table: &str, key: &[u8])
     -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
+
+    /// Get a raw value from a specific table with dual keys.
+    ///
+    /// If the table is not dual-keyed, the output may be
+    /// implementation-defined.
+    fn raw_get_dual<'a>(
+        &'a self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
 
     /// Get a value from a specific table.
     fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
@@ -80,11 +93,28 @@ pub trait HotKvRead {
             "Encoded key length does not match expected size"
         );
 
-        let Some(value_bytes) = self.get_raw(T::NAME, key_bytes)? else {
+        let Some(value_bytes) = self.raw_get(T::NAME, key_bytes)? else {
             return Ok(None);
         };
-        let data = &value_bytes[..];
-        T::Value::decode_value(data).map(Some).map_err(Into::into)
+        T::Value::decode_value(&value_bytes).map(Some).map_err(Into::into)
+    }
+
+    /// Get a value from a specific dual-keyed table.
+    fn get_dual<T: DualKeyed>(
+        &self,
+        key1: &T::K1,
+        key2: &T::K2,
+    ) -> Result<Option<T::Value>, Self::Error> {
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let mut key2_buf = [0u8; MAX_KEY_SIZE];
+
+        let key1_bytes = key1.encode_key(&mut key1_buf);
+        let key2_bytes = key2.encode_key(&mut key2_buf);
+
+        let Some(value_bytes) = self.raw_get_dual(T::NAME, key1_bytes, key2_bytes)? else {
+            return Ok(None);
+        };
+        T::Value::decode_value(&value_bytes).map(Some).map_err(Into::into)
     }
 
     /// Get many values from a specific table.
@@ -110,7 +140,7 @@ pub trait HotKvRead {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
 
         keys.into_iter()
-            .map(|key| self.get_raw(T::NAME, key.encode_key(&mut key_buf)))
+            .map(|key| self.raw_get(T::NAME, key.encode_key(&mut key_buf)))
             .map(|maybe_val| {
                 maybe_val
                     .and_then(|val| ValSer::maybe_decode_value(val.as_deref()).map_err(Into::into))
@@ -127,6 +157,18 @@ pub trait HotKvWrite: HotKvRead {
     /// allowed to panic if this is not the case.
     fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
 
+    /// Queue a raw put operation for a dual-keyed table.
+    ////
+    /// The `key1` and `key2` buf must be <= [`MAX_KEY_SIZE`] bytes.
+    /// Implementations are allowed to panic if this is not the case.
+    fn queue_raw_put_dual(
+        &mut self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error>;
+
     /// Queue a raw delete operation.
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
@@ -137,7 +179,19 @@ pub trait HotKvWrite: HotKvRead {
     fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error>;
 
     /// Queue a raw create operation for a specific table.
-    fn queue_raw_create(&mut self, table: &str) -> Result<(), Self::Error>;
+    ///
+    /// This abstraction supports two table specializations:
+    /// 1. `dual_key`: whether the table uses dual keys (interior maps, called
+    ///    `DUPSORT` in LMDB/MDBX).
+    /// 2. `fixed_val`: whether the table has fixed-size values.
+    ///
+    /// Database implementations can use this information for optimizations.
+    fn queue_raw_create(
+        &mut self,
+        table: &str,
+        dual_key: bool,
+        fixed_val: bool,
+    ) -> Result<(), Self::Error>;
 
     /// Queue a put operation for a specific table.
     fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
@@ -146,6 +200,22 @@ pub trait HotKvWrite: HotKvRead {
         let value_bytes = value.encoded();
 
         self.queue_raw_put(T::NAME, key_bytes, &value_bytes)
+    }
+
+    /// Queue a put operation for a specific dual-keyed table.
+    fn queue_put_dual<T: DualKeyed>(
+        &mut self,
+        key1: &T::K1,
+        key2: &T::K2,
+        value: &T::Value,
+    ) -> Result<(), Self::Error> {
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let mut key2_buf = [0u8; MAX_KEY_SIZE];
+        let key1_bytes = key1.encode_key(&mut key1_buf);
+        let key2_bytes = key2.encode_key(&mut key2_buf);
+        let value_bytes = value.encoded();
+
+        self.queue_raw_put_dual(T::NAME, key1_bytes, key2_bytes, &value_bytes)
     }
 
     /// Queue a delete operation for a specific table.
@@ -181,7 +251,7 @@ pub trait HotKvWrite: HotKvRead {
     where
         T: Table,
     {
-        self.queue_raw_create(T::NAME)
+        self.queue_raw_create(T::NAME, T::DUAL_KEY, T::DUAL_FIXED_VAL)
     }
 
     /// Queue clearing all entries in a specific table.

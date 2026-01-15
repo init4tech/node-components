@@ -1,6 +1,8 @@
 use crate::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
-use alloy::primitives::Bloom;
+use alloy::primitives::{Address, B256, Bloom};
 use bytes::BufMut;
+use reth::primitives::StorageEntry;
+use reth_db::models::BlockNumberAddress;
 
 macro_rules! delegate_val_to_key {
     ($ty:ty) => {
@@ -120,7 +122,7 @@ ser_be_num!(
 ser_alloy_fixed!(8, 16, 20, 32, 52, 65, 256);
 delegate_val_to_key!(alloy::primitives::Address);
 
-impl KeySer for alloy::primitives::Address {
+impl KeySer for Address {
     const SIZE: usize = 20;
 
     fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, _buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
@@ -295,6 +297,47 @@ where
     }
 }
 
+impl KeySer for BlockNumberAddress {
+    const SIZE: usize = u64::SIZE + Address::SIZE;
+
+    fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
+        buf.copy_from_slice(&self.0.0.to_be_bytes());
+        buf[8..28].copy_from_slice(self.0.1.as_ref());
+        &buf[..Self::SIZE]
+    }
+
+    fn decode_key(data: &[u8]) -> Result<Self, DeserError> {
+        if data.len() < Self::SIZE {
+            return Err(DeserError::InsufficientData { needed: Self::SIZE, available: data.len() });
+        }
+        let number = u64::from_be_bytes(data[0..8].try_into().unwrap());
+        let address = Address::from_slice(&data[8..28]);
+        Ok(BlockNumberAddress((number, address)))
+    }
+}
+
+impl ValSer for StorageEntry {
+    fn encoded_size(&self) -> usize {
+        self.key.encoded_size() + self.value.encoded_size()
+    }
+
+    fn encode_value_to<B>(&self, buf: &mut B)
+    where
+        B: bytes::BufMut + AsMut<[u8]>,
+    {
+        self.key.encode_value_to(buf);
+        self.value.encode_value_to(buf);
+    }
+
+    fn decode_value(data: &[u8]) -> Result<Self, DeserError>
+    where
+        Self: Sized,
+    {
+        let key: B256 = ValSer::decode_value(data)?;
+        let value = ValSer::decode_value(&data[key.encoded_size()..])?;
+        Ok(StorageEntry { key, value })
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

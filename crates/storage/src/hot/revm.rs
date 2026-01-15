@@ -1,10 +1,14 @@
 use crate::{
     hot::{HotKvError, HotKvRead, HotKvWrite},
-    tables::hot::{AccountStorageKey, Bytecodes, PlainAccountState},
+    tables::{
+        DualKeyed, Table,
+        hot::{self, Bytecodes, PlainAccountState},
+    },
 };
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use core::fmt;
 use reth::primitives::Account;
+use std::borrow::Cow;
 use trevm::revm::{
     database::{DBErrorMarker, Database, DatabaseRef, TryDatabaseCommit},
     primitives::{HashMap, StorageKey, StorageValue},
@@ -33,15 +37,45 @@ impl<T: HotKvRead> fmt::Debug for RevmRead<T> {
 }
 
 // HotKvRead implementation for RevmRead
-impl<T: HotKvRead> HotKvRead for RevmRead<T> {
-    type Error = T::Error;
+impl<U: HotKvRead> HotKvRead for RevmRead<U> {
+    type Error = U::Error;
 
-    fn get_raw<'a>(
+    fn raw_get<'a>(
         &'a self,
         table: &str,
         key: &[u8],
     ) -> Result<Option<std::borrow::Cow<'a, [u8]>>, Self::Error> {
-        self.reader.get_raw(table, key)
+        self.reader.raw_get(table, key)
+    }
+
+    fn raw_get_dual<'a>(
+        &'a self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
+        self.reader.raw_get_dual(table, key1, key2)
+    }
+
+    fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
+        self.reader.get::<T>(key)
+    }
+
+    fn get_dual<T: DualKeyed>(
+        &self,
+        key1: &T::K1,
+        key2: &T::K2,
+    ) -> Result<Option<T::Value>, Self::Error> {
+        self.reader.get_dual::<T>(key1, key2)
+    }
+
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<Option<T::Value>>, Self::Error>
+    where
+        T::Key: 'a,
+        T: Table,
+        I: IntoIterator<Item = &'a T::Key>,
+    {
+        self.reader.get_many::<T, I>(keys)
     }
 }
 
@@ -49,43 +83,84 @@ impl<T: HotKvRead> HotKvRead for RevmRead<T> {
 /// Despite the naming of [`TryDatabaseCommit::try_commit`], the changes are
 /// only persisted when [`Self::persist`] is called. This is because of a
 /// mismatch in semantics between the two systems.
-pub struct RevmWrite<T: HotKvWrite> {
-    writer: T,
+pub struct RevmWrite<U: HotKvWrite> {
+    writer: U,
 }
-impl<T: HotKvWrite> RevmWrite<T> {
+
+impl<U: HotKvWrite> RevmWrite<U> {
     /// Create a new write adapter
-    pub const fn new(writer: T) -> Self {
+    pub const fn new(writer: U) -> Self {
         Self { writer }
     }
 
     /// Persist the changes made in this write transaction.
-    pub fn persist(self) -> Result<(), T::Error> {
+    pub fn persist(self) -> Result<(), U::Error> {
         self.writer.raw_commit()
     }
 }
 
-impl<T: HotKvWrite> fmt::Debug for RevmWrite<T> {
+impl<U: HotKvWrite> fmt::Debug for RevmWrite<U> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RevmWrite").finish()
     }
 }
 
 // HotKvWrite implementation for RevmWrite
-impl<T: HotKvWrite> HotKvRead for RevmWrite<T> {
-    type Error = T::Error;
+impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
+    type Error = U::Error;
 
-    fn get_raw<'a>(
+    fn raw_get<'a>(
         &'a self,
         table: &str,
         key: &[u8],
     ) -> Result<Option<std::borrow::Cow<'a, [u8]>>, Self::Error> {
-        self.writer.get_raw(table, key)
+        self.writer.raw_get(table, key)
+    }
+
+    fn raw_get_dual<'a>(
+        &'a self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
+        self.writer.raw_get_dual(table, key1, key2)
+    }
+
+    fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
+        self.writer.get::<T>(key)
+    }
+
+    fn get_dual<T: DualKeyed>(
+        &self,
+        key1: &T::K1,
+        key2: &T::K2,
+    ) -> Result<Option<T::Value>, Self::Error> {
+        self.writer.get_dual::<T>(key1, key2)
+    }
+
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<Option<T::Value>>, Self::Error>
+    where
+        T::Key: 'a,
+        T: Table,
+        I: IntoIterator<Item = &'a T::Key>,
+    {
+        self.writer.get_many::<T, I>(keys)
     }
 }
 
-impl<T: HotKvWrite> HotKvWrite for RevmWrite<T> {
+impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
     fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
         self.writer.queue_raw_put(table, key, value)
+    }
+
+    fn queue_raw_put_dual(
+        &mut self,
+        table: &str,
+        key1: &[u8],
+        key2: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error> {
+        self.writer.queue_raw_put_dual(table, key1, key2, value)
     }
 
     fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
@@ -96,12 +171,58 @@ impl<T: HotKvWrite> HotKvWrite for RevmWrite<T> {
         self.writer.queue_raw_clear(table)
     }
 
-    fn queue_raw_create(&mut self, table: &str) -> Result<(), Self::Error> {
-        self.writer.queue_raw_create(table)
+    fn queue_raw_create(
+        &mut self,
+        table: &str,
+        dual_key: bool,
+        dual_fixed: bool,
+    ) -> Result<(), Self::Error> {
+        self.writer.queue_raw_create(table, dual_key, dual_fixed)
     }
 
     fn raw_commit(self) -> Result<(), Self::Error> {
         self.writer.raw_commit()
+    }
+
+    fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
+        self.writer.queue_put::<T>(key, value)
+    }
+
+    fn queue_put_dual<T: DualKeyed>(
+        &mut self,
+        key1: &T::K1,
+        key2: &T::K2,
+        value: &T::Value,
+    ) -> Result<(), Self::Error> {
+        self.writer.queue_put_dual::<T>(key1, key2, value)
+    }
+
+    fn queue_delete<T: Table>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
+        self.writer.queue_delete::<T>(key)
+    }
+
+    fn queue_put_many<'a, 'b, T, I>(&mut self, entries: I) -> Result<(), Self::Error>
+    where
+        T: Table,
+        T::Key: 'a,
+        T::Value: 'b,
+        I: IntoIterator<Item = (&'a T::Key, &'b T::Value)>,
+    {
+        self.writer.queue_put_many::<T, I>(entries)
+    }
+
+    fn queue_create<T>(&mut self) -> Result<(), Self::Error>
+    where
+        T: Table,
+    {
+        self.writer.queue_create::<T>()
+    }
+
+    fn queue_clear<T>(&mut self) -> Result<(), Self::Error>
+    where
+        T: Table,
+    {
+        self.writer.queue_clear::<T>()
     }
 }
 
@@ -138,16 +259,9 @@ where
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let storage_key = AccountStorageKey {
-            address: std::borrow::Cow::Borrowed(&address),
-            key: std::borrow::Cow::Owned(B256::from_slice(&index.to_be_bytes::<32>())),
-        }
-        .encode_key();
+        let key = B256::from_slice(&index.to_be_bytes::<32>());
 
-        Ok(self
-            .reader
-            .get::<crate::tables::hot::PlainStorageState>(&storage_key)?
-            .unwrap_or_default())
+        Ok(self.reader.get_dual::<hot::PlainStorageState>(&address, &key)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -218,16 +332,8 @@ where
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let storage_key = AccountStorageKey {
-            address: std::borrow::Cow::Borrowed(&address),
-            key: std::borrow::Cow::Owned(B256::from_slice(&index.to_be_bytes::<32>())),
-        }
-        .encode_key();
-
-        Ok(self
-            .writer
-            .get::<crate::tables::hot::PlainStorageState>(&storage_key)?
-            .unwrap_or_default())
+        let key = B256::from_slice(&index.to_be_bytes::<32>());
+        Ok(self.writer.get_dual::<hot::PlainStorageState>(&address, &key)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -285,13 +391,10 @@ where
 
             // Handle storage changes
             for (key, value) in account.storage {
-                let storage_key = AccountStorageKey {
-                    address: std::borrow::Cow::Borrowed(&address),
-                    key: std::borrow::Cow::Owned(B256::from_slice(&key.to_be_bytes::<32>())),
-                }
-                .encode_key();
-                self.writer.queue_put::<crate::tables::hot::PlainStorageState>(
-                    &storage_key,
+                let key = B256::from_slice(&key.to_be_bytes::<32>());
+                self.writer.queue_put_dual::<hot::PlainStorageState>(
+                    &address,
+                    &key,
                     &value.present_value(),
                 )?;
             }
@@ -306,7 +409,7 @@ mod tests {
     use super::*;
     use crate::{
         hot::{HotKv, HotKvRead, HotKvWrite, MemKv},
-        tables::hot::{Bytecodes, PlainAccountState, PlainStorageState},
+        tables::hot::{Bytecodes, PlainAccountState},
     };
     use alloy::primitives::{Address, B256, U256};
     use reth::primitives::{Account, Bytecode};
@@ -507,17 +610,9 @@ mod tests {
             assert_eq!(acc.balance, U256::from(2000u64));
             assert_eq!(acc.bytecode_hash, None);
 
-            // Check storage was written
-            let storage_key = AccountStorageKey {
-                address: std::borrow::Cow::Borrowed(&address),
-                key: std::borrow::Cow::Owned(B256::from_slice(
-                    &U256::from(100u64).to_be_bytes::<32>(),
-                )),
-            }
-            .encode_key();
-
+            let key = B256::with_last_byte(100);
             let storage_val: Option<StorageValue> =
-                reader.get::<PlainStorageState>(&storage_key)?;
+                reader.get_dual::<hot::PlainStorageState>(&address, &key)?;
             assert_eq!(storage_val, Some(U256::from(200u64)));
         }
 

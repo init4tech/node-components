@@ -18,3 +18,6 @@ reth-db-api.workspace = true
 reth-libmdbx.workspace = true
 thiserror.workspace = true
 trevm.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
