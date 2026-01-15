@@ -1,12 +1,16 @@
 use std::borrow::Cow;
 
 use crate::{
-    hot::{HotKvError, HotKvReadError},
+    hot::{
+        HotKvError, HotKvReadError,
+        revm::{RevmRead, RevmWrite},
+    },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
     tables::Table,
 };
 
 /// Trait for hot storage. This is a KV store with read/write transactions.
+#[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKv {
     /// The read-only transaction type.
     type RoTx: HotKvRead;
@@ -15,6 +19,15 @@ pub trait HotKv {
 
     /// Create a read-only transaction.
     fn reader(&self) -> Result<Self::RoTx, HotKvError>;
+
+    /// Create a read-only transaction, and wrap it in an adapter for the
+    /// revm [`DatabaseRef`] trait. The resulting reader can be used directly
+    /// with [`trevm`] and [`revm`].
+    ///
+    /// [`DatabaseRef`]: trevm::revm::database::DatabaseRef
+    fn revm_reader(&self) -> Result<RevmRead<Self::RoTx>, HotKvError> {
+        self.reader().map(RevmRead::new)
+    }
 
     /// Create a read-write transaction.
     ///
@@ -32,9 +45,21 @@ pub trait HotKv {
     /// [`Err(HotKvError::Inner)`]: HotKvError::Inner
     /// [`Err(HotKvError::WriteLocked)`]: HotKvError::WriteLocked
     fn writer(&self) -> Result<Self::RwTx, HotKvError>;
+
+    /// Create a read-write transaction, and wrap it in an adapter for the
+    /// revm [`TryDatabaseCommit`] trait. The resulting writer can be used
+    /// directly with [`trevm`] and [`revm`].
+    ///
+    ///
+    /// [`revm`]: trevm::revm
+    /// [`TryDatabaseCommit`]: trevm::revm::database::TryDatabaseCommit
+    fn revm_writer(&self) -> Result<RevmWrite<Self::RwTx>, HotKvError> {
+        self.writer().map(RevmWrite::new)
+    }
 }
 
 /// Trait for hot storage read transactions.
+#[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKvRead {
     /// Error type for read operations.
     type Error: HotKvReadError;

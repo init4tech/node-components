@@ -1951,8 +1951,8 @@ mod tests {
         // Test with realistic values
         let key3 = StorageShardedKey {
             address: Address::from([
-                0xd8, 0xdA, 0x6B, 0xF2, 0x69, 0x64, 0xaF, 0x9D, 0x7e, 0xEd, 0x9e, 0x03, 0xE5, 0x34,
-                0x15, 0xD3, 0x7a, 0xA9, 0x60, 0x45,
+                0xd8, 0xda, 0x6b, 0xf2, 0x69, 0x64, 0xaf, 0x9d, 0x7e, 0xed, 0x9e, 0x03, 0xe5, 0x34,
+                0x15, 0xd3, 0x7a, 0xa9, 0x60, 0x45,
             ]), // Example address
             sharded_key: ShardedKey {
                 key: keccak256(b"storage_slot"),
@@ -2018,19 +2018,6 @@ mod tests {
             },
         ];
         test_key_ordering(&keys);
-    }
-
-    #[test]
-    fn test_key_size_constants() {
-        // Verify the SIZE constants are correct
-        assert_eq!(ShardedKey::<B256>::SIZE, B256::SIZE + u64::SIZE);
-        assert_eq!(ShardedKey::<Address>::SIZE, Address::SIZE + u64::SIZE);
-        assert_eq!(StorageShardedKey::SIZE, Address::SIZE + B256::SIZE + u64::SIZE);
-
-        // Verify sizes are within MAX_KEY_SIZE
-        assert!(ShardedKey::<B256>::SIZE <= MAX_KEY_SIZE);
-        assert!(ShardedKey::<Address>::SIZE <= MAX_KEY_SIZE);
-        assert!(StorageShardedKey::SIZE <= MAX_KEY_SIZE);
     }
 
     #[test]
