@@ -14,11 +14,15 @@ type Store = BTreeMap<String, Table>;
 type TableOp = BTreeMap<[u8; MAX_KEY_SIZE], QueuedKvOp>;
 type OpStore = BTreeMap<String, QueuedTableOp>;
 
-/// A simple in-memory key-value store using a BTreeMap.
+/// A simple in-memory key-value store using [`BTreeMap`]s.
 ///
-/// This implementation supports concurrent multiple concurrent read
-/// transactions. Write transactions are exclusive, and cannot overlap
-/// with other read or write transactions.
+/// The store is backed by an [`RwLock`]. As a result, this implementation
+/// supports concurrent multiple concurrent read transactions, but write
+/// transactions are exclusive, and cannot overlap with other read or write
+/// transactions.
+///
+/// This implementation is primarily intended for testing and
+/// development purposes.
 #[derive(Clone)]
 pub struct MemKv {
     map: Arc<RwLock<Store>>,

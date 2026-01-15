@@ -18,6 +18,9 @@ pub trait HotKv {
 
     /// Create a read-write transaction.
     ///
+    /// This is allowed to fail with [`Err(HotKvError::WriteLocked)`] if
+    /// multiple write transactions are not supported concurrently.
+    ///
     /// # Returns
     ///
     /// - `Ok(Some(tx))` if the write transaction was created successfully.
