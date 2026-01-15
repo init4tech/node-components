@@ -1,7 +1,7 @@
 use crate::{
     hot::{HotKv, HotKvError, HotKvRead, HotKvReadError, HotKvWrite},
     ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer},
-    tables::DualKeyed,
+    tables::{DualKeyed, Table},
 };
 use bytes::{BufMut, BytesMut};
 use reth_db::{
@@ -84,8 +84,8 @@ where
 
     fn get_dual<T: crate::tables::DualKeyed>(
         &self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
     ) -> Result<Option<T::Value>, Self::Error> {
         let mut key1_buf = [0u8; MAX_KEY_SIZE];
         let key1_bytes = key1.encode_key(&mut key1_buf);
@@ -94,7 +94,7 @@ where
         // table has one. This is a bit ugly, and results in an extra
         // allocation for fixed-size values. This could be avoided using
         // max value size.
-        let value_bytes = if let Some(size) = T::FIXED_VALUE_SIZE {
+        let value_bytes = if let Some(size) = <T as Table>::FIXED_VAL_SIZE {
             let buf = vec![0u8; size];
             let _ = key2.encode_key(&mut buf[..MAX_KEY_SIZE].try_into().unwrap());
 
@@ -114,9 +114,9 @@ where
             return Ok(None);
         };
         // we need to strip the key2 prefix from the value bytes before decoding
-        let value_bytes = &value_bytes[<<T as DualKeyed>::K2 as KeySer>::SIZE..];
+        let value_bytes = &value_bytes[<<T as DualKeyed>::Key2 as KeySer>::SIZE..];
 
-        T::Value::decode_value(&value_bytes).map(Some).map_err(Into::into)
+        T::Value::decode_value(value_bytes).map(Some).map_err(Into::into)
     }
 }
 
@@ -140,11 +140,11 @@ impl HotKvWrite for Tx<RW> {
     // Specialized put for dual-keyed tables.
     fn queue_put_dual<T: crate::tables::DualKeyed>(
         &mut self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
         value: &T::Value,
     ) -> Result<(), Self::Error> {
-        let k2_size = <T::K2 as KeySer>::SIZE;
+        let k2_size = <T::Key2 as KeySer>::SIZE;
         let mut scratch = [0u8; MAX_KEY_SIZE];
 
         // This will be the total length of key2 + value, reserved in mdbx

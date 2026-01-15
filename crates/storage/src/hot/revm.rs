@@ -63,8 +63,8 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
 
     fn get_dual<T: DualKeyed>(
         &self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
     ) -> Result<Option<T::Value>, Self::Error> {
         self.reader.get_dual::<T>(key1, key2)
     }
@@ -132,8 +132,8 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
 
     fn get_dual<T: DualKeyed>(
         &self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
     ) -> Result<Option<T::Value>, Self::Error> {
         self.writer.get_dual::<T>(key1, key2)
     }
@@ -190,8 +190,8 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
 
     fn queue_put_dual<T: DualKeyed>(
         &mut self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
         value: &T::Value,
     ) -> Result<(), Self::Error> {
         self.writer.queue_put_dual::<T>(key1, key2, value)

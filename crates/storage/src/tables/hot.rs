@@ -6,37 +6,49 @@ use reth_db_api::{
     models::{AccountBeforeTx, ShardedKey, storage_sharded_key::StorageShardedKey},
 };
 
-tables! {
+table! {
     /// Records recent block Headers, by their number.
-    Headers<BlockNumber => Header>,
-
-    /// Records block numbers by hash.
-    HeaderNumbers<B256 => BlockNumber>,
-
-    /// Records the canonical chain header hashes, by height.
-    CanonicalHeaders<BlockNumber => B256>,
-
-    /// Records contract Bytecode, by its hash.
-    Bytecodes<B256 => Bytecode>,
-
-    /// Records plain account states, keyed by address.
-    PlainAccountState<Address => Account>,
-
-    /// Records account state change history, keyed by address.
-    AccountsHistory<ShardedKey<Address> => BlockNumberList>,
-
-    /// Records storage state change history, keyed by address and storage key.
-    StorageHistory<StorageShardedKey => BlockNumberList>,
-
+    Headers<BlockNumber => Header>
 }
 
-tables! {
+table! {
+    /// Records block numbers by hash.
+    HeaderNumbers<B256 => BlockNumber>
+}
+
+table! {
+        /// Records the canonical chain header hashes, by height.
+        CanonicalHeaders<BlockNumber => B256>
+}
+
+table! {
+    /// Records contract Bytecode, by its hash.
+    Bytecodes<B256 => Bytecode>
+}
+table! {
+     /// Records plain account states, keyed by address.
+    PlainAccountState<Address => Account>
+}
+table! {
+    /// Records account state change history, keyed by address.
+    AccountsHistory<ShardedKey<Address> => BlockNumberList>
+}
+table! {
+    /// Records storage state change history, keyed by address and storage key.
+    StorageHistory<StorageShardedKey => BlockNumberList>
+}
+
+table! {
     /// Records plain storage states, keyed by address and storage key.
-    PlainStorageState<Address => B256 => U256> size: Some(32 + 32),
+    PlainStorageState<Address => B256 => U256> is 32 + 32
+}
 
+table! {
     /// Records account states before transactions, keyed by (address, block number).
-    StorageChangeSets<BlockNumberAddress => B256 => StorageEntry> size: Some(32 + 32 + 32),
+    StorageChangeSets<BlockNumberAddress => B256 => StorageEntry> is 32 + 32 + 32
+}
 
+table! {
     /// Records account states before transactions, keyed by (address, block number).
-    AccountChangeSets<BlockNumberAddress => Address => AccountBeforeTx> size: None,
+    AccountChangeSets<BlockNumberAddress => Address => AccountBeforeTx>
 }

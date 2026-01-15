@@ -9,6 +9,9 @@ pub mod hot;
 
 use crate::ser::{KeySer, ValSer};
 
+/// The maximum size of a dual key (in bytes).
+pub const MAX_FIXED_VAL_SIZE: usize = 96;
+
 /// Trait for table definitions.
 pub trait Table {
     /// A short, human-readable name for the table.
@@ -17,8 +20,21 @@ pub trait Table {
     /// Indicates that this table uses dual keys.
     const DUAL_KEY: bool = false;
 
+    /// True if the table is guaranteed to have fixed-size values, false
+    /// otherwise.
+    const FIXED_VAL_SIZE: Option<usize> = None;
+
     /// Indicates that this table has fixed-size values.
-    const DUAL_FIXED_VAL: bool = false;
+    const IS_FIXED_VAL: bool = Self::FIXED_VAL_SIZE.is_some();
+
+    /// Compile-time assertions for the table.
+    #[doc(hidden)]
+    const ASSERT: () = {
+        // Ensure that fixed-size values do not exceed the maximum allowed size.
+        if let Some(size) = Self::FIXED_VAL_SIZE {
+            assert!(size <= MAX_FIXED_VAL_SIZE, "Fixed value size exceeds maximum allowed size");
+        }
+    };
 
     /// The key type.
     type Key: KeySer;
@@ -31,35 +47,13 @@ pub trait Table {
 /// This trait aims to capture tables that use a composite key made up of two
 /// distinct parts. This is useful for representing (e.g.) dupsort or other
 /// nested map optimizations.
-pub trait DualKeyed {
-    /// A short, human-readable name for the table.
-    const NAME: &'static str;
-
-    /// If the value size is fixed, `Some(size)`. Otherwise, `None`.
-    const FIXED_VALUE_SIZE: Option<usize> = None;
-
-    /// The first key type.
-    type K1: KeySer;
-
+pub trait DualKeyed: Table {
     /// The second key type.
-    type K2: KeySer;
+    type Key2: KeySer;
 
-    /// The value type.
-    type Value: ValSer;
-}
-
-impl<T> Table for T
-where
-    T: DualKeyed,
-{
-    const NAME: &'static str = T::NAME;
-
-    /// Indicates that this table uses dual keys.
-    const DUAL_KEY: bool = true;
-
-    /// Indicates that this table has fixed-size values.
-    const DUAL_FIXED_VAL: bool = T::FIXED_VALUE_SIZE.is_some();
-
-    type Key = T::K1;
-    type Value = T::Value;
+    /// Compile-time assertions for the dual-keyed table.
+    #[doc(hidden)]
+    const ASSERT: () = {
+        assert!(Self::DUAL_KEY, "DualKeyed tables must have DUAL_KEY = true");
+    };
 }

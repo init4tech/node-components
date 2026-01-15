@@ -1,7 +1,8 @@
-macro_rules! tables {
+macro_rules! table {
     (
+        @implement
         #[doc = $doc:expr]
-        $name:ident<$key:ty => $value:ty>
+        $name:ident, $key:ty, $value:ty, $dual:expr, $fixed:expr
     ) => {
         #[doc = $doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -9,6 +10,8 @@ macro_rules! tables {
 
         impl crate::tables::Table for $name {
             const NAME: &'static str = stringify!($name);
+            const DUAL_KEY: bool = $dual;
+            const FIXED_VAL_SIZE: Option<usize> = $fixed;
 
             type Key = $key;
             type Value = $value;
@@ -17,33 +20,52 @@ macro_rules! tables {
 
     (
         #[doc = $doc:expr]
-        $name:ident<$key:ty => $subkey:ty => $value:ty> size: $fixed:expr
+        $name:ident<$key:ty => $value:ty>
     ) => {
-        #[doc = $doc]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub struct $name;
+        table!(@implement
+            #[doc = $doc]
+            $name,
+            $key,
+            $value,
+            false,
+            None
+        );
+    };
+
+
+    (
+        #[doc = $doc:expr]
+        $name:ident<$key:ty => $subkey:ty => $value:ty>
+    ) => {
+        table!(@implement
+            #[doc = $doc]
+            $name,
+            $key,
+            $value,
+            true,
+            None
+        );
 
         impl crate::tables::DualKeyed for $name {
-            const NAME: &'static str = stringify!($name);
-
-            const FIXED_VALUE_SIZE: Option<usize> = { $fixed };
-
-            type K1 = $key;
-            type K2 = $subkey;
-
-            type Value = $value;
+            type Key2 = $subkey;
         }
     };
 
-    ($(#[doc = $doc:expr] $name:ident<$key:ty => $value:ty>),* $(,)?) => {
-        $(
-            tables!(#[doc = $doc] $name<$key => $value>);
-        )*
-    };
+    (
+        #[doc = $doc:expr]
+        $name:ident<$key:ty => $subkey:ty => $value:ty> is $fixed:expr
+    ) => {
+        table!(@implement
+            #[doc = $doc]
+            $name,
+            $key,
+            $value,
+            true,
+            Some($fixed)
+        );
 
-    ($(#[doc = $doc:expr] $name:ident<$key:ty => $subkey:ty => $value:ty> size: $fixed:expr),* $(,)?) => {
-        $(
-            tables!(#[doc = $doc] $name<$key => $subkey => $value> size: $fixed);
-        )*
+        impl crate::tables::DualKeyed for $name {
+            type Key2 = $subkey;
+        }
     };
 }

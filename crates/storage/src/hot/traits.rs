@@ -102,8 +102,8 @@ pub trait HotKvRead {
     /// Get a value from a specific dual-keyed table.
     fn get_dual<T: DualKeyed>(
         &self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
     ) -> Result<Option<T::Value>, Self::Error> {
         let mut key1_buf = [0u8; MAX_KEY_SIZE];
         let mut key2_buf = [0u8; MAX_KEY_SIZE];
@@ -205,8 +205,8 @@ pub trait HotKvWrite: HotKvRead {
     /// Queue a put operation for a specific dual-keyed table.
     fn queue_put_dual<T: DualKeyed>(
         &mut self,
-        key1: &T::K1,
-        key2: &T::K2,
+        key1: &T::Key,
+        key2: &T::Key2,
         value: &T::Value,
     ) -> Result<(), Self::Error> {
         let mut key1_buf = [0u8; MAX_KEY_SIZE];
@@ -251,7 +251,7 @@ pub trait HotKvWrite: HotKvRead {
     where
         T: Table,
     {
-        self.queue_raw_create(T::NAME, T::DUAL_KEY, T::DUAL_FIXED_VAL)
+        self.queue_raw_create(T::NAME, T::DUAL_KEY, T::IS_FIXED_VAL)
     }
 
     /// Queue clearing all entries in a specific table.
