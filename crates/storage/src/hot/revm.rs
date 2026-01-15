@@ -69,7 +69,10 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
         self.reader.get_dual::<T>(key1, key2)
     }
 
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<Option<T::Value>>, Self::Error>
+    fn get_many<'a, T, I>(
+        &self,
+        keys: I,
+    ) -> Result<Vec<(&'a T::Key, Option<T::Value>)>, Self::Error>
     where
         T::Key: 'a,
         T: Table,
@@ -138,7 +141,10 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
         self.writer.get_dual::<T>(key1, key2)
     }
 
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<Option<T::Value>>, Self::Error>
+    fn get_many<'a, T, I>(
+        &self,
+        keys: I,
+    ) -> Result<Vec<(&'a T::Key, Option<T::Value>)>, Self::Error>
     where
         T::Key: 'a,
         T: Table,

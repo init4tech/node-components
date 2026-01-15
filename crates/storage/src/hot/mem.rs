@@ -581,9 +581,9 @@ mod tests {
             let values = reader.get_many::<TestTable, _>(keys).unwrap();
 
             assert_eq!(values.len(), 3);
-            assert_eq!(values[0], Some(Bytes::from_static(b"first")));
-            assert_eq!(values[1], Some(Bytes::from_static(b"second")));
-            assert_eq!(values[2], Some(Bytes::from_static(b"third")));
+            assert_eq!(values[0], (&1u64, Some(Bytes::from_static(b"first"))));
+            assert_eq!(values[1], (&2u64, Some(Bytes::from_static(b"second"))));
+            assert_eq!(values[2], (&3u64, Some(Bytes::from_static(b"third"))));
         }
     }
 

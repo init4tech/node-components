@@ -487,11 +487,11 @@ mod tests {
         {
             let reader: Tx<RO> = db.reader().unwrap();
             let addresses: Vec<Address> = accounts.iter().map(|(addr, _)| *addr).collect();
-            let read_accounts: Vec<Option<Account>> =
+            let read_accounts: Vec<(_, Option<Account>)> =
                 reader.get_many::<hot::PlainAccountState, _>(addresses.iter()).unwrap();
 
             for (i, (_, expected_account)) in accounts.iter().enumerate() {
-                assert_eq!(read_accounts[i].as_ref(), Some(expected_account));
+                assert_eq!(read_accounts[i].1.as_ref(), Some(expected_account));
             }
         }
     }

@@ -125,13 +125,21 @@ pub trait HotKvRead {
     ///
     /// # Returns
     ///
-    /// A vector of `Option<T::Value>`, where each element corresponds to the
-    /// value for the respective key in the input iterator. If a key does not
-    /// exist in the table, the corresponding element will be `None`.
+    /// A vector of `(&'a T::Key, Option<T::Value>)`, where each element
+    /// corresponds to the value for the respective key in the input iterator.
+    /// If a key does not exist in the table, the corresponding element will be
+    /// `None`.
+    ///
+    /// Implementations ARE NOT required to preserve the order of the input
+    /// keys in the output vector. Users should not rely on any specific
+    /// ordering.
     ///
     /// If any error occurs during retrieval or deserialization, the entire
     /// operation will return an error.
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<Option<T::Value>>, Self::Error>
+    fn get_many<'a, T, I>(
+        &self,
+        keys: I,
+    ) -> Result<Vec<(&'a T::Key, Option<T::Value>)>, Self::Error>
     where
         T::Key: 'a,
         T: Table,
@@ -140,10 +148,11 @@ pub trait HotKvRead {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
 
         keys.into_iter()
-            .map(|key| self.raw_get(T::NAME, key.encode_key(&mut key_buf)))
-            .map(|maybe_val| {
+            .map(|key| (key, self.raw_get(T::NAME, key.encode_key(&mut key_buf))))
+            .map(|(key, maybe_val)| {
                 maybe_val
                     .and_then(|val| ValSer::maybe_decode_value(val.as_deref()).map_err(Into::into))
+                    .map(|res| (key, res))
             })
             .collect()
     }
