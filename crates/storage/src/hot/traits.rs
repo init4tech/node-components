@@ -9,6 +9,9 @@ use crate::{
     tables::{DualKeyed, Table},
 };
 
+/// A key-value pair from a table.
+pub type KeyValue<'a, T> = (&'a <T as Table>::Key, Option<<T as Table>::Value>);
+
 /// Trait for hot storage. This is a KV store with read/write transactions.
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKv {
@@ -125,7 +128,7 @@ pub trait HotKvRead {
     ///
     /// # Returns
     ///
-    /// A vector of `(&'a T::Key, Option<T::Value>)`, where each element
+    /// A vector of [`KeyValue`] where each element
     /// corresponds to the value for the respective key in the input iterator.
     /// If a key does not exist in the table, the corresponding element will be
     /// `None`.
@@ -136,10 +139,7 @@ pub trait HotKvRead {
     ///
     /// If any error occurs during retrieval or deserialization, the entire
     /// operation will return an error.
-    fn get_many<'a, T, I>(
-        &self,
-        keys: I,
-    ) -> Result<Vec<(&'a T::Key, Option<T::Value>)>, Self::Error>
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<KeyValue<'a, T>>, Self::Error>
     where
         T::Key: 'a,
         T: Table,

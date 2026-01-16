@@ -13,4 +13,4 @@ mod revm;
 pub use revm::{RevmRead, RevmWrite};
 
 mod traits;
-pub use traits::{HotKv, HotKvRead, HotKvWrite};
+pub use traits::{HotKv, HotKvRead, HotKvWrite, KeyValue};

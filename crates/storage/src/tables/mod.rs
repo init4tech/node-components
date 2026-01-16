@@ -10,7 +10,7 @@ pub mod hot;
 use crate::ser::{KeySer, ValSer};
 
 /// The maximum size of a dual key (in bytes).
-pub const MAX_FIXED_VAL_SIZE: usize = 96;
+pub const MAX_FIXED_VAL_SIZE: usize = 64;
 
 /// Trait for table definitions.
 pub trait Table {

@@ -40,12 +40,12 @@ table! {
 
 table! {
     /// Records plain storage states, keyed by address and storage key.
-    PlainStorageState<Address => B256 => U256> is 32 + 32
+    PlainStorageState<Address => B256 => U256> is 32
 }
 
 table! {
     /// Records account states before transactions, keyed by (address, block number).
-    StorageChangeSets<BlockNumberAddress => B256 => StorageEntry> is 32 + 32 + 32
+    StorageChangeSets<BlockNumberAddress => B256 => StorageEntry> is 32 + 32
 }
 
 table! {

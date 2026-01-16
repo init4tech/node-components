@@ -1,7 +1,7 @@
 use crate::{
     hot::{HotKv, HotKvError, HotKvRead, HotKvReadError, HotKvWrite},
     ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer},
-    tables::{DualKeyed, Table},
+    tables::{DualKeyed, MAX_FIXED_VAL_SIZE},
 };
 use bytes::{BufMut, BytesMut};
 use reth_db::{
@@ -94,13 +94,15 @@ where
         // table has one. This is a bit ugly, and results in an extra
         // allocation for fixed-size values. This could be avoided using
         // max value size.
-        let value_bytes = if let Some(size) = <T as Table>::FIXED_VAL_SIZE {
-            let buf = vec![0u8; size];
+        let value_bytes = if T::IS_FIXED_VAL {
+            let buf = [0u8; MAX_KEY_SIZE + MAX_FIXED_VAL_SIZE];
             let _ = key2.encode_key(&mut buf[..MAX_KEY_SIZE].try_into().unwrap());
+
+            let kv_size = <T::Key2 as KeySer>::SIZE + T::FIXED_VAL_SIZE.unwrap();
 
             let db = self.inner.open_db(Some(T::NAME))?;
             let mut cursor = self.inner.cursor(&db).map_err(MdbxError::Mdbx)?;
-            cursor.get_both_range(key1_bytes, &buf).map_err(MdbxError::Mdbx)
+            cursor.get_both_range(key1_bytes, &buf[..kv_size]).map_err(MdbxError::Mdbx)
         } else {
             let mut buf = [0u8; MAX_KEY_SIZE];
             let encoded = key2.encode_key(&mut buf);
