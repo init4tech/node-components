@@ -72,13 +72,18 @@ pub trait HotKvRead {
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
     /// allowed to panic if this is not the case.
     ///
-    /// If the table is dual-keyed, the output may be implementation-defined.
+    /// If the table is dual-keyed, the output MAY be implementation-defined.
     fn raw_get<'a>(&'a self, table: &str, key: &[u8])
     -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
 
     /// Get a raw value from a specific table with dual keys.
     ///
-    /// If the table is not dual-keyed, the output may be
+    /// If `key1` is present, but `key2` is not in the table, the output is
+    /// implementation-defined. For sorted databases, it SHOULD return the value
+    /// of the NEXT populated key. It MAY also return `None`, even if other
+    /// subkeys are populated.
+    ///
+    /// If the table is not dual-keyed, the output MAY be
     /// implementation-defined.
     fn raw_get_dual<'a>(
         &'a self,
@@ -103,6 +108,14 @@ pub trait HotKvRead {
     }
 
     /// Get a value from a specific dual-keyed table.
+    ///
+    /// If `key1` is present, but `key2` is not in the table, the output is
+    /// implementation-defined. For sorted databases, it SHOULD return the value
+    /// of the NEXT populated key. It MAY also return `None`, even if other
+    /// subkeys are populated.
+    ///
+    /// If the table is not dual-keyed, the output MAY be
+    /// implementation-defined.
     fn get_dual<T: DualKeyed>(
         &self,
         key1: &T::Key,

@@ -4,12 +4,11 @@ use crate::{
 };
 use alloy::primitives::{Address, B256, U256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader, StorageEntry};
+use reth_db::{BlockNumberList, models::BlockNumberAddress};
+use reth_db_api::models::ShardedKey;
 
 /// Trait for database read operations.
-pub trait HotDbReader: sealed::Sealed {
-    /// The error type for read operations
-    type Error: std::error::Error + Send + Sync + 'static + From<crate::ser::DeserError>;
-
+pub trait HotDbRead: HotKvRead + sealed::Sealed {
     /// Read a block header by its number.
     fn get_header(&self, number: u64) -> Result<Option<Header>, Self::Error>;
 
@@ -44,12 +43,10 @@ pub trait HotDbReader: sealed::Sealed {
     }
 }
 
-impl<T> HotDbReader for T
+impl<T> HotDbRead for T
 where
     T: HotKvRead,
 {
-    type Error = <T as HotKvRead>::Error;
-
     fn get_header(&self, number: u64) -> Result<Option<Header>, Self::Error> {
         self.get::<tables::Headers>(&number)
     }
@@ -72,10 +69,7 @@ where
 }
 
 /// Trait for database write operations.
-pub trait HotDbWriter: sealed::Sealed {
-    /// The error type for write operations
-    type Error: std::error::Error + Send + Sync + 'static + From<crate::ser::DeserError>;
-
+pub trait HotDbWrite: HotKvWrite + sealed::Sealed {
     /// Write a block header. This will leave the DB in an inconsistent state
     /// until the corresponding header number is also written. Users should
     /// prefer [`Self::put_header`] instead.
@@ -114,12 +108,10 @@ pub trait HotDbWriter: sealed::Sealed {
     fn commit(self) -> Result<(), Self::Error>;
 }
 
-impl<T> HotDbWriter for T
+impl<T> HotDbWrite for T
 where
     T: HotKvWrite,
 {
-    type Error = <T as HotKvRead>::Error;
-
     fn put_header_inconsistent(&mut self, header: &Header) -> Result<(), Self::Error> {
         self.queue_put::<tables::Headers>(&header.number, header)
     }
@@ -153,6 +145,119 @@ where
         HotKvWrite::raw_commit(self)
     }
 }
+
+/// Trait for history read operations.
+pub trait HotHistoryRead: HotDbRead {
+    /// Get the list of block numbers where an account was touched.
+    /// Get the list of block numbers where an account was touched.
+    fn get_account_history(
+        &self,
+        address: &Address,
+        latest_height: u64,
+    ) -> Result<Option<BlockNumberList>, Self::Error> {
+        self.get_dual::<tables::AccountsHistory>(address, &latest_height)
+    }
+    /// Get the account change (pre-state) for an account at a specific block.
+    ///
+    /// If the return value is `None`, the account was not changed in that
+    /// block.
+    fn get_account_change(
+        &self,
+        block_number: u64,
+        address: &Address,
+    ) -> Result<Option<Account>, Self::Error> {
+        self.get_dual::<tables::AccountChangeSets>(&block_number, address)
+    }
+
+    /// Get the storage history for an account and storage slot. The returned
+    /// list will contain block numbers where the storage slot was changed.
+    fn get_storage_history(
+        &self,
+        address: &Address,
+        slot: B256,
+        highest_block_number: u64,
+    ) -> Result<Option<BlockNumberList>, Self::Error> {
+        let sharded_key = ShardedKey::new(slot, highest_block_number);
+        self.get_dual::<tables::StorageHistory>(address, &sharded_key)
+    }
+
+    /// Get the storage change (before state) for a specific storage slot at a
+    /// specific block.
+    ///
+    /// If the return value is `None`, the storage slot was not changed in that
+    /// block. If the return value is `Some(value)`, the value is the pre-state
+    /// of the storage slot before the change in that block. If the value is
+    /// `U256::ZERO`, that indicates that the storage slot was not set before
+    /// the change.
+    fn get_storage_change(
+        &self,
+        block_number: u64,
+        address: &Address,
+        slot: &B256,
+    ) -> Result<Option<U256>, Self::Error> {
+        let block_number_address = BlockNumberAddress((block_number, *address));
+        self.get_dual::<tables::StorageChangeSets>(&block_number_address, slot)
+    }
+}
+
+impl<T> HotHistoryRead for T where T: HotDbRead {}
+
+/// Trait for history write operations.
+pub trait HotHistoryWrite: HotDbWrite {
+    /// Maintain a list of block numbers where an account was touched.
+    ///
+    /// Accounts are keyed
+    fn write_account_history(
+        &mut self,
+        address: &Address,
+        latest_height: u64,
+        touched: &BlockNumberList,
+    ) -> Result<(), Self::Error> {
+        self.queue_put_dual::<tables::AccountsHistory>(address, &latest_height, touched)
+    }
+
+    /// Write a storage change (before state) for an account at a specific
+    /// block.
+    fn write_storage_change(
+        &mut self,
+        block_number: u64,
+        address: Address,
+        slot: &B256,
+        value: &U256,
+    ) -> Result<(), Self::Error> {
+        let block_number_address = BlockNumberAddress((block_number, address));
+        self.queue_put_dual::<tables::StorageChangeSets>(&block_number_address, slot, value)
+    }
+
+    /// Write an account change (pre-state) for an account at a specific
+    /// block.
+
+    /// Write storage history, by highest block number and touched block
+    /// numbers.
+    fn write_storage_history(
+        &mut self,
+        address: &Address,
+        slot: B256,
+        highest_block_number: u64,
+        touched: &BlockNumberList,
+    ) -> Result<(), Self::Error> {
+        let sharded_key = ShardedKey::new(slot, highest_block_number);
+        self.queue_put_dual::<tables::StorageHistory>(address, &sharded_key, touched)
+    }
+
+    /// Write a storage change (before state) for an account at a specific
+    /// block.
+    fn write_account_change(
+        &mut self,
+        block_number: u64,
+        address: Address,
+        pre_state: &Account,
+    ) -> Result<(), Self::Error> {
+        self.queue_put_dual::<tables::AccountChangeSets>(&block_number, &address, pre_state)
+    }
+}
+
+impl<T> HotHistoryWrite for T where T: HotDbWrite + HotKvWrite {}
 
 mod sealed {
     use crate::hot::HotKvRead;

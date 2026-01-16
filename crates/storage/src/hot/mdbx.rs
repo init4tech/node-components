@@ -207,7 +207,7 @@ impl HotKvWrite for Tx<RW> {
 mod tests {
     use super::*;
     use crate::{
-        hot::{HotDbWriter, HotKv, HotKvRead, HotKvWrite},
+        hot::{HotDbWrite, HotKv, HotKvRead, HotKvWrite},
         tables::hot,
     };
     use alloy::{

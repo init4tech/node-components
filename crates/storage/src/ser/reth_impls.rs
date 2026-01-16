@@ -5,7 +5,7 @@ use alloy::{
         eip2930::{AccessList, AccessListItem},
         eip7702::{Authorization, SignedAuthorization},
     },
-    primitives::{Address, B256, FixedBytes, Signature, TxKind, U256},
+    primitives::{Address, B256, FixedBytes, KECCAK256_EMPTY, Signature, TxKind, U256},
 };
 use reth::{
     primitives::{Account, Bytecode, Header, Log, LogData, TransactionSigned, TxType},
@@ -320,13 +320,9 @@ impl ValSer for Account {
     fn encoded_size(&self) -> usize {
         // NB: Destructure to ensure changes are compile errors and mistakes
         // are unused var warnings.
-        let Account { nonce, balance, bytecode_hash } = self;
-        by_props!(
-            @size
-            nonce,
-            balance,
-            bytecode_hash,
-        )
+        let Account { nonce, balance, bytecode_hash: _ } = self;
+
+        nonce.encoded_size() + balance.encoded_size() + 32
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -336,12 +332,11 @@ impl ValSer for Account {
         // NB: Destructure to ensure changes are compile errors and mistakes
         // are unused var warnings.
         let Account { nonce, balance, bytecode_hash } = self;
-        by_props!(
-            @encode buf;
-            nonce,
-            balance,
-            bytecode_hash,
-        )
+        {
+            nonce.encode_value_to(buf);
+            balance.encode_value_to(buf);
+            bytecode_hash.unwrap_or(KECCAK256_EMPTY).encode_value_to(buf);
+        }
     }
 
     fn decode_value(data: &[u8]) -> Result<Self, DeserError>
@@ -354,12 +349,19 @@ impl ValSer for Account {
         let Account { nonce, balance, bytecode_hash } = &mut account;
 
         let mut data = data;
-        by_props!(
-            @decode data;
-            nonce,
-            balance,
-            bytecode_hash,
-        );
+        {
+            *nonce = ValSer::decode_value(data)?;
+            data = &data[nonce.encoded_size()..];
+            *balance = ValSer::decode_value(data)?;
+            data = &data[balance.encoded_size()..];
+
+            let bch: B256 = ValSer::decode_value(data)?;
+            if bch == KECCAK256_EMPTY {
+                *bytecode_hash = None;
+            } else {
+                *bytecode_hash = Some(bch);
+            }
+        };
         Ok(account)
     }
 }

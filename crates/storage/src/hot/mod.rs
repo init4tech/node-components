@@ -1,5 +1,5 @@
 mod db_traits;
-pub use db_traits::{HotDbReader, HotDbWriter};
+pub use db_traits::{HotDbRead, HotDbWrite, HotHistoryRead, HotHistoryWrite};
 
 mod error;
 pub use error::{HotKvError, HotKvReadError, HotKvResult};
