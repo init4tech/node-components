@@ -17,22 +17,20 @@ table! {
 }
 
 table! {
-        /// Records the canonical chain header hashes, by height.
-        CanonicalHeaders<BlockNumber => B256>
-}
-
-table! {
     /// Records contract Bytecode, by its hash.
     Bytecodes<B256 => Bytecode>
 }
+
 table! {
      /// Records plain account states, keyed by address.
     PlainAccountState<Address => Account>
 }
+
 table! {
     /// Records account state change history, keyed by address.
     AccountsHistory<ShardedKey<Address> => BlockNumberList>
 }
+
 table! {
     /// Records storage state change history, keyed by address and storage key.
     StorageHistory<StorageShardedKey => BlockNumberList>

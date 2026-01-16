@@ -210,7 +210,10 @@ mod tests {
         hot::{HotDbWriter, HotKv, HotKvRead, HotKvWrite},
         tables::hot,
     };
-    use alloy::primitives::{Address, B256, BlockNumber, U256};
+    use alloy::{
+        consensus::Sealed,
+        primitives::{Address, B256, BlockNumber, U256},
+    };
     use reth::primitives::{Account, Bytecode, Header};
     use reth_db::DatabaseEnv;
 
@@ -241,7 +244,6 @@ mod tests {
 
         writer.queue_create::<hot::Headers>().unwrap();
         writer.queue_create::<hot::HeaderNumbers>().unwrap();
-        writer.queue_create::<hot::CanonicalHeaders>().unwrap();
         writer.queue_create::<hot::Bytecodes>().unwrap();
         writer.queue_create::<hot::PlainAccountState>().unwrap();
         writer.queue_create::<hot::AccountsHistory>().unwrap();
@@ -607,16 +609,14 @@ mod tests {
 
         // Test various data types
         let (block_number, header) = create_test_header();
-        let canonical_hash = B256::from_slice(&[0x7; 32]);
+        let header = Sealed::new(header);
 
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
 
-            // Create tables
-
             // Write different types
             writer.queue_put::<hot::Headers>(&block_number, &header).unwrap();
-            writer.queue_put::<hot::CanonicalHeaders>(&block_number, &canonical_hash).unwrap();
+            writer.queue_put::<hot::HeaderNumbers>(&header.hash(), &block_number).unwrap();
 
             writer.raw_commit().unwrap();
         }
@@ -626,11 +626,10 @@ mod tests {
 
             // Read and verify
             let read_header: Option<Header> = reader.get::<hot::Headers>(&block_number).unwrap();
-            assert_eq!(read_header, Some(header));
+            assert_eq!(read_header.as_ref(), Some(header.inner()));
 
-            let read_hash: Option<B256> =
-                reader.get::<hot::CanonicalHeaders>(&block_number).unwrap();
-            assert_eq!(read_hash, Some(canonical_hash));
+            let read_hash: Option<u64> = reader.get::<hot::HeaderNumbers>(&header.hash()).unwrap();
+            assert_eq!(read_hash, Some(header.number));
         }
     }
 

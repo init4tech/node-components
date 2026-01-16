@@ -16,9 +16,6 @@ pub trait HotDbReader: sealed::Sealed {
     /// Read a block number by its hash.
     fn get_header_number(&self, hash: &B256) -> Result<Option<u64>, Self::Error>;
 
-    /// Read the canonical hash by block number.
-    fn get_canonical_hash(&self, number: u64) -> Result<Option<B256>, Self::Error>;
-
     /// Read contract Bytecode by its hash.
     fn get_bytecode(&self, code_hash: &B256) -> Result<Option<Bytecode>, Self::Error>;
 
@@ -37,6 +34,14 @@ pub trait HotDbReader: sealed::Sealed {
         let opt = self.get_storage(address, key)?;
         Ok(opt.map(|value| StorageEntry { key: *key, value }))
     }
+
+    /// Read a block header by its hash.
+    fn header_by_hash(&self, hash: &B256) -> Result<Option<Header>, Self::Error> {
+        let Some(number) = self.get_header_number(hash)? else {
+            return Ok(None);
+        };
+        self.get_header(number)
+    }
 }
 
 impl<T> HotDbReader for T
@@ -51,10 +56,6 @@ where
 
     fn get_header_number(&self, hash: &B256) -> Result<Option<u64>, Self::Error> {
         self.get::<tables::HeaderNumbers>(hash)
-    }
-
-    fn get_canonical_hash(&self, number: u64) -> Result<Option<B256>, Self::Error> {
-        self.get::<tables::CanonicalHeaders>(&number)
     }
 
     fn get_bytecode(&self, code_hash: &B256) -> Result<Option<Bytecode>, Self::Error> {
@@ -75,14 +76,19 @@ pub trait HotDbWriter: sealed::Sealed {
     /// The error type for write operations
     type Error: std::error::Error + Send + Sync + 'static + From<crate::ser::DeserError>;
 
-    /// Read the latest block header.
-    fn put_header(&mut self, header: &Header) -> Result<(), Self::Error>;
+    /// Write a block header. This will leave the DB in an inconsistent state
+    /// until the corresponding header number is also written. Users should
+    /// prefer [`Self::put_header`] instead.
+    fn put_header_inconsistent(&mut self, header: &Header) -> Result<(), Self::Error>;
 
-    /// Write a block number by its hash.
-    fn put_header_number(&mut self, hash: &B256, number: u64) -> Result<(), Self::Error>;
-
-    /// Write the canonical hash by block number.
-    fn put_canonical_hash(&mut self, number: u64, hash: &B256) -> Result<(), Self::Error>;
+    /// Write a block number by its hash. This will leave the DB in an
+    /// inconsistent state until the corresponding header is also written.
+    /// Users should prefer [`Self::put_header`] instead.
+    fn put_header_number_inconsistent(
+        &mut self,
+        hash: &B256,
+        number: u64,
+    ) -> Result<(), Self::Error>;
 
     /// Write contract Bytecode by its hash.
     fn put_bytecode(&mut self, code_hash: &B256, bytecode: &Bytecode) -> Result<(), Self::Error>;
@@ -98,15 +104,14 @@ pub trait HotDbWriter: sealed::Sealed {
         entry: &U256,
     ) -> Result<(), Self::Error>;
 
+    /// Write a sealed block header (header + number).
+    fn put_header(&mut self, header: &SealedHeader) -> Result<(), Self::Error> {
+        self.put_header_inconsistent(header.header())
+            .and_then(|_| self.put_header_number_inconsistent(&header.hash(), header.number))
+    }
+
     /// Commit the write transaction.
     fn commit(self) -> Result<(), Self::Error>;
-
-    /// Write a canonical header (header, number mapping, and canonical hash).
-    fn put_canonical(&mut self, header: &SealedHeader) -> Result<(), Self::Error> {
-        self.put_header(header)?;
-        self.put_header_number(&header.hash(), header.number)?;
-        self.put_canonical_hash(header.number, &header.hash())
-    }
 }
 
 impl<T> HotDbWriter for T
@@ -115,16 +120,16 @@ where
 {
     type Error = <T as HotKvRead>::Error;
 
-    fn put_header(&mut self, header: &Header) -> Result<(), Self::Error> {
+    fn put_header_inconsistent(&mut self, header: &Header) -> Result<(), Self::Error> {
         self.queue_put::<tables::Headers>(&header.number, header)
     }
 
-    fn put_header_number(&mut self, hash: &B256, number: u64) -> Result<(), Self::Error> {
+    fn put_header_number_inconsistent(
+        &mut self,
+        hash: &B256,
+        number: u64,
+    ) -> Result<(), Self::Error> {
         self.queue_put::<tables::HeaderNumbers>(hash, &number)
-    }
-
-    fn put_canonical_hash(&mut self, number: u64, hash: &B256) -> Result<(), Self::Error> {
-        self.queue_put::<tables::CanonicalHeaders>(&number, hash)
     }
 
     fn put_bytecode(&mut self, code_hash: &B256, bytecode: &Bytecode) -> Result<(), Self::Error> {
