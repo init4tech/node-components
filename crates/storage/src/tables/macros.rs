@@ -16,6 +16,7 @@ macro_rules! table {
             type Key = $key;
             type Value = $value;
         }
+
     };
 
     (
@@ -30,6 +31,8 @@ macro_rules! table {
             false,
             None
         );
+
+        impl crate::tables::SingleKey for $name {}
     };
 
 

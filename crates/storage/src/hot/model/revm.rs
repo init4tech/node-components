@@ -1,7 +1,7 @@
 use crate::{
-    hot::{HotKvError, HotKvRead, HotKvWrite, KeyValue},
+    hot::model::{GetManyItem, HotKvError, HotKvRead, HotKvWrite},
     tables::{
-        DualKeyed, Table,
+        DualKeyed, SingleKey, Table,
         hot::{self, Bytecodes, PlainAccountState},
     },
 };
@@ -40,6 +40,15 @@ impl<T: HotKvRead> fmt::Debug for RevmRead<T> {
 impl<U: HotKvRead> HotKvRead for RevmRead<U> {
     type Error = U::Error;
 
+    type Traverse<'a>
+        = U::Traverse<'a>
+    where
+        U: 'a;
+
+    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error> {
+        self.reader.raw_traverse(table)
+    }
+
     fn raw_get<'a>(
         &'a self,
         table: &str,
@@ -57,7 +66,7 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
         self.reader.raw_get_dual(table, key1, key2)
     }
 
-    fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
+    fn get<T: SingleKey>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
         self.reader.get::<T>(key)
     }
 
@@ -69,10 +78,10 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
         self.reader.get_dual::<T>(key1, key2)
     }
 
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<KeyValue<'a, T>>, Self::Error>
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<GetManyItem<'a, T>>, Self::Error>
     where
         T::Key: 'a,
-        T: Table,
+        T: SingleKey,
         I: IntoIterator<Item = &'a T::Key>,
     {
         self.reader.get_many::<T, I>(keys)
@@ -109,6 +118,15 @@ impl<U: HotKvWrite> fmt::Debug for RevmWrite<U> {
 impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
     type Error = U::Error;
 
+    type Traverse<'a>
+        = U::Traverse<'a>
+    where
+        U: 'a;
+
+    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error> {
+        self.writer.raw_traverse(table)
+    }
+
     fn raw_get<'a>(
         &'a self,
         table: &str,
@@ -126,7 +144,7 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
         self.writer.raw_get_dual(table, key1, key2)
     }
 
-    fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
+    fn get<T: SingleKey>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
         self.writer.get::<T>(key)
     }
 
@@ -138,10 +156,10 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
         self.writer.get_dual::<T>(key1, key2)
     }
 
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<KeyValue<'a, T>>, Self::Error>
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<GetManyItem<'a, T>>, Self::Error>
     where
         T::Key: 'a,
-        T: Table,
+        T: SingleKey,
         I: IntoIterator<Item = &'a T::Key>,
     {
         self.writer.get_many::<T, I>(keys)
@@ -149,6 +167,18 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
 }
 
 impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
+    type TraverseMut<'a>
+        = U::TraverseMut<'a>
+    where
+        U: 'a;
+
+    fn raw_traverse_mut<'a>(
+        &'a mut self,
+        table: &str,
+    ) -> Result<Self::TraverseMut<'a>, Self::Error> {
+        self.writer.raw_traverse_mut(table)
+    }
+
     fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
         self.writer.queue_raw_put(table, key, value)
     }
@@ -184,7 +214,11 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.raw_commit()
     }
 
-    fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
+    fn queue_put<T: SingleKey>(
+        &mut self,
+        key: &T::Key,
+        value: &T::Value,
+    ) -> Result<(), Self::Error> {
         self.writer.queue_put::<T>(key, value)
     }
 
@@ -197,13 +231,13 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_put_dual::<T>(key1, key2, value)
     }
 
-    fn queue_delete<T: Table>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
+    fn queue_delete<T: SingleKey>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
         self.writer.queue_delete::<T>(key)
     }
 
     fn queue_put_many<'a, 'b, T, I>(&mut self, entries: I) -> Result<(), Self::Error>
     where
-        T: Table,
+        T: SingleKey,
         T::Key: 'a,
         T::Value: 'b,
         I: IntoIterator<Item = (&'a T::Key, &'b T::Value)>,
@@ -408,7 +442,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        hot::{HotKv, HotKvRead, HotKvWrite, MemKv},
+        hot::{
+            mem::MemKv,
+            model::{HotKv, HotKvRead, HotKvWrite},
+        },
         tables::hot::{Bytecodes, PlainAccountState},
     };
     use alloy::primitives::{Address, B256, U256};

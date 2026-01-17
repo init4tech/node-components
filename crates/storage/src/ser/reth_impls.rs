@@ -13,9 +13,7 @@ use reth::{
 };
 use reth_db_api::{
     BlockNumberList,
-    models::{
-        AccountBeforeTx, ShardedKey, StoredBlockBodyIndices, storage_sharded_key::StorageShardedKey,
-    },
+    models::{AccountBeforeTx, ShardedKey, StoredBlockBodyIndices},
 };
 
 // Specialized impls for the sharded key types. This was implemented
@@ -60,36 +58,6 @@ macro_rules! sharded_key {
 
 sharded_key!(B256);
 sharded_key!(Address);
-
-impl KeySer for StorageShardedKey {
-    const SIZE: usize = Address::SIZE + B256::SIZE + u64::SIZE;
-
-    fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
-        buf[0..Address::SIZE].copy_from_slice(self.address.as_slice());
-        buf[Address::SIZE..Address::SIZE + B256::SIZE]
-            .copy_from_slice(self.sharded_key.key.as_slice());
-        buf[Address::SIZE + B256::SIZE..Self::SIZE]
-            .copy_from_slice(&self.sharded_key.highest_block_number.to_be_bytes());
-
-        &buf[0..Self::SIZE]
-    }
-
-    fn decode_key(mut data: &[u8]) -> Result<Self, DeserError> {
-        if data.len() < Self::SIZE {
-            return Err(DeserError::InsufficientData { needed: Self::SIZE, available: data.len() });
-        }
-
-        let address = Address::from_slice(&data[0..Address::SIZE]);
-        data = &data[Address::SIZE..];
-
-        let storage_key = B256::from_slice(&data[0..B256::SIZE]);
-        data = &data[B256::SIZE..];
-
-        let highest_block_number = u64::from_be_bytes(data[0..8].try_into().unwrap());
-
-        Ok(Self { address, sharded_key: ShardedKey { key: storage_key, highest_block_number } })
-    }
-}
 
 macro_rules! by_props {
     (@size $($prop:ident),* $(,)?) => {
@@ -1932,39 +1900,6 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sharded_key_roundtrips() {
-        // Test basic cases
-        let key1 = StorageShardedKey {
-            address: Address::ZERO,
-            sharded_key: ShardedKey { key: B256::ZERO, highest_block_number: 0 },
-        };
-        test_key_roundtrip(&key1);
-
-        // Test with maximum values
-        let key2 = StorageShardedKey {
-            address: Address::repeat_byte(0xFF),
-            sharded_key: ShardedKey {
-                key: B256::repeat_byte(0xFF),
-                highest_block_number: u64::MAX,
-            },
-        };
-        test_key_roundtrip(&key2);
-
-        // Test with realistic values
-        let key3 = StorageShardedKey {
-            address: Address::from([
-                0xd8, 0xda, 0x6b, 0xf2, 0x69, 0x64, 0xaf, 0x9d, 0x7e, 0xed, 0x9e, 0x03, 0xe5, 0x34,
-                0x15, 0xd3, 0x7a, 0xa9, 0x60, 0x45,
-            ]), // Example address
-            sharded_key: ShardedKey {
-                key: keccak256(b"storage_slot"),
-                highest_block_number: 1000000,
-            },
-        };
-        test_key_roundtrip(&key3);
-    }
-
-    #[test]
     fn test_sharded_key_b256_ordering() {
         let keys = vec![
             ShardedKey { key: B256::ZERO, highest_block_number: 0 },
@@ -1993,36 +1928,6 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_sharded_key_ordering() {
-        let keys = vec![
-            StorageShardedKey {
-                address: Address::ZERO,
-                sharded_key: ShardedKey { key: B256::ZERO, highest_block_number: 0 },
-            },
-            StorageShardedKey {
-                address: Address::ZERO,
-                sharded_key: ShardedKey { key: B256::ZERO, highest_block_number: 1 },
-            },
-            StorageShardedKey {
-                address: Address::ZERO,
-                sharded_key: ShardedKey { key: B256::from([0x01; 32]), highest_block_number: 0 },
-            },
-            StorageShardedKey {
-                address: Address::from([0x01; 20]),
-                sharded_key: ShardedKey { key: B256::ZERO, highest_block_number: 0 },
-            },
-            StorageShardedKey {
-                address: Address::repeat_byte(0xFF),
-                sharded_key: ShardedKey {
-                    key: B256::repeat_byte(0xFF),
-                    highest_block_number: u64::MAX,
-                },
-            },
-        ];
-        test_key_ordering(&keys);
-    }
-
-    #[test]
     fn test_key_decode_insufficient_data() {
         // Test ShardedKey<B256> with insufficient data
         let short_data = [0u8; 10]; // Much smaller than required
@@ -2039,15 +1944,6 @@ mod tests {
         match ShardedKey::<Address>::decode_key(&short_data) {
             Err(DeserError::InsufficientData { needed, available }) => {
                 assert_eq!(needed, ShardedKey::<Address>::SIZE);
-                assert_eq!(available, 10);
-            }
-            other => panic!("Expected InsufficientData error, got: {:?}", other),
-        }
-
-        // Test StorageShardedKey with insufficient data
-        match StorageShardedKey::decode_key(&short_data) {
-            Err(DeserError::InsufficientData { needed, available }) => {
-                assert_eq!(needed, StorageShardedKey::SIZE);
                 assert_eq!(available, 10);
             }
             other => panic!("Expected InsufficientData error, got: {:?}", other),
@@ -2070,37 +1966,5 @@ mod tests {
 
         // Test that ordering is preserved across boundaries
         test_key_ordering(&boundary_keys);
-    }
-
-    #[test]
-    fn test_storage_sharded_key_component_ordering() {
-        // Test that address takes precedence in ordering
-        let addr1 = Address::from([0x01; 20]);
-        let addr2 = Address::from([0x02; 20]);
-
-        let key1 = StorageShardedKey {
-            address: addr1,
-            sharded_key: ShardedKey {
-                key: B256::repeat_byte(0xFF),
-                highest_block_number: u64::MAX,
-            },
-        };
-
-        let key2 = StorageShardedKey {
-            address: addr2,
-            sharded_key: ShardedKey { key: B256::ZERO, highest_block_number: 0 },
-        };
-
-        // key1 should be less than key2 because addr1 < addr2
-        assert!(key1 < key2);
-
-        // This should be reflected in the encoding
-        let mut buf1 = [0u8; MAX_KEY_SIZE];
-        let mut buf2 = [0u8; MAX_KEY_SIZE];
-
-        let encoded1 = key1.encode_key(&mut buf1);
-        let encoded2 = key2.encode_key(&mut buf2);
-
-        assert!(encoded1 < encoded2, "Encoding should preserve ordering");
     }
 }

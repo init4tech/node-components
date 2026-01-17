@@ -1,5 +1,5 @@
 use crate::{
-    hot::{HotKvRead, HotKvWrite},
+    hot::model::{HotKvRead, HotKvWrite},
     tables::hot::{self as tables},
 };
 use alloy::primitives::{Address, B256, U256};
@@ -55,7 +55,10 @@ pub trait HotDbRead: HotKvRead + sealed::Sealed {
 
 impl<T> HotDbRead for T where T: HotKvRead {}
 
-/// Trait for database write operations.
+/// Trait for database write operations. This trait is low-level, and usage may
+/// leave the database in an inconsistent state if not used carefully. Users
+/// should prefer [`HotHistoryWrite`] or higher-level abstractions when
+/// possible.
 pub trait HotDbWrite: HotKvWrite + sealed::Sealed {
     /// Write a block header. This will leave the DB in an inconsistent state
     /// until the corresponding header number is also written. Users should
@@ -182,21 +185,16 @@ pub trait HotHistoryWrite: HotDbWrite {
         self.queue_put_dual::<tables::AccountsHistory>(address, &latest_height, touched)
     }
 
-    /// Write a storage change (before state) for an account at a specific
+    /// Write an account change (pre-state) for an account at a specific
     /// block.
-    fn write_storage_change(
+    fn write_account_change(
         &mut self,
         block_number: u64,
         address: Address,
-        slot: &B256,
-        value: &U256,
+        pre_state: &Account,
     ) -> Result<(), Self::Error> {
-        let block_number_address = BlockNumberAddress((block_number, address));
-        self.queue_put_dual::<tables::StorageChangeSets>(&block_number_address, slot, value)
+        self.queue_put_dual::<tables::AccountChangeSets>(&block_number, &address, pre_state)
     }
-
-    /// Write an account change (pre-state) for an account at a specific
-    /// block.
 
     /// Write storage history, by highest block number and touched block
     /// numbers.
@@ -213,20 +211,22 @@ pub trait HotHistoryWrite: HotDbWrite {
 
     /// Write a storage change (before state) for an account at a specific
     /// block.
-    fn write_account_change(
+    fn write_storage_change(
         &mut self,
         block_number: u64,
         address: Address,
-        pre_state: &Account,
+        slot: &B256,
+        value: &U256,
     ) -> Result<(), Self::Error> {
-        self.queue_put_dual::<tables::AccountChangeSets>(&block_number, &address, pre_state)
+        let block_number_address = BlockNumberAddress((block_number, address));
+        self.queue_put_dual::<tables::StorageChangeSets>(&block_number_address, slot, value)
     }
 }
 
 impl<T> HotHistoryWrite for T where T: HotDbWrite + HotKvWrite {}
 
 mod sealed {
-    use crate::hot::HotKvRead;
+    use crate::hot::model::HotKvRead;
 
     /// Sealed trait to prevent external implementations of HotDbReader and HotDbWriter.
     #[allow(dead_code, unreachable_pub)]

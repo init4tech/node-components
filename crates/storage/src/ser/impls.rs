@@ -301,7 +301,7 @@ impl KeySer for BlockNumberAddress {
     const SIZE: usize = u64::SIZE + Address::SIZE;
 
     fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
-        buf.copy_from_slice(&self.0.0.to_be_bytes());
+        buf[0..8].copy_from_slice(&self.0.0.to_be_bytes());
         buf[8..28].copy_from_slice(self.0.1.as_ref());
         &buf[..Self::SIZE]
     }

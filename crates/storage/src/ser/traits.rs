@@ -14,7 +14,7 @@ pub const MAX_KEY_SIZE: usize = 64;
 ///
 /// In practice, keys are often hashes, addresses, numbers, or composites
 /// of these.
-pub trait KeySer: Ord + Sized {
+pub trait KeySer: PartialOrd + Ord + Sized + Clone + core::fmt::Debug {
     /// The fixed size of the serialized key in bytes.
     /// Must satisfy `SIZE <= MAX_KEY_SIZE`.
     const SIZE: usize;

@@ -1,16 +1,13 @@
-use std::borrow::Cow;
-
 use crate::{
-    hot::{
-        HotKvError, HotKvReadError,
+    hot::model::{
+        DualTableCursor, GetManyItem, HotKvError, HotKvReadError, KvTraverse, KvTraverseMut,
+        TableCursor,
         revm::{RevmRead, RevmWrite},
     },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
-    tables::{DualKeyed, Table},
+    tables::{DualKeyed, SingleKey, Table},
 };
-
-/// A key-value pair from a table.
-pub type KeyValue<'a, T> = (&'a <T as Table>::Key, Option<<T as Table>::Value>);
+use std::borrow::Cow;
 
 /// Trait for hot storage. This is a KV store with read/write transactions.
 #[auto_impl::auto_impl(&, Arc, Box)]
@@ -67,6 +64,14 @@ pub trait HotKvRead {
     /// Error type for read operations.
     type Error: HotKvReadError;
 
+    /// The cursor type for traversing key-value pairs.
+    type Traverse<'a>: KvTraverse<Self::Error>
+    where
+        Self: 'a;
+
+    /// Get a raw cursor to traverse the database.
+    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error>;
+
     /// Get a raw value from a specific table.
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
@@ -92,8 +97,25 @@ pub trait HotKvRead {
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
 
+    /// Traverse a specific table. Returns a typed cursor wrapper.
+    fn traverse<'a, T: SingleKey>(
+        &'a self,
+    ) -> Result<TableCursor<Self::Traverse<'a>, T, Self::Error>, Self::Error> {
+        let cursor = self.raw_traverse(T::NAME)?;
+        Ok(TableCursor::new(cursor))
+    }
+
+    /// Traverse a specific dual-keyed table. Returns a typed dual-keyed
+    /// cursor wrapper.
+    fn traverse_dual<'a, T: DualKeyed>(
+        &'a self,
+    ) -> Result<DualTableCursor<Self::Traverse<'a>, T, Self::Error>, Self::Error> {
+        let cursor = self.raw_traverse(T::NAME)?;
+        Ok(DualTableCursor::new(cursor))
+    }
+
     /// Get a value from a specific table.
-    fn get<T: Table>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
+    fn get<T: SingleKey>(&self, key: &T::Key) -> Result<Option<T::Value>, Self::Error> {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
         let key_bytes = key.encode_key(&mut key_buf);
         debug_assert!(
@@ -152,10 +174,10 @@ pub trait HotKvRead {
     ///
     /// If any error occurs during retrieval or deserialization, the entire
     /// operation will return an error.
-    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<KeyValue<'a, T>>, Self::Error>
+    fn get_many<'a, T, I>(&self, keys: I) -> Result<Vec<GetManyItem<'a, T>>, Self::Error>
     where
         T::Key: 'a,
-        T: Table,
+        T: SingleKey,
         I: IntoIterator<Item = &'a T::Key>,
     {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
@@ -173,6 +195,17 @@ pub trait HotKvRead {
 
 /// Trait for hot storage write transactions.
 pub trait HotKvWrite: HotKvRead {
+    /// The mutable cursor type for traversing key-value pairs.
+    type TraverseMut<'a>: KvTraverseMut<Self::Error>
+    where
+        Self: 'a;
+
+    /// Get a raw mutable cursor to traverse the database.
+    fn raw_traverse_mut<'a>(
+        &'a mut self,
+        table: &str,
+    ) -> Result<Self::TraverseMut<'a>, Self::Error>;
+
     /// Queue a raw put operation.
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
@@ -215,8 +248,31 @@ pub trait HotKvWrite: HotKvRead {
         fixed_val: bool,
     ) -> Result<(), Self::Error>;
 
+    /// Traverse a specific table. Returns a mutable typed cursor wrapper.
+    /// If invoked for a dual-keyed table, it will traverse the primary keys
+    /// only, and the return value may be implementation-defined.
+    fn traverse_mut<'a, T: SingleKey>(
+        &'a mut self,
+    ) -> Result<TableCursor<Self::TraverseMut<'a>, T, Self::Error>, Self::Error> {
+        let cursor = self.raw_traverse_mut(T::NAME)?;
+        Ok(TableCursor::new(cursor))
+    }
+
+    /// Traverse a specific dual-keyed table. Returns a mutable typed
+    /// dual-keyed cursor wrapper.
+    fn traverse_dual_mut<'a, T: DualKeyed>(
+        &'a mut self,
+    ) -> Result<DualTableCursor<Self::TraverseMut<'a>, T, Self::Error>, Self::Error> {
+        let cursor = self.raw_traverse_mut(T::NAME)?;
+        Ok(DualTableCursor::new(cursor))
+    }
+
     /// Queue a put operation for a specific table.
-    fn queue_put<T: Table>(&mut self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
+    fn queue_put<T: SingleKey>(
+        &mut self,
+        key: &T::Key,
+        value: &T::Value,
+    ) -> Result<(), Self::Error> {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
         let key_bytes = key.encode_key(&mut key_buf);
         let value_bytes = value.encoded();
@@ -241,7 +297,7 @@ pub trait HotKvWrite: HotKvRead {
     }
 
     /// Queue a delete operation for a specific table.
-    fn queue_delete<T: Table>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
+    fn queue_delete<T: SingleKey>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
         let mut key_buf = [0u8; MAX_KEY_SIZE];
         let key_bytes = key.encode_key(&mut key_buf);
 
@@ -251,7 +307,7 @@ pub trait HotKvWrite: HotKvRead {
     /// Queue many put operations for a specific table.
     fn queue_put_many<'a, 'b, T, I>(&mut self, entries: I) -> Result<(), Self::Error>
     where
-        T: Table,
+        T: SingleKey,
         T::Key: 'a,
         T::Value: 'b,
         I: IntoIterator<Item = (&'a T::Key, &'b T::Value)>,
