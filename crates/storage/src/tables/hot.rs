@@ -35,7 +35,7 @@ table! {
 
 table! {
     /// Records account states before transactions, keyed by (block_number, address).
-    AccountChangeSets<BlockNumber => Address => Account> is 96
+    AccountChangeSets<BlockNumber => Address => Account> is 8 + 32 + 32
 }
 
 table! {

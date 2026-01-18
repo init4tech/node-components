@@ -13,7 +13,7 @@ use reth_db::{
     mdbx::{RW, TransactionKind, WriteFlags, tx::Tx},
 };
 use reth_db_api::DatabaseError;
-use reth_libmdbx::{Cursor, RO};
+use reth_libmdbx::{Cursor, DatabaseFlags, RO};
 use std::borrow::Cow;
 
 /// Error type for reth-libmdbx based hot storage.
@@ -179,12 +179,12 @@ impl HotKvWrite for Tx<RW> {
         dual_key: bool,
         fixed_val: bool,
     ) -> Result<(), Self::Error> {
-        let mut flags = Default::default();
+        let mut flags = DatabaseFlags::default();
 
         if dual_key {
-            flags |= reth_libmdbx::DatabaseFlags::DUP_SORT;
+            flags.set(reth_libmdbx::DatabaseFlags::DUP_SORT, true);
             if fixed_val {
-                flags |= reth_libmdbx::DatabaseFlags::DUP_FIXED;
+                flags.set(reth_libmdbx::DatabaseFlags::DUP_FIXED, true);
             }
         }
 

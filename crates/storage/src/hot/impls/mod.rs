@@ -15,7 +15,10 @@ mod test {
     };
     use alloy::primitives::{B256, Bytes, U256, address, b256};
     use reth::primitives::{Account, Bytecode, Header, SealedHeader};
-    use reth_db::BlockNumberList;
+    use reth_db::{
+        BlockNumberList, ClientVersion, mdbx::DatabaseArguments, test_utils::tempdir_path,
+    };
+    use reth_libmdbx::MaxReadTransactionDuration;
 
     #[test]
     fn mem_conformance() {
@@ -25,10 +28,16 @@ mod test {
 
     #[test]
     fn mdbx_conformance() {
-        let db = reth_db::test_utils::create_test_rw_db();
+        let path = tempdir_path();
+        let db = reth_db::create_db(
+            &path,
+            DatabaseArguments::new(ClientVersion::default())
+                .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded)),
+        )
+        .unwrap();
 
         // Create tables from the `crate::tables::hot` module
-        let mut writer = db.db().writer().unwrap();
+        let mut writer = db.writer().unwrap();
 
         writer.queue_create::<hot::Headers>().unwrap();
         writer.queue_create::<hot::HeaderNumbers>().unwrap();
@@ -42,7 +51,7 @@ mod test {
 
         writer.commit().expect("Failed to commit table creation");
 
-        conformance(db.db());
+        conformance(&db);
     }
 
     fn conformance<T: HotKv>(hot_kv: &T) {
@@ -235,7 +244,9 @@ mod test {
         // Read account change
         {
             let reader = hot_kv.reader().unwrap();
+
             let read_change = reader.get_account_change(block_number, &addr).unwrap();
+
             assert!(read_change.is_some());
             let change = read_change.unwrap();
             assert_eq!(change.nonce, 10);
