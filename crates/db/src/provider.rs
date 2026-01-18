@@ -481,7 +481,7 @@ where
         // Update pipeline stages
         self.update_pipeline_stages(target, true)?;
 
-        let chain = Chain::new(blocks, execution_state, None);
+        let chain = Chain::new(blocks, execution_state, Default::default(), Default::default());
 
         debug!("Succesfully reverted blocks and updated pipeline stages");
 

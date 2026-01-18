@@ -1,9 +1,14 @@
 use alloy::genesis::Genesis;
 use reth::{
     chainspec::ChainSpec,
-    providers::{ProviderFactory, providers::StaticFileProvider},
+    providers::{
+        ProviderFactory,
+        providers::{RocksDBProvider, StaticFileProvider},
+    },
 };
-use reth_db::test_utils::{create_test_rw_db, create_test_static_files_dir};
+use reth_db::test_utils::{
+    create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
+};
 use reth_exex_test_utils::TmpDB as TmpDb;
 use signet_node_types::SignetNodeTypes;
 use std::sync::{Arc, OnceLock};
@@ -23,11 +28,12 @@ pub fn chain_spec() -> Arc<ChainSpec> {
 
 /// Create a provider factory with a chain spec
 pub fn create_test_provider_factory() -> ProviderFactory<SignetNodeTypes<TmpDb>> {
-    let (static_dir, _) = create_test_static_files_dir();
     let db = create_test_rw_db();
-    ProviderFactory::new(
-        db,
-        chain_spec(),
-        StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
-    )
+    let (static_dir, _) = create_test_static_files_dir();
+    let (rocksdb_dir, _) = create_test_rocksdb_dir();
+
+    let sfp = StaticFileProvider::read_write(static_dir.keep()).expect("static file provider");
+    let rocks_db = RocksDBProvider::builder(rocksdb_dir.keep()).build().unwrap();
+
+    ProviderFactory::new(db, chain_spec(), sfp, rocks_db).expect("provider factory")
 }

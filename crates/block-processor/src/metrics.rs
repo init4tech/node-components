@@ -17,7 +17,7 @@
 use alloy::consensus::BlockHeader;
 use metrics::{Counter, Histogram, counter, describe_counter, describe_histogram, histogram};
 use signet_evm::BlockResult;
-use signet_extract::{Extractable, Extracts, HasTxns};
+use signet_extract::{Extractable, Extracts};
 use signet_types::{MagicSig, MagicSigInfo};
 use std::sync::LazyLock;
 
