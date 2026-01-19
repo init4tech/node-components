@@ -8,9 +8,14 @@ use alloy::{
 use reth::{
     chainspec::ChainSpec,
     primitives::{Block, BlockBody, Header, RecoveredBlock, Transaction, TransactionSigned},
-    providers::{ProviderFactory, providers::StaticFileProvider},
+    providers::{
+        ProviderFactory,
+        providers::{RocksDBProvider, StaticFileProvider},
+    },
 };
-use reth_db::test_utils::{create_test_rw_db, create_test_static_files_dir};
+use reth_db::test_utils::{
+    create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
+};
 use reth_exex_test_utils::TmpDB;
 use signet_node_types::SignetNodeTypes;
 use signet_zenith::Zenith;
@@ -128,10 +133,12 @@ pub fn create_test_provider_factory_with_chain_spec(
     chain_spec: std::sync::Arc<ChainSpec>,
 ) -> ProviderFactory<SignetNodeTypes<TmpDB>> {
     let (static_dir, _) = create_test_static_files_dir();
+    let (rocks, _) = create_test_rocksdb_dir();
+
     let db = create_test_rw_db();
-    ProviderFactory::new(
-        db,
-        chain_spec,
-        StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
-    )
+    let sfp = StaticFileProvider::read_write(static_dir.keep()).expect("static file provider");
+
+    let rocks = RocksDBProvider::builder(rocks.keep()).build().expect("rocksdb provider");
+
+    ProviderFactory::new(db, chain_spec, sfp, rocks).unwrap()
 }

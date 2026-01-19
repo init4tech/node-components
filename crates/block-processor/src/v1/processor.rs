@@ -212,8 +212,12 @@ where
 
         let ru_info = provider.get_extraction_results(start..=current)?;
 
-        let inner =
-            Chain::<Host>::new(provider.recovered_block_range(start..=current)?, net_outcome, None);
+        let inner = Chain::<Host>::new(
+            provider.recovered_block_range(start..=current)?,
+            net_outcome,
+            Default::default(),
+            Default::default(),
+        );
 
         Ok(Some(RuChain { inner, ru_info }))
     }

@@ -67,7 +67,12 @@ impl ToRethPrimitive for signet_test_utils::chain::Chain {
     type RethPrimitive = reth::providers::Chain;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        reth::providers::Chain::new(self.blocks.to_reth(), self.execution_outcome.to_reth(), None)
+        reth::providers::Chain::new(
+            self.blocks.to_reth(),
+            self.execution_outcome.to_reth(),
+            Default::default(),
+            Default::default(),
+        )
     }
 }
 

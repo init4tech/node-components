@@ -1,6 +1,7 @@
 use alloy::genesis::Genesis;
+use eyre::Context;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
-use reth::providers::providers::StaticFileProvider;
+use reth::providers::providers::{RocksDBProvider, StaticFileProvider};
 use reth_chainspec::ChainSpec;
 use reth_node_api::NodePrimitives;
 use signet_blobber::BlobFetcherConfig;
@@ -149,6 +150,21 @@ impl SignetNodeConfig {
     /// Get the database path.
     pub fn database_path(&self) -> PathBuf {
         self.database_path.as_ref().to_owned().into()
+    }
+
+    /// Get the RocksDB path as a String.
+    pub fn rocksdb_path_string(&self) -> String {
+        format!("{}-rocksdb", &self.database_path)
+    }
+
+    /// Get the RocksDB path.
+    pub fn rocksdb_path(&self) -> PathBuf {
+        self.rocksdb_path_string().into()
+    }
+
+    /// Open the RocksDB database.
+    pub fn open_rocks_db(&self) -> eyre::Result<RocksDBProvider> {
+        RocksDBProvider::builder(self.rocksdb_path()).build().wrap_err("Failed to open RocksDB")
     }
 
     /// Get the URL to which to forward raw transactions.

@@ -70,7 +70,8 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
             db,
             self.config.chain_spec().clone(),
             self.config.static_file_rw()?,
-        );
+            self.config.open_rocks_db()?,
+        )?;
 
         Ok(SignetNodeBuilder {
             config: self.config,
@@ -91,7 +92,8 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
             self.config.database_path(),
             self.config.chain_spec().clone(),
             reth_db::mdbx::DatabaseArguments::default(),
-            self.config.static_file_rw().unwrap(),
+            self.config.static_file_rw()?,
+            self.config.open_rocks_db()?,
         )?;
         Ok(SignetNodeBuilder {
             config: self.config,

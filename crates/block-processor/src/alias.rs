@@ -3,7 +3,7 @@ use alloy::{
     primitives::{Address, map::HashSet},
 };
 use eyre::OptionExt;
-use reth::providers::{StateProvider, StateProviderFactory};
+use reth::providers::{StateProviderBox, StateProviderFactory};
 use std::sync::{Arc, Mutex};
 
 /// Simple trait to allow checking if an address should be aliased.
@@ -17,7 +17,7 @@ pub trait AliasOracle {
 /// associated with it, and if so, whether that bytecode matches the pattern
 /// for a 7702 delegation contract. If it is a delegation contract, it is not
 /// aliased; otherwise, it is aliased.
-impl AliasOracle for Box<dyn StateProvider> {
+impl AliasOracle for StateProviderBox {
     fn should_alias(&self, address: Address) -> eyre::Result<bool> {
         // No account at this address.
         let Some(acct) = self.basic_account(&address)? else { return Ok(false) };
@@ -66,7 +66,7 @@ pub trait AliasOracleFactory: Send + Sync + 'static {
 }
 
 impl AliasOracleFactory for Box<dyn StateProviderFactory> {
-    type Oracle = Box<dyn StateProvider>;
+    type Oracle = StateProviderBox;
 
     fn create(&self) -> eyre::Result<Self::Oracle> {
         // NB: This becomes a problem if anyone ever birthday attacks a

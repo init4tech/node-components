@@ -757,7 +757,7 @@ where
         let to =
             to_block.map(|num| self.provider().convert_block_number(*num)).transpose()?.flatten();
         let (from_block_number, to_block_number) =
-            logs_utils::get_filter_block_range(from, to, start_block, info);
+            logs_utils::get_filter_block_range(from, to, start_block, info)?;
         self.get_logs_in_block_range(filter, from_block_number, to_block_number).await
     }
 
@@ -823,6 +823,7 @@ where
                     .transpose()?
                     .flatten();
                 logs_utils::get_filter_block_range(from, to, start_block, info)
+                    .map_err(EthFilterError::from)?
             }
             FilterBlockOption::AtBlockHash(_) => {
                 // blockHash is equivalent to fromBlock = toBlock = the block number with

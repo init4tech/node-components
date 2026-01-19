@@ -109,7 +109,7 @@ impl<N: Pnt + ProviderNodeTypes<DB = Arc<mdbx::DatabaseEnv>>> TableViewer<()>
                 tx.inner.open_db(Some(self.args.table_name())).wrap_err("Could not open db.")?;
             let stats = tx
                 .inner
-                .db_stat(&table_db)
+                .db_stat(table_db.dbi())
                 .wrap_err(format!("Could not find table: {}", stringify!($table)))?;
             let total_entries = stats.entries();
             let final_entry_idx = total_entries.saturating_sub(1);

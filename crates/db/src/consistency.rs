@@ -143,6 +143,20 @@ where
                         tables::Receipts<<EthPrimitives as NodePrimitives>::Receipt>,
                     >(self, segment, highest_tx, highest_block)?
                 }
+                StaticFileSegment::TransactionSenders => {
+                    ensure_invariants::<_, tables::TransactionSenders>(
+                        self,
+                        segment,
+                        highest_tx,
+                        highest_block,
+                    )?
+                }
+                StaticFileSegment::AccountChangeSets => ensure_invariants::<
+                    _,
+                    tables::AccountChangeSets,
+                >(
+                    self, segment, highest_tx, highest_block
+                )?,
             } {
                 update_last_good_height(unwind);
             }
@@ -213,7 +227,10 @@ where
         .get_stage_checkpoint(match segment {
             StaticFileSegment::Headers => StageId::Headers,
             StaticFileSegment::Transactions => StageId::Bodies,
-            StaticFileSegment::Receipts => StageId::Execution,
+            StaticFileSegment::Receipts | StaticFileSegment::AccountChangeSets => {
+                StageId::Execution
+            }
+            StaticFileSegment::TransactionSenders => StageId::SenderRecovery,
         })?
         .unwrap_or_default()
         .block_number;

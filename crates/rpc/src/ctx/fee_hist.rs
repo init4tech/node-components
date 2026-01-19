@@ -30,13 +30,13 @@ fn strip_block(block: RecoveredBlock<Block>) -> RecoveredBlock<Block> {
 /// instance.
 fn strip_chain(chain: &Chain) -> Arc<Chain> {
     // Takes the contents out, replacing with default
-    let (blocks, outcome, trie) = chain.clone().into_inner();
+    let (blocks, outcome, trie, hashed) = chain.clone().into_inner();
 
     // Strip each block
     let blocks: Vec<RecoveredBlock<Block>> = blocks.into_blocks().map(strip_block).collect();
 
     // Replace the original chain with the stripped version
-    Arc::new(Chain::new(blocks, outcome, trie))
+    Arc::new(Chain::new(blocks, outcome, trie, hashed))
 }
 
 /// Strips Signet system transactions from the `CanonStateNotification`.
@@ -110,7 +110,7 @@ mod test {
 
     fn test_chain(count: u64) -> Arc<Chain> {
         let blocks = (0..count).map(test_block);
-        Arc::new(Chain::new(blocks, Default::default(), None))
+        Arc::new(Chain::new(blocks, Default::default(), Default::default(), Default::default()))
     }
 
     #[test]
