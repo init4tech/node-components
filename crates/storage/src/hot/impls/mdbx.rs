@@ -1,7 +1,7 @@
 use crate::hot::{
     DeserError, KeySer, MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
     model::{
-        DualKeyValue, DualKeyTraverse, DualTableTraverse, HotKv, HotKvError, HotKvRead,
+        DualKeyTraverse, DualKeyValue, DualTableTraverse, HotKv, HotKvError, HotKvRead,
         HotKvReadError, HotKvWrite, KvTraverse, KvTraverseMut, RawDualKeyValue, RawKeyValue,
         RawValue,
     },
@@ -31,6 +31,8 @@ pub enum MdbxError {
     #[error(transparent)]
     Deser(#[from] DeserError),
 }
+
+impl trevm::revm::database::DBErrorMarker for MdbxError {}
 
 impl HotKvReadError for MdbxError {
     fn into_hot_kv_error(self) -> HotKvError {

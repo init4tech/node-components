@@ -24,11 +24,9 @@ trevm.workspace = true
 
 reth-libmdbx = { workspace = true, optional = true }
 
-
 [dev-dependencies]
 serial_test = "3.3.1"
 tempfile.workspace = true
-
 
 [features]
 default = ["mdbx", "in-mem"]
