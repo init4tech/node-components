@@ -1,9 +1,6 @@
-use crate::{
-    hot::model::{GetManyItem, HotKvError, HotKvRead, HotKvWrite},
-    tables::{
-        DualKeyed, SingleKey, Table,
-        hot::{self, Bytecodes, PlainAccountState},
-    },
+use crate::hot::{
+    model::{GetManyItem, HotKvError, HotKvRead, HotKvWrite},
+    tables::{self, Bytecodes, DualKey, PlainAccountState, SingleKey, Table},
 };
 use alloy::primitives::{Address, B256, KECCAK256_EMPTY};
 use core::fmt;
@@ -70,7 +67,7 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
         self.reader.get::<T>(key)
     }
 
-    fn get_dual<T: DualKeyed>(
+    fn get_dual<T: DualKey>(
         &self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -148,7 +145,7 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
         self.writer.get::<T>(key)
     }
 
-    fn get_dual<T: DualKeyed>(
+    fn get_dual<T: DualKey>(
         &self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -222,7 +219,7 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_put::<T>(key, value)
     }
 
-    fn queue_put_dual<T: DualKeyed>(
+    fn queue_put_dual<T: DualKey>(
         &mut self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -295,7 +292,7 @@ where
     ) -> Result<StorageValue, Self::Error> {
         let key = B256::from_slice(&index.to_be_bytes::<32>());
 
-        Ok(self.reader.get_dual::<hot::PlainStorageState>(&address, &key)?.unwrap_or_default())
+        Ok(self.reader.get_dual::<tables::PlainStorageState>(&address, &key)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -367,7 +364,7 @@ where
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
         let key = B256::from_slice(&index.to_be_bytes::<32>());
-        Ok(self.writer.get_dual::<hot::PlainStorageState>(&address, &key)?.unwrap_or_default())
+        Ok(self.writer.get_dual::<tables::PlainStorageState>(&address, &key)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -426,7 +423,7 @@ where
             // Handle storage changes
             for (key, value) in account.storage {
                 let key = B256::from_slice(&key.to_be_bytes::<32>());
-                self.writer.queue_put_dual::<hot::PlainStorageState>(
+                self.writer.queue_put_dual::<tables::PlainStorageState>(
                     &address,
                     &key,
                     &value.present_value(),
@@ -441,12 +438,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hot::{
-            mem::MemKv,
-            model::{HotKv, HotKvRead, HotKvWrite},
-        },
-        tables::hot::{Bytecodes, PlainAccountState},
+    use crate::hot::{
+        impls::mem::MemKv,
+        model::{HotKv, HotKvRead, HotKvWrite},
+        tables::{Bytecodes, PlainAccountState},
     };
     use alloy::primitives::{Address, B256, U256};
     use reth::primitives::{Account, Bytecode};
@@ -649,7 +644,7 @@ mod tests {
 
             let key = B256::with_last_byte(100);
             let storage_val: Option<StorageValue> =
-                reader.get_dual::<hot::PlainStorageState>(&address, &key)?;
+                reader.get_dual::<tables::PlainStorageState>(&address, &key)?;
             assert_eq!(storage_val, Some(U256::from(200u64)));
         }
 

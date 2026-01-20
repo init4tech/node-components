@@ -1,13 +1,13 @@
-use crate::{
-    hot::model::{HotKvRead, HotKvWrite},
-    tables::hot::{self as tables},
+use crate::hot::{
+    model::{HotKvRead, HotKvWrite},
+    tables,
 };
 use alloy::primitives::{Address, B256, U256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader, StorageEntry};
 use reth_db::{BlockNumberList, models::BlockNumberAddress};
 use reth_db_api::models::ShardedKey;
 
-/// Trait for database read operations.
+/// Trait for database read operations on standard hot tables.
 pub trait HotDbRead: HotKvRead + sealed::Sealed {
     /// Read a block header by its number.
     fn get_header(&self, number: u64) -> Result<Option<Header>, Self::Error> {
@@ -55,10 +55,11 @@ pub trait HotDbRead: HotKvRead + sealed::Sealed {
 
 impl<T> HotDbRead for T where T: HotKvRead {}
 
-/// Trait for database write operations. This trait is low-level, and usage may
-/// leave the database in an inconsistent state if not used carefully. Users
-/// should prefer [`HotHistoryWrite`] or higher-level abstractions when
-/// possible.
+/// Trait for database write operations on standard hot tables.
+///
+/// This trait is low-level, and usage may leave the database in an
+/// inconsistent state if not used carefully. Users should prefer
+/// [`HotHistoryWrite`] or higher-level abstractions when possible.
 pub trait HotDbWrite: HotKvWrite + sealed::Sealed {
     /// Write a block header. This will leave the DB in an inconsistent state
     /// until the corresponding header number is also written. Users should
@@ -116,6 +117,10 @@ pub trait HotDbWrite: HotKvWrite + sealed::Sealed {
 impl<T> HotDbWrite for T where T: HotKvWrite {}
 
 /// Trait for history read operations.
+///
+/// These tables maintain historical information about accounts and storage
+/// changes, and their contents can be used to reconstruct past states or
+/// roll back changes.
 pub trait HotHistoryRead: HotDbRead {
     /// Get the list of block numbers where an account was touched.
     /// Get the list of block numbers where an account was touched.
@@ -172,6 +177,10 @@ pub trait HotHistoryRead: HotDbRead {
 impl<T> HotHistoryRead for T where T: HotDbRead {}
 
 /// Trait for history write operations.
+///
+/// These tables maintain historical information about accounts and storage
+/// changes, and their contents can be used to reconstruct past states or
+/// roll back changes.
 pub trait HotHistoryWrite: HotDbWrite {
     /// Maintain a list of block numbers where an account was touched.
     ///

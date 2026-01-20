@@ -15,10 +15,24 @@ bytes = "1.11.0"
 reth.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-db-api.workspace = true
-reth-libmdbx.workspace = true
+signet-db.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing.workspace = true
 trevm.workspace = true
+
+reth-libmdbx = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 serial_test = "3.3.1"
 tempfile.workspace = true
+
+
+[features]
+default = ["mdbx", "in-mem"]
+mdbx = ["dep:reth-libmdbx", "impls"]
+in-mem = ["impls"]
+test-utils = ["in-mem"]
+impls = []

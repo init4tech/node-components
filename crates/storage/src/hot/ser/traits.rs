@@ -1,8 +1,11 @@
-use crate::ser::error::DeserError;
+use crate::hot::ser::error::DeserError;
 use alloy::primitives::Bytes;
 
 /// Maximum allowed key size in bytes.
 pub const MAX_KEY_SIZE: usize = 64;
+
+/// The maximum size of a dual key (in bytes).
+pub const MAX_FIXED_VAL_SIZE: usize = 64;
 
 /// Trait for key serialization with fixed-size keys of size no greater than 32
 /// bytes.
@@ -21,12 +24,13 @@ pub trait KeySer: PartialOrd + Ord + Sized + Clone + core::fmt::Debug {
 
     /// Compile-time assertion to ensure SIZE is within limits.
     #[doc(hidden)]
-    const ASSERT: () = {
+    const ASSERT: sealed::Seal = {
         assert!(
             Self::SIZE <= MAX_KEY_SIZE,
             "KeySer implementations must have SIZE <= MAX_KEY_SIZE"
         );
         assert!(Self::SIZE > 0, "KeySer implementations must have SIZE > 0");
+        sealed::Seal
     };
 
     /// Encode the key, optionally using the provided buffer.
@@ -68,6 +72,9 @@ pub trait KeySer: PartialOrd + Ord + Sized + Clone + core::fmt::Debug {
 /// E.g. a correct implementation for an array serializes the length of the
 /// array first, so that the deserializer knows how many items to expect.
 pub trait ValSer {
+    /// The fixed size of the value, if applicable.
+    const FIXED_SIZE: Option<usize> = None;
+
     /// The encoded size of the value in bytes. This MUST be accurate, as it is
     /// used to allocate buffers for serialization. Inaccurate sizes may result
     /// in panics or incorrect behavior.
@@ -114,4 +121,15 @@ pub trait ValSer {
             .then_some(val)
             .ok_or(DeserError::InexactDeser { extra_bytes: data.len() })
     }
+}
+
+mod sealed {
+    /// Sealed struct to prevent overriding the `KeySer::ASSERT` constant.
+    #[allow(
+        dead_code,
+        unreachable_pub,
+        missing_copy_implementations,
+        missing_debug_implementations
+    )]
+    pub struct Seal;
 }

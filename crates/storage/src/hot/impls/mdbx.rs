@@ -1,11 +1,11 @@
-use crate::{
-    hot::model::{
-        DualKeyValue, DualKeyedTraverse, DualTableTraverse, HotKv, HotKvError, HotKvRead,
+use crate::hot::{
+    DeserError, KeySer, MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
+    model::{
+        DualKeyValue, DualKeyTraverse, DualTableTraverse, HotKv, HotKvError, HotKvRead,
         HotKvReadError, HotKvWrite, KvTraverse, KvTraverseMut, RawDualKeyValue, RawKeyValue,
         RawValue,
     },
-    ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer},
-    tables::{DualKeyed, MAX_FIXED_VAL_SIZE},
+    tables::DualKey,
 };
 use bytes::{BufMut, BytesMut};
 use reth_db::{
@@ -95,7 +95,7 @@ where
         unimplemented!("Not implemented: raw_get_dual. Use get_dual instead.");
     }
 
-    fn get_dual<T: crate::tables::DualKeyed>(
+    fn get_dual<T: DualKey>(
         &self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -137,7 +137,7 @@ impl HotKvWrite for Tx<RW> {
     }
 
     // Specialized put for dual-keyed tables.
-    fn queue_put_dual<T: crate::tables::DualKeyed>(
+    fn queue_put_dual<T: DualKey>(
         &mut self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -232,7 +232,7 @@ impl KvTraverseMut<MdbxError> for Cursor<RW> {
     }
 }
 
-impl<K> DualKeyedTraverse<MdbxError> for Cursor<K>
+impl<K> DualKeyTraverse<MdbxError> for Cursor<K>
 where
     K: TransactionKind,
 {
@@ -263,7 +263,7 @@ where
 
 impl<T, K> DualTableTraverse<T, MdbxError> for Cursor<K>
 where
-    T: DualKeyed,
+    T: DualKey,
     K: TransactionKind,
 {
     fn next_dual_above(
@@ -308,7 +308,7 @@ fn dup_fixed_helper<T, K, Out>(
     f: impl FnOnce(&mut Cursor<K>, &[u8], &[u8]) -> Result<Out, MdbxError>,
 ) -> Result<Out, MdbxError>
 where
-    T: DualKeyed,
+    T: DualKey,
     K: TransactionKind,
 {
     let mut key1_buf = [0u8; MAX_KEY_SIZE];
@@ -339,7 +339,7 @@ fn get_both_range_helper<'a, T, K>(
     key2: &T::Key2,
 ) -> Result<Option<RawValue<'a>>, MdbxError>
 where
-    T: DualKeyed,
+    T: DualKey,
     K: TransactionKind,
 {
     dup_fixed_helper::<T, K, Option<RawValue<'a>>>(
@@ -355,13 +355,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hot::model::{HotDbWrite, HotKv, HotKvRead, HotKvWrite, TableTraverse, TableTraverseMut},
-        tables::{SingleKey, Table, hot},
+    use crate::hot::{
+        conformance::conformance,
+        model::{HotDbWrite, HotKv, HotKvRead, HotKvWrite, TableTraverse, TableTraverseMut},
+        tables::{self, SingleKey, Table},
     };
     use alloy::primitives::{Address, B256, BlockNumber, Bytes, U256};
     use reth::primitives::{Account, Bytecode, Header, SealedHeader};
-    use reth_db::DatabaseEnv;
+    use reth_db::{ClientVersion, DatabaseEnv, mdbx::DatabaseArguments, test_utils::tempdir_path};
+    use reth_libmdbx::MaxReadTransactionDuration;
     use serial_test::serial;
 
     // Test table definitions for traversal tests
@@ -383,15 +385,15 @@ mod tests {
         // Create tables from the `crate::tables::hot` module
         let mut writer = db.db().writer().unwrap();
 
-        writer.queue_create::<hot::Headers>().unwrap();
-        writer.queue_create::<hot::HeaderNumbers>().unwrap();
-        writer.queue_create::<hot::Bytecodes>().unwrap();
-        writer.queue_create::<hot::PlainAccountState>().unwrap();
-        writer.queue_create::<hot::AccountsHistory>().unwrap();
-        writer.queue_create::<hot::StorageHistory>().unwrap();
-        writer.queue_create::<hot::PlainStorageState>().unwrap();
-        writer.queue_create::<hot::StorageChangeSets>().unwrap();
-        writer.queue_create::<hot::AccountChangeSets>().unwrap();
+        writer.queue_create::<tables::Headers>().unwrap();
+        writer.queue_create::<tables::HeaderNumbers>().unwrap();
+        writer.queue_create::<tables::Bytecodes>().unwrap();
+        writer.queue_create::<tables::PlainAccountState>().unwrap();
+        writer.queue_create::<tables::AccountsHistory>().unwrap();
+        writer.queue_create::<tables::StorageHistory>().unwrap();
+        writer.queue_create::<tables::PlainStorageState>().unwrap();
+        writer.queue_create::<tables::StorageChangeSets>().unwrap();
+        writer.queue_create::<tables::AccountChangeSets>().unwrap();
         writer.queue_create::<TestTable>().unwrap();
 
         writer.commit().expect("Failed to commit table creation");
@@ -445,11 +447,11 @@ mod tests {
             let mut writer: Tx<RW> = db.writer().unwrap();
 
             // Create tables first
-            writer.queue_create::<hot::Bytecodes>().unwrap();
+            writer.queue_create::<tables::Bytecodes>().unwrap();
 
             // Write account data
-            writer.queue_put::<hot::PlainAccountState>(&address, &account).unwrap();
-            writer.queue_put::<hot::Bytecodes>(&hash, &bytecode).unwrap();
+            writer.queue_put::<tables::PlainAccountState>(&address, &account).unwrap();
+            writer.queue_put::<tables::Bytecodes>(&hash, &bytecode).unwrap();
 
             // Commit the transaction
             writer.raw_commit().unwrap();
@@ -461,17 +463,17 @@ mod tests {
 
             // Read account data
             let read_account: Option<Account> =
-                reader.get::<hot::PlainAccountState>(&address).unwrap();
+                reader.get::<tables::PlainAccountState>(&address).unwrap();
             assert_eq!(read_account, Some(account));
 
             // Read bytecode
-            let read_bytecode: Option<Bytecode> = reader.get::<hot::Bytecodes>(&hash).unwrap();
+            let read_bytecode: Option<Bytecode> = reader.get::<tables::Bytecodes>(&hash).unwrap();
             assert_eq!(read_bytecode, Some(bytecode));
 
             // Test non-existent data
             let nonexistent_addr = Address::from_slice(&[0xff; 20]);
             let nonexistent_account: Option<Account> =
-                reader.get::<hot::PlainAccountState>(&nonexistent_addr).unwrap();
+                reader.get::<tables::PlainAccountState>(&nonexistent_addr).unwrap();
             assert_eq!(nonexistent_account, None);
         }
     }
@@ -545,7 +547,7 @@ mod tests {
 
             // Put storage data using dual keys
             writer
-                .queue_put_dual::<hot::PlainStorageState>(&address, &storage_key, &storage_value)
+                .queue_put_dual::<tables::PlainStorageState>(&address, &storage_key, &storage_value)
                 .unwrap();
 
             writer.raw_commit().unwrap();
@@ -556,8 +558,10 @@ mod tests {
             let reader: Tx<RO> = db.reader().unwrap();
 
             // Read storage using dual key lookup
-            let read_value =
-                reader.get_dual::<hot::PlainStorageState>(&address, &storage_key).unwrap().unwrap();
+            let read_value = reader
+                .get_dual::<tables::PlainStorageState>(&address, &storage_key)
+                .unwrap()
+                .unwrap();
 
             assert_eq!(read_value, storage_value);
         }
@@ -574,28 +578,28 @@ mod tests {
         let (block_number, header) = create_test_header();
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
-            writer.queue_put::<hot::Headers>(&block_number, &header).unwrap();
+            writer.queue_put::<tables::Headers>(&block_number, &header).unwrap();
             writer.raw_commit().unwrap();
         }
 
         // Verify data exists
         {
             let reader: Tx<RO> = db.reader().unwrap();
-            let read_header: Option<Header> = reader.get::<hot::Headers>(&block_number).unwrap();
+            let read_header: Option<Header> = reader.get::<tables::Headers>(&block_number).unwrap();
             assert_eq!(read_header, Some(header.clone()));
         }
 
         // Clear the table
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
-            writer.queue_clear::<hot::Headers>().unwrap();
+            writer.queue_clear::<tables::Headers>().unwrap();
             writer.raw_commit().unwrap();
         }
 
         // Verify table is empty
         {
             let reader: Tx<RO> = db.reader().unwrap();
-            let read_header: Option<Header> = reader.get::<hot::Headers>(&block_number).unwrap();
+            let read_header: Option<Header> = reader.get::<tables::Headers>(&block_number).unwrap();
             assert_eq!(read_header, None);
         }
     }
@@ -627,7 +631,7 @@ mod tests {
 
             // Write multiple accounts
             for (address, account) in &accounts {
-                writer.queue_put::<hot::PlainAccountState>(address, account).unwrap();
+                writer.queue_put::<tables::PlainAccountState>(address, account).unwrap();
             }
 
             writer.raw_commit().unwrap();
@@ -639,7 +643,7 @@ mod tests {
 
             for (address, expected_account) in &accounts {
                 let read_account: Option<Account> =
-                    reader.get::<hot::PlainAccountState>(address).unwrap();
+                    reader.get::<tables::PlainAccountState>(address).unwrap();
                 assert_eq!(read_account.as_ref(), Some(expected_account));
             }
         }
@@ -649,7 +653,7 @@ mod tests {
             let reader: Tx<RO> = db.reader().unwrap();
             let addresses: Vec<Address> = accounts.iter().map(|(addr, _)| *addr).collect();
             let read_accounts: Vec<(_, Option<Account>)> =
-                reader.get_many::<hot::PlainAccountState, _>(addresses.iter()).unwrap();
+                reader.get_many::<tables::PlainAccountState, _>(addresses.iter()).unwrap();
 
             for (i, (_, expected_account)) in accounts.iter().enumerate() {
                 assert_eq!(read_accounts[i].1.as_ref(), Some(expected_account));
@@ -668,7 +672,7 @@ mod tests {
         // Setup initial data
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
-            writer.queue_put::<hot::PlainAccountState>(&address, &account).unwrap();
+            writer.queue_put::<tables::PlainAccountState>(&address, &account).unwrap();
             writer.raw_commit().unwrap();
         }
 
@@ -680,14 +684,14 @@ mod tests {
             let mut writer: Tx<RW> = db.writer().unwrap();
             let modified_account =
                 Account { nonce: 999, balance: U256::from(9999u64), bytecode_hash: None };
-            writer.queue_put::<hot::PlainAccountState>(&address, &modified_account).unwrap();
+            writer.queue_put::<tables::PlainAccountState>(&address, &modified_account).unwrap();
             writer.raw_commit().unwrap();
         }
 
         // Reader should still see original data (snapshot isolation)
         {
             let read_account: Option<Account> =
-                reader.get::<hot::PlainAccountState>(&address).unwrap();
+                reader.get::<tables::PlainAccountState>(&address).unwrap();
             assert_eq!(read_account, Some(account));
         }
 
@@ -695,7 +699,7 @@ mod tests {
         {
             let new_reader: Tx<RO> = db.reader().unwrap();
             let read_account: Option<Account> =
-                new_reader.get::<hot::PlainAccountState>(&address).unwrap();
+                new_reader.get::<tables::PlainAccountState>(&address).unwrap();
             assert_eq!(read_account.unwrap().nonce, 999);
         }
     }
@@ -711,7 +715,7 @@ mod tests {
         // Setup data
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
-            writer.queue_put::<hot::PlainAccountState>(&address, &account).unwrap();
+            writer.queue_put::<tables::PlainAccountState>(&address, &account).unwrap();
             writer.raw_commit().unwrap();
         }
 
@@ -721,9 +725,9 @@ mod tests {
         let reader3: Tx<RO> = db.reader().unwrap();
 
         // All readers should see the same data
-        let account1: Option<Account> = reader1.get::<hot::PlainAccountState>(&address).unwrap();
-        let account2: Option<Account> = reader2.get::<hot::PlainAccountState>(&address).unwrap();
-        let account3: Option<Account> = reader3.get::<hot::PlainAccountState>(&address).unwrap();
+        let account1: Option<Account> = reader1.get::<tables::PlainAccountState>(&address).unwrap();
+        let account2: Option<Account> = reader2.get::<tables::PlainAccountState>(&address).unwrap();
+        let account3: Option<Account> = reader3.get::<tables::PlainAccountState>(&address).unwrap();
 
         assert_eq!(account1, Some(account));
         assert_eq!(account2, Some(account));
@@ -755,7 +759,7 @@ mod tests {
             let (address, account) = create_test_account();
 
             // This should handle the case where table doesn't exist
-            let result = writer.queue_put::<hot::PlainAccountState>(&address, &account);
+            let result = writer.queue_put::<tables::PlainAccountState>(&address, &account);
             match result {
                 Ok(_) => {
                     // If it succeeds, commit should work
@@ -791,10 +795,11 @@ mod tests {
             let reader: Tx<RO> = db.reader().unwrap();
 
             // Read and verify
-            let read_header: Option<Header> = reader.get::<hot::Headers>(&block_number).unwrap();
+            let read_header: Option<Header> = reader.get::<tables::Headers>(&block_number).unwrap();
             assert_eq!(read_header.as_ref(), Some(header.header()));
 
-            let read_hash: Option<u64> = reader.get::<hot::HeaderNumbers>(&header.hash()).unwrap();
+            let read_hash: Option<u64> =
+                reader.get::<tables::HeaderNumbers>(&header.hash()).unwrap();
             assert_eq!(read_hash, Some(header.number));
         }
     }
@@ -812,14 +817,14 @@ mod tests {
 
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
-            writer.queue_create::<hot::Bytecodes>().unwrap();
-            writer.queue_put::<hot::Bytecodes>(&hash, &large_bytecode).unwrap();
+            writer.queue_create::<tables::Bytecodes>().unwrap();
+            writer.queue_put::<tables::Bytecodes>(&hash, &large_bytecode).unwrap();
             writer.raw_commit().unwrap();
         }
 
         {
             let reader: Tx<RO> = db.reader().unwrap();
-            let read_bytecode: Option<Bytecode> = reader.get::<hot::Bytecodes>(&hash).unwrap();
+            let read_bytecode: Option<Bytecode> = reader.get::<tables::Bytecodes>(&hash).unwrap();
             assert_eq!(read_bytecode, Some(large_bytecode));
         }
     }
@@ -1054,7 +1059,7 @@ mod tests {
             let mut writer: Tx<RW> = db.writer().unwrap();
 
             for (address, account) in &test_accounts {
-                writer.queue_put::<hot::PlainAccountState>(address, account).unwrap();
+                writer.queue_put::<tables::PlainAccountState>(address, account).unwrap();
             }
 
             writer.raw_commit().unwrap();
@@ -1063,18 +1068,20 @@ mod tests {
         // Test typed table traversal
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(hot::PlainAccountState::NAME).unwrap();
+            let dbi = tx.get_dbi_raw(tables::PlainAccountState::NAME).unwrap();
             let mut cursor = tx.inner.cursor(dbi).unwrap();
 
             // Test first with type-safe operations
-            let first_raw = TableTraverse::<hot::PlainAccountState, _>::first(&mut cursor).unwrap();
+            let first_raw =
+                TableTraverse::<tables::PlainAccountState, _>::first(&mut cursor).unwrap();
             assert!(first_raw.is_some());
             let (first_key, first_account) = first_raw.unwrap();
             assert_eq!(first_key, test_accounts[0].0);
             assert_eq!(first_account, test_accounts[0].1);
 
             // Test last
-            let last_raw = TableTraverse::<hot::PlainAccountState, _>::last(&mut cursor).unwrap();
+            let last_raw =
+                TableTraverse::<tables::PlainAccountState, _>::last(&mut cursor).unwrap();
             assert!(last_raw.is_some());
             let (last_key, last_account) = last_raw.unwrap();
             assert_eq!(last_key, test_accounts.last().unwrap().0);
@@ -1083,7 +1090,7 @@ mod tests {
             // Test exact lookup
             let target_address = &test_accounts[2].0;
             let exact_account =
-                TableTraverse::<hot::PlainAccountState, _>::exact(&mut cursor, target_address)
+                TableTraverse::<tables::PlainAccountState, _>::exact(&mut cursor, target_address)
                     .unwrap();
             assert!(exact_account.is_some());
             assert_eq!(exact_account.unwrap(), test_accounts[2].1);
@@ -1093,9 +1100,11 @@ mod tests {
             partial_addr[19] = 3; // Between entries 2 and 3
             let range_addr = Address::from_slice(&partial_addr);
 
-            let range_result =
-                TableTraverse::<hot::PlainAccountState, _>::lower_bound(&mut cursor, &range_addr)
-                    .unwrap();
+            let range_result = TableTraverse::<tables::PlainAccountState, _>::lower_bound(
+                &mut cursor,
+                &range_addr,
+            )
+            .unwrap();
             assert!(range_result.is_some());
             let (found_addr, found_account) = range_result.unwrap();
             assert_eq!(found_addr, test_accounts[3].0);
@@ -1137,7 +1146,7 @@ mod tests {
 
             for (address, storage_key, value) in &test_storage {
                 writer
-                    .queue_put_dual::<hot::PlainStorageState>(address, storage_key, value)
+                    .queue_put_dual::<tables::PlainStorageState>(address, storage_key, value)
                     .unwrap();
             }
 
@@ -1147,7 +1156,7 @@ mod tests {
         // Test dual-keyed traversal
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(hot::PlainStorageState::NAME).unwrap();
+            let dbi = tx.get_dbi_raw(tables::PlainStorageState::NAME).unwrap();
             let mut cursor = tx.inner.cursor(dbi).unwrap();
 
             // Test exact dual lookup
@@ -1155,7 +1164,7 @@ mod tests {
             let storage_key = &test_storage[1].1;
             let expected_value = &test_storage[1].2;
 
-            let exact_result = DualTableTraverse::<hot::PlainStorageState, _>::exact_dual(
+            let exact_result = DualTableTraverse::<tables::PlainStorageState, _>::exact_dual(
                 &mut cursor,
                 address,
                 storage_key,
@@ -1166,7 +1175,7 @@ mod tests {
 
             // Test range lookup for dual keys
             let search_key = B256::with_last_byte(0x02);
-            let range_result = DualTableTraverse::<hot::PlainStorageState, _>::next_dual_above(
+            let range_result = DualTableTraverse::<tables::PlainStorageState, _>::next_dual_above(
                 &mut cursor,
                 &test_storage[0].0, // Address 0x01
                 &search_key,
@@ -1181,7 +1190,7 @@ mod tests {
 
             // Test next_k1 (move to next primary key)
             // First position cursor at first entry of first address
-            DualTableTraverse::<hot::PlainStorageState, _>::exact_dual(
+            DualTableTraverse::<tables::PlainStorageState, _>::exact_dual(
                 &mut cursor,
                 &test_storage[0].0,
                 &test_storage[0].1,
@@ -1190,7 +1199,7 @@ mod tests {
 
             // Move to next primary key (different address)
             let next_k1_result =
-                DualTableTraverse::<hot::PlainStorageState, _>::next_k1(&mut cursor).unwrap();
+                DualTableTraverse::<tables::PlainStorageState, _>::next_k1(&mut cursor).unwrap();
             assert!(next_k1_result.is_some());
             let (next_addr, next_storage_key, next_value) = next_k1_result.unwrap();
             assert_eq!(next_addr, test_storage[3].0); // Address 0x02
@@ -1213,21 +1222,21 @@ mod tests {
         {
             let mut writer: Tx<RW> = db.writer().unwrap();
             writer
-                .queue_put_dual::<hot::PlainStorageState>(&address, &storage_key, &value)
+                .queue_put_dual::<tables::PlainStorageState>(&address, &storage_key, &value)
                 .unwrap();
             writer.raw_commit().unwrap();
         }
 
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(hot::PlainStorageState::NAME).unwrap();
+            let dbi = tx.get_dbi_raw(tables::PlainStorageState::NAME).unwrap();
             let mut cursor = tx.inner.cursor(dbi).unwrap();
 
             // Test exact lookup for non-existent dual key
             let missing_addr = Address::from_slice(&[0xFF; 20]);
             let missing_key = B256::from_slice(&[0xFF; 32]);
 
-            let exact_missing = DualTableTraverse::<hot::PlainStorageState, _>::exact_dual(
+            let exact_missing = DualTableTraverse::<tables::PlainStorageState, _>::exact_dual(
                 &mut cursor,
                 &missing_addr,
                 &missing_key,
@@ -1237,7 +1246,7 @@ mod tests {
 
             // Test range lookup beyond all data
             let beyond_key = B256::from_slice(&[0xFF; 32]);
-            let range_missing = DualTableTraverse::<hot::PlainStorageState, _>::next_dual_above(
+            let range_missing = DualTableTraverse::<tables::PlainStorageState, _>::next_dual_above(
                 &mut cursor,
                 &address,
                 &beyond_key,
@@ -1246,7 +1255,7 @@ mod tests {
             assert!(range_missing.is_none());
 
             // Position at the only entry, then try next_k1
-            DualTableTraverse::<hot::PlainStorageState, _>::exact_dual(
+            DualTableTraverse::<tables::PlainStorageState, _>::exact_dual(
                 &mut cursor,
                 &address,
                 &storage_key,
@@ -1254,7 +1263,7 @@ mod tests {
             .unwrap();
 
             let next_k1_missing =
-                DualTableTraverse::<hot::PlainStorageState, _>::next_k1(&mut cursor).unwrap();
+                DualTableTraverse::<tables::PlainStorageState, _>::next_k1(&mut cursor).unwrap();
             assert!(next_k1_missing.is_none());
         }
     }
@@ -1348,5 +1357,33 @@ mod tests {
                 TableTraverse::<TestTable, _>::read_next(&mut cursor).unwrap().unwrap();
             assert_eq!(next_after_range.0, test_data[1].0);
         }
+    }
+
+    #[test]
+    fn mdbx_conformance() {
+        let path = tempdir_path();
+        let db = reth_db::create_db(
+            &path,
+            DatabaseArguments::new(ClientVersion::default())
+                .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded)),
+        )
+        .unwrap();
+
+        // Create tables from the `crate::tables::hot` module
+        let mut writer = db.writer().unwrap();
+
+        writer.queue_create::<tables::Headers>().unwrap();
+        writer.queue_create::<tables::HeaderNumbers>().unwrap();
+        writer.queue_create::<tables::Bytecodes>().unwrap();
+        writer.queue_create::<tables::PlainAccountState>().unwrap();
+        writer.queue_create::<tables::AccountsHistory>().unwrap();
+        writer.queue_create::<tables::StorageHistory>().unwrap();
+        writer.queue_create::<tables::PlainStorageState>().unwrap();
+        writer.queue_create::<tables::StorageChangeSets>().unwrap();
+        writer.queue_create::<tables::AccountChangeSets>().unwrap();
+
+        writer.commit().expect("Failed to commit table creation");
+
+        conformance(&db);
     }
 }

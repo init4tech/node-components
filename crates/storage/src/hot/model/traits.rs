@@ -1,15 +1,18 @@
-use crate::{
-    hot::model::{
+use crate::hot::{
+    model::{
         DualTableCursor, GetManyItem, HotKvError, HotKvReadError, KvTraverse, KvTraverseMut,
         TableCursor,
         revm::{RevmRead, RevmWrite},
     },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
-    tables::{DualKeyed, SingleKey, Table},
+    tables::{DualKey, SingleKey, Table},
 };
 use std::borrow::Cow;
 
 /// Trait for hot storage. This is a KV store with read/write transactions.
+///
+/// This is the top-level trait for hot storage backends, providing
+/// transactional access through read-only and read-write transactions.
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKv {
     /// The read-only transaction type.
@@ -107,7 +110,7 @@ pub trait HotKvRead {
 
     /// Traverse a specific dual-keyed table. Returns a typed dual-keyed
     /// cursor wrapper.
-    fn traverse_dual<'a, T: DualKeyed>(
+    fn traverse_dual<'a, T: DualKey>(
         &'a self,
     ) -> Result<DualTableCursor<Self::Traverse<'a>, T, Self::Error>, Self::Error> {
         let cursor = self.raw_traverse(T::NAME)?;
@@ -138,7 +141,7 @@ pub trait HotKvRead {
     ///
     /// If the table is not dual-keyed, the output MAY be
     /// implementation-defined.
-    fn get_dual<T: DualKeyed>(
+    fn get_dual<T: DualKey>(
         &self,
         key1: &T::Key,
         key2: &T::Key2,
@@ -194,6 +197,8 @@ pub trait HotKvRead {
 }
 
 /// Trait for hot storage write transactions.
+///
+/// This extends the [`HotKvRead`] trait with write capabilities.
 pub trait HotKvWrite: HotKvRead {
     /// The mutable cursor type for traversing key-value pairs.
     type TraverseMut<'a>: KvTraverseMut<Self::Error>
@@ -260,7 +265,7 @@ pub trait HotKvWrite: HotKvRead {
 
     /// Traverse a specific dual-keyed table. Returns a mutable typed
     /// dual-keyed cursor wrapper.
-    fn traverse_dual_mut<'a, T: DualKeyed>(
+    fn traverse_dual_mut<'a, T: DualKey>(
         &'a mut self,
     ) -> Result<DualTableCursor<Self::TraverseMut<'a>, T, Self::Error>, Self::Error> {
         let cursor = self.raw_traverse_mut(T::NAME)?;
@@ -281,7 +286,7 @@ pub trait HotKvWrite: HotKvRead {
     }
 
     /// Queue a put operation for a specific dual-keyed table.
-    fn queue_put_dual<T: DualKeyed>(
+    fn queue_put_dual<T: DualKey>(
         &mut self,
         key1: &T::Key,
         key2: &T::Key2,

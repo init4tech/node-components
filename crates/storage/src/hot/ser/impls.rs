@@ -1,4 +1,4 @@
-use crate::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
+use crate::hot::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
 use alloy::primitives::{Address, B256, Bloom};
 use bytes::BufMut;
 use reth::primitives::StorageEntry;
@@ -7,6 +7,8 @@ use reth_db::models::BlockNumberAddress;
 macro_rules! delegate_val_to_key {
     ($ty:ty) => {
         impl ValSer for $ty {
+            const FIXED_SIZE: Option<usize> = Some(<Self as KeySer>::SIZE);
+
             fn encoded_size(&self) -> usize {
                 <Self as KeySer>::SIZE
             }
@@ -140,6 +142,8 @@ impl KeySer for Address {
 }
 
 impl ValSer for Bloom {
+    const FIXED_SIZE: Option<usize> = Some(256);
+
     fn encoded_size(&self) -> usize {
         self.as_slice().len()
     }
@@ -317,6 +321,8 @@ impl KeySer for BlockNumberAddress {
 }
 
 impl ValSer for StorageEntry {
+    const FIXED_SIZE: Option<usize> = Some(64);
+
     fn encoded_size(&self) -> usize {
         self.key.encoded_size() + self.value.encoded_size()
     }

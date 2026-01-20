@@ -16,9 +16,3 @@ pub mod cold;
 
 /// Hot storage module.
 pub mod hot;
-
-/// Serialization module.
-pub mod ser;
-
-/// Predefined tables module.
-pub mod tables;

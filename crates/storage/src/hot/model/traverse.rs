@@ -1,9 +1,9 @@
 //! Cursor traversal traits and typed wrappers for database navigation.
 
-use crate::{
-    hot::model::{DualKeyValue, HotKvReadError, KeyValue, RawDualKeyValue, RawKeyValue, RawValue},
+use crate::hot::{
+    model::{DualKeyValue, HotKvReadError, KeyValue, RawDualKeyValue, RawKeyValue, RawValue},
     ser::{KeySer, MAX_KEY_SIZE},
-    tables::{DualKeyed, Table},
+    tables::{DualKey, Table},
 };
 use std::ops::Range;
 
@@ -58,7 +58,7 @@ pub trait KvTraverseMut<E: HotKvReadError>: KvTraverse<E> {
 }
 
 /// Trait for traversing dual-keyed key-value pairs in the database.
-pub trait DualKeyedTraverse<E: HotKvReadError>: KvTraverse<E> {
+pub trait DualKeyTraverse<E: HotKvReadError>: KvTraverse<E> {
     /// Set the cursor to specific dual key in the database, and return the
     /// EXACT KV pair if it exists.
     ///
@@ -177,7 +177,7 @@ where
 /// This is an extension trait rather than a wrapper struct because MDBX
 /// requires specialized implementations for DUPSORT tables that need access
 /// to the table type `T` to handle fixed-size values correctly.
-pub trait DualTableTraverse<T: DualKeyed, E: HotKvReadError> {
+pub trait DualTableTraverse<T: DualKey, E: HotKvReadError> {
     /// Return the EXACT value for the specified dual key if it exists.
     fn exact_dual(&mut self, key1: &T::Key, key2: &T::Key2) -> Result<Option<T::Value>, E> {
         let Some((k1, k2, v)) = self.next_dual_above(key1, key2)? else {
@@ -330,7 +330,7 @@ impl<C, T, E> DualTableCursor<C, T, E> {
 impl<C, T, E> DualTableCursor<C, T, E>
 where
     C: DualTableTraverse<T, E>,
-    T: DualKeyed,
+    T: DualKey,
     E: HotKvReadError,
 {
     /// Return the EXACT value for the specified dual key if it exists.
@@ -362,7 +362,7 @@ where
 impl<C, T, E> DualTableCursor<C, T, E>
 where
     C: KvTraverse<E>,
-    T: DualKeyed,
+    T: DualKey,
     E: HotKvReadError,
 {
     /// Get the first key-value pair in the table (raw traversal).
@@ -389,7 +389,7 @@ where
 impl<C, T, E> DualTableCursor<C, T, E>
 where
     C: KvTraverseMut<E>,
-    T: DualKeyed,
+    T: DualKey,
     E: HotKvReadError,
 {
     /// Delete the current key-value pair.

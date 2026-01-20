@@ -1,11 +1,11 @@
-use crate::{
-    hot::model::{
-        DualKeyValue, DualKeyedTraverse, DualTableTraverse, HotKv, HotKvError, HotKvRead,
+use crate::hot::{
+    model::{
+        DualKeyTraverse, DualKeyValue, DualTableTraverse, HotKv, HotKvError, HotKvRead,
         HotKvReadError, HotKvWrite, KvTraverse, KvTraverseMut, RawDualKeyValue, RawKeyValue,
         RawValue,
     },
     ser::{DeserError, KeySer, MAX_KEY_SIZE},
-    tables::DualKeyed,
+    tables::DualKey,
 };
 use bytes::Bytes;
 use std::{
@@ -365,7 +365,7 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursor<'a> {
 }
 
 // Implement DualKeyedTraverse (basic implementation - delegates to raw methods)
-impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursor<'a> {
+impl<'a> DualKeyTraverse<MemKvError> for MemKvCursor<'a> {
     fn exact_dual<'b>(
         &'b mut self,
         key1: &[u8],
@@ -392,7 +392,7 @@ impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursor<'a> {
         // scan forward until finding a new k1
         let last_k1 = self.current_k1();
 
-        DualKeyedTraverse::next_dual_above(self, &last_k1, &[0xffu8; MAX_KEY_SIZE])
+        DualKeyTraverse::next_dual_above(self, &last_k1, &[0xffu8; MAX_KEY_SIZE])
     }
 
     fn next_k2<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
@@ -400,14 +400,14 @@ impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursor<'a> {
         let (current_k1, current_k2) = MemKv::split_dual_key(&current_key);
 
         // scan forward until finding a new k2 for the same k1
-        DualKeyedTraverse::next_dual_above(self, &current_k1, &current_k2)
+        DualKeyTraverse::next_dual_above(self, &current_k1, &current_k2)
     }
 }
 
 // Implement DualTableTraverse for typed dual-keyed table access
 impl<'a, T> DualTableTraverse<T, MemKvError> for MemKvCursor<'a>
 where
-    T: DualKeyed,
+    T: DualKey,
 {
     fn next_dual_above(
         &mut self,
@@ -419,18 +419,18 @@ where
         let key1_bytes = key1.encode_key(&mut key1_buf);
         let key2_bytes = key2.encode_key(&mut key2_buf);
 
-        DualKeyedTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
+        DualKeyTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
             .map(T::decode_kkv_tuple)
             .transpose()
             .map_err(Into::into)
     }
 
     fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyedTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+        DualKeyTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
     }
 
     fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyedTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+        DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
     }
 }
 
@@ -698,7 +698,7 @@ impl<'a> KvTraverseMut<MemKvError> for MemKvCursorMut<'a> {
     }
 }
 
-impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursorMut<'a> {
+impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
     fn exact_dual<'b>(
         &'b mut self,
         key1: &[u8],
@@ -726,7 +726,7 @@ impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursorMut<'a> {
         // scan forward until finding a new k1
         let last_k1 = self.current_k1();
 
-        DualKeyedTraverse::next_dual_above(self, &last_k1, &[0xffu8; MAX_KEY_SIZE])
+        DualKeyTraverse::next_dual_above(self, &last_k1, &[0xffu8; MAX_KEY_SIZE])
     }
 
     fn next_k2<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
@@ -734,14 +734,14 @@ impl<'a> DualKeyedTraverse<MemKvError> for MemKvCursorMut<'a> {
         let (current_k1, current_k2) = MemKv::split_dual_key(&current_key);
 
         // scan forward until finding a new k2 for the same k1
-        DualKeyedTraverse::next_dual_above(self, &current_k1, &current_k2)
+        DualKeyTraverse::next_dual_above(self, &current_k1, &current_k2)
     }
 }
 
 // Implement DualTableTraverse for typed dual-keyed table access
 impl<'a, T> DualTableTraverse<T, MemKvError> for MemKvCursorMut<'a>
 where
-    T: DualKeyed,
+    T: DualKey,
 {
     fn next_dual_above(
         &mut self,
@@ -753,18 +753,18 @@ where
         let key1_bytes = key1.encode_key(&mut key1_buf);
         let key2_bytes = key2.encode_key(&mut key2_buf);
 
-        DualKeyedTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
+        DualKeyTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
             .map(T::decode_kkv_tuple)
             .transpose()
             .map_err(Into::into)
     }
 
     fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyedTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+        DualKeyTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
     }
 
     fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyedTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+        DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
     }
 }
 
@@ -999,9 +999,10 @@ impl HotKvWrite for MemKvRwTx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hot::model::{DualTableTraverse, TableTraverse, TableTraverseMut},
-        tables::{SingleKey, Table},
+    use crate::hot::{
+        conformance::conformance,
+        model::{DualTableTraverse, TableTraverse, TableTraverseMut},
+        tables::{DualKey, SingleKey, Table},
     };
     use alloy::primitives::{Address, U256};
     use bytes::Bytes;
@@ -1039,7 +1040,7 @@ mod tests {
         type Value = Bytes;
     }
 
-    impl crate::tables::DualKeyed for DualTestTable {
+    impl DualKey for DualTestTable {
         type Key2 = u32;
     }
 
@@ -1865,5 +1866,11 @@ mod tests {
             assert_eq!(k2, 100u32);
             assert_eq!(value, Bytes::from_static(b"value3"));
         }
+    }
+
+    #[test]
+    fn mem_conformance() {
+        let hot_kv = MemKv::new();
+        conformance(&hot_kv);
     }
 }

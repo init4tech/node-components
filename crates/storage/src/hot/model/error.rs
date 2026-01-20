@@ -1,4 +1,4 @@
-use crate::ser::DeserError;
+use crate::hot::ser::DeserError;
 
 /// Trait for hot storage read/write errors.
 #[derive(thiserror::Error, Debug)]
@@ -9,7 +9,7 @@ pub enum HotKvError {
 
     /// Deserialization error. Indicates an issue deserializing a key or value.
     #[error("Deserialization error: {0}")]
-    Deser(#[from] crate::ser::DeserError),
+    Deser(#[from] DeserError),
 
     /// Indicates that a write transaction is already in progress.
     #[error("A write transaction is already in progress")]

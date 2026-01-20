@@ -1,4 +1,4 @@
-use crate::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
+use crate::hot::ser::{DeserError, KeySer, MAX_KEY_SIZE, ValSer};
 use alloy::{
     consensus::{EthereumTxEnvelope, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxLegacy},
     eips::{
@@ -285,12 +285,10 @@ impl ValSer for Header {
 }
 
 impl ValSer for Account {
-    fn encoded_size(&self) -> usize {
-        // NB: Destructure to ensure changes are compile errors and mistakes
-        // are unused var warnings.
-        let Account { nonce, balance, bytecode_hash: _ } = self;
+    const FIXED_SIZE: Option<usize> = Some(8 + 32 + 32);
 
-        nonce.encoded_size() + balance.encoded_size() + 32
+    fn encoded_size(&self) -> usize {
+        Self::FIXED_SIZE.unwrap()
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -419,8 +417,10 @@ impl ValSer for Log {
 }
 
 impl ValSer for TxType {
+    const FIXED_SIZE: Option<usize> = Some(1);
+
     fn encoded_size(&self) -> usize {
-        1
+        Self::FIXED_SIZE.unwrap()
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -683,8 +683,10 @@ impl ValSer for AccountBeforeTx {
 }
 
 impl ValSer for Signature {
+    const FIXED_SIZE: Option<usize> = Some(65);
+
     fn encoded_size(&self) -> usize {
-        65
+        Self::FIXED_SIZE.unwrap()
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -804,14 +806,10 @@ impl ValSer for AccessList {
 }
 
 impl ValSer for Authorization {
+    const FIXED_SIZE: Option<usize> = Some(32 + 20 + 8);
+
     fn encoded_size(&self) -> usize {
-        let Authorization { chain_id, address, nonce } = self;
-        by_props!(
-            @size
-            chain_id,
-            address,
-            nonce,
-        )
+        Self::FIXED_SIZE.unwrap()
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -846,6 +844,15 @@ impl ValSer for Authorization {
 }
 
 impl ValSer for SignedAuthorization {
+    const FIXED_SIZE: Option<usize> = {
+        Some(
+            <Authorization as ValSer>::FIXED_SIZE.unwrap()
+            + 1 // y_parity
+            + 32 // r
+            + 32, // s
+        )
+    };
+
     fn encoded_size(&self) -> usize {
         let auth = self.inner();
         let y_parity = self.y_parity();

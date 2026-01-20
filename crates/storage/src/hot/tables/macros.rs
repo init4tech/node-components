@@ -8,7 +8,7 @@ macro_rules! table {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name;
 
-        impl crate::tables::Table for $name {
+        impl crate::hot::tables::Table for $name {
             const NAME: &'static str = stringify!($name);
             const DUAL_KEY: bool = $dual;
             const FIXED_VAL_SIZE: Option<usize> = $fixed;
@@ -32,7 +32,7 @@ macro_rules! table {
             None
         );
 
-        impl crate::tables::SingleKey for $name {}
+        impl crate::hot::tables::SingleKey for $name {}
     };
 
 
@@ -49,7 +49,7 @@ macro_rules! table {
             None
         );
 
-        impl crate::tables::DualKeyed for $name {
+        impl crate::hot::tables::DualKey for $name {
             type Key2 = $subkey;
         }
     };
@@ -67,7 +67,7 @@ macro_rules! table {
             Some($fixed)
         );
 
-        impl crate::tables::DualKeyed for $name {
+        impl crate::hot::tables::DualKey for $name {
             type Key2 = $subkey;
         }
     };
