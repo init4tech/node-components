@@ -62,6 +62,10 @@ pub trait HotKv {
 }
 
 /// Trait for hot storage read transactions.
+///
+/// This trait provides read-only access to hot storage tables. It should only
+/// be imported if accessing custom tables, or when implementing new hot storage
+/// backends.
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKvRead {
     /// Error type for read operations.

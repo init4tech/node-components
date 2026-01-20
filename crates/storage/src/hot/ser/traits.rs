@@ -55,10 +55,7 @@ pub trait KeySer: PartialOrd + Ord + Sized + Clone + core::fmt::Debug {
     /// Useful in DB decoding, where the absence of a key is represented by
     /// `None`.
     fn maybe_decode_key(data: Option<&[u8]>) -> Result<Option<Self>, DeserError> {
-        match data {
-            Some(d) => Ok(Some(Self::decode_key(d)?)),
-            None => Ok(None),
-        }
+        data.map(Self::decode_key).transpose()
     }
 }
 
@@ -105,10 +102,7 @@ pub trait ValSer {
     where
         Self: Sized,
     {
-        match data {
-            Some(d) => Ok(Some(Self::decode_value(d)?)),
-            None => Ok(None),
-        }
+        data.map(Self::decode_value).transpose()
     }
 
     /// Deserialize the value from bytes, ensuring all bytes are consumed.

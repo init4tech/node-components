@@ -490,20 +490,27 @@ impl<'a> MemKvCursorMut<'a> {
         }
     }
 
-    /// Get the first key-value pair >= key, returning owned data
+    /// Get the first key-value pair >= key, returning owned data.
+    ///
+    /// Merges queued operations with committed data, giving precedence to queued
+    /// ops for read-your-writes consistency.
     fn get_range_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
+        // Find the first candidate from both queued ops and committed storage.
         let q = self.queued_ops.range(*key..).next();
         let c = if !self.is_cleared { self.table.range(*key..).next() } else { None };
 
         match (q, c) {
             (None, None) => None,
+
+            // Both sources have candidates - pick the smaller key, preferring
+            // queued ops on ties for read-your-writes consistency.
             (Some((qk, queued)), Some((ck, current))) => {
                 if qk <= ck {
-                    // Queued operation takes precedence
                     match queued {
                         QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                         QueuedKvOp::Delete => {
-                            // Skip deleted entry and look for next
+                            // This key is marked deleted; increment to skip it
+                            // and recurse to find the next valid entry.
                             let mut next_key = *qk;
                             for i in (0..next_key.len()).rev() {
                                 if next_key[i] < u8::MAX {
@@ -519,9 +526,12 @@ impl<'a> MemKvCursorMut<'a> {
                     Some((*ck, current.clone()))
                 }
             }
+
+            // Only queued ops have a candidate.
             (Some((qk, queued)), None) => match queued {
                 QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                 QueuedKvOp::Delete => {
+                    // Increment past the deleted key and recurse.
                     let mut next_key = *qk;
                     for i in (0..next_key.len()).rev() {
                         if next_key[i] < u8::MAX {
@@ -533,14 +543,20 @@ impl<'a> MemKvCursorMut<'a> {
                     self.get_range_owned(&next_key)
                 }
             },
+
+            // Only committed storage has a candidate.
             (None, Some((ck, current))) => Some((*ck, current.clone())),
         }
     }
 
-    /// Get the first key-value pair > key (strictly greater), returning owned data
+    /// Get the first key-value pair > key (strictly greater), returning owned data.
+    ///
+    /// Similar to `get_range_owned` but uses exclusive bounds for cursor
+    /// navigation (read_next).
     fn get_range_exclusive_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
         use core::ops::Bound;
 
+        // Find candidates strictly greater than the given key.
         let q = self.queued_ops.range((Bound::Excluded(*key), Bound::Unbounded)).next();
         let c = if !self.is_cleared {
             self.table.range((Bound::Excluded(*key), Bound::Unbounded)).next()
@@ -550,18 +566,17 @@ impl<'a> MemKvCursorMut<'a> {
 
         match (q, c) {
             (None, None) => None,
+
+            // Both sources have candidates.
             (Some((qk, queued)), Some((ck, current))) => {
                 if qk <= ck {
-                    // Queued operation takes precedence
                     match queued {
                         QueuedKvOp::Put { value } => Some((*qk, value.clone())),
-                        QueuedKvOp::Delete => {
-                            // This key is deleted, recurse to find the next one
-                            self.get_range_exclusive_owned(qk)
-                        }
+                        // Deleted in queue; skip and recurse.
+                        QueuedKvOp::Delete => self.get_range_exclusive_owned(qk),
                     }
                 } else {
-                    // Check if the current key has a delete queued
+                    // Committed key is smaller, but check if it's been deleted.
                     if let Some(QueuedKvOp::Delete) = self.queued_ops.get(ck) {
                         self.get_range_exclusive_owned(ck)
                     } else {
@@ -569,12 +584,15 @@ impl<'a> MemKvCursorMut<'a> {
                     }
                 }
             }
+
+            // Only queued ops have a candidate.
             (Some((qk, queued)), None) => match queued {
                 QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                 QueuedKvOp::Delete => self.get_range_exclusive_owned(qk),
             },
+
+            // Only committed storage has a candidate; verify not deleted.
             (None, Some((ck, current))) => {
-                // Check if the current key has a delete queued
                 if let Some(QueuedKvOp::Delete) = self.queued_ops.get(ck) {
                     self.get_range_exclusive_owned(ck)
                 } else {
@@ -584,28 +602,39 @@ impl<'a> MemKvCursorMut<'a> {
         }
     }
 
-    /// Get the last key-value pair < key, returning owned data
+    /// Get the last key-value pair < key, returning owned data.
+    ///
+    /// Reverse iteration for cursor navigation (read_prev). Merges queued ops
+    /// with committed data, preferring the larger key (closest to search key).
     fn get_range_reverse_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
+        // Find candidates strictly less than the given key, scanning backwards.
         let q = self.queued_ops.range(..*key).next_back();
         let c = if !self.is_cleared { self.table.range(..*key).next_back() } else { None };
 
         match (q, c) {
             (None, None) => None,
+
+            // Both sources have candidates - pick the larger key (closest to
+            // search position), preferring queued ops on ties.
             (Some((qk, queued)), Some((ck, current))) => {
                 if qk >= ck {
-                    // Queued operation takes precedence
                     match queued {
                         QueuedKvOp::Put { value } => Some((*qk, value.clone())),
+                        // Deleted; recurse to find the previous valid entry.
                         QueuedKvOp::Delete => self.get_range_reverse_owned(qk),
                     }
                 } else {
                     Some((*ck, current.clone()))
                 }
             }
+
+            // Only queued ops have a candidate.
             (Some((qk, queued)), None) => match queued {
                 QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                 QueuedKvOp::Delete => self.get_range_reverse_owned(qk),
             },
+
+            // Only committed storage has a candidate.
             (None, Some((ck, current))) => Some((*ck, current.clone())),
         }
     }

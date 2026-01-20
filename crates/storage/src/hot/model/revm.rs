@@ -435,7 +435,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "in-mem"))]
 mod tests {
     use super::*;
     use crate::hot::{

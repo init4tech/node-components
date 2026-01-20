@@ -53,6 +53,30 @@ impl BlockData {
 /// The trait is agnostic to how the backend stores or indexes data.
 ///
 /// All methods are async and return futures that are `Send`.
+///
+/// # Implementation Guide
+///
+/// Implementers must ensure:
+///
+/// - **Append-only ordering**: `append_block` must enforce monotonically
+///   increasing block numbers. Attempting to append a block with a number <=
+///   the current latest should return an error.
+///
+/// - **Atomic truncation**: `truncate_above` must remove all data for blocks
+///   N+1 and higher atomically. Partial truncation is not acceptable.
+///
+/// - **Index maintenance**: Hash-based lookups (e.g., header by hash,
+///   transaction by hash) require the implementation to maintain appropriate
+///   indexes. These indexes must be updated during `append_block` and cleaned
+///   during `truncate_above`.
+///
+/// - **Consistent reads**: Read operations should return consistent snapshots.
+///   A read started before a write completes should not see partial data from
+///   that write.
+///
+/// - **Tag resolution**: `HeaderSpecifier::Tag` variants (Latest, Finalized,
+///   Safe, Earliest) must be resolved by the implementation. For simple
+///   backends, Latest/Finalized/Safe may all resolve to the same block.
 pub trait ColdStorage: Send + Sync + 'static {
     // --- Headers ---
 

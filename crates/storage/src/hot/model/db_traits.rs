@@ -8,6 +8,13 @@ use reth_db::{BlockNumberList, models::BlockNumberAddress};
 use reth_db_api::models::ShardedKey;
 
 /// Trait for database read operations on standard hot tables.
+///
+/// This is a high-level trait that provides convenient methods for reading
+/// common data types from predefined hot storage tables. It builds upon the
+/// lower-level [`HotKvRead`] trait, which provides raw key-value access.
+///
+/// Users should prefer this trait unless customizations are needed to the
+/// table set.
 pub trait HotDbRead: HotKvRead + sealed::Sealed {
     /// Read a block header by its number.
     fn get_header(&self, number: u64) -> Result<Option<Header>, Self::Error> {
@@ -121,6 +128,14 @@ impl<T> HotDbWrite for T where T: HotKvWrite {}
 /// These tables maintain historical information about accounts and storage
 /// changes, and their contents can be used to reconstruct past states or
 /// roll back changes.
+///
+/// This is a high-level trait that provides convenient methods for reading
+/// common data types from predefined hot storage history tables. It builds
+/// upon the lower-level [`HotDbRead`] trait, which provides raw key-value
+/// access.
+///
+/// Users should prefer this trait unless customizations are needed to the
+/// table set.
 pub trait HotHistoryRead: HotDbRead {
     /// Get the list of block numbers where an account was touched.
     /// Get the list of block numbers where an account was touched.

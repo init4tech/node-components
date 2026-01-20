@@ -4,7 +4,7 @@
 //! data. It provides abstractions and implementations for key-value storage
 //! backends.
 //!
-//! ## Serialiazation
+//! ## Serialization
 //!
 //! Hot storage is opinionated with respect to serialization. Each table defines
 //! the key and value types it uses, and these types must implement the
