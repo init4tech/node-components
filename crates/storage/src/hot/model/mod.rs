@@ -36,7 +36,6 @@
 //! The library wraps these into the [`TableCursor`] and [`DualTableCursor`]
 //! structs for ease of use and consistency across different backends.
 
-
 mod error;
 pub use error::{HotKvError, HotKvReadError, HotKvResult};
 

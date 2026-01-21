@@ -34,8 +34,8 @@
 
 use reth_db::lockfile::StorageLock;
 use reth_libmdbx::{
-    ffi, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
-    MaxReadTransactionDuration, Mode, PageSize, SyncMode, RO, RW,
+    Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
+    MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
 };
 use std::{
     ops::{Deref, Range},
