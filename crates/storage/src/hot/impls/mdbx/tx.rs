@@ -1,9 +1,9 @@
 //! Transaction wrapper for libmdbx-sys.
 use crate::hot::{
-    MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
+    KeySer, MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
     impls::mdbx::{Cursor, DbCache, DbInfo, FixedSizeInfo, MdbxError},
     model::{DualTableTraverse, HotKvRead, HotKvWrite},
-    tables::{DualKey, Table},
+    tables::{DualKey, SingleKey, Table},
 };
 use alloy::primitives::B256;
 use dashmap::mapref::one::Ref;
@@ -317,6 +317,17 @@ impl HotKvWrite for Tx<RW> {
         self.store_db_info(table, db_info)?;
 
         Ok(())
+    }
+
+    fn queue_put<T: SingleKey>(&self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
+        let dbi = self.get_dbi::<T>()?;
+        let mut key_buf = [0u8; MAX_KEY_SIZE];
+        let key_bytes = key.encode_key(&mut key_buf);
+
+        self.inner
+            .reserve(dbi, key_bytes, value.encoded_size(), WriteFlags::UPSERT)
+            .map_err(MdbxError::Mdbx)
+            .map(|mut reserved| value.encode_value_to(&mut reserved))
     }
 
     fn raw_commit(self) -> Result<(), Self::Error> {

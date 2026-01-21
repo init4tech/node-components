@@ -98,7 +98,7 @@ fn test_account_roundtrip<T: HotKv>(hot_kv: &T) {
 /// Test writing and reading storage via HotDbWrite/HotDbRead
 fn test_storage_roundtrip<T: HotKv>(hot_kv: &T) {
     let addr = address!("0xabcdef0123456789abcdef0123456789abcdef01");
-    let slot = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+    let slot = U256::from(42);
     let value = U256::from(999);
 
     // Write storage
@@ -122,7 +122,7 @@ fn test_storage_roundtrip<T: HotKv>(hot_kv: &T) {
         let read_entry = reader.get_storage_entry(&addr, &slot).unwrap();
         assert!(read_entry.is_some());
         let entry = read_entry.unwrap();
-        assert_eq!(entry.key, slot);
+        assert_eq!(entry.key, B256::new(slot.to_be_bytes()));
         assert_eq!(entry.value, U256::from(999));
     }
 }
@@ -174,7 +174,7 @@ fn test_account_history<T: HotKv>(hot_kv: &T) {
 /// Test storage history via HotHistoryWrite/HotHistoryRead
 fn test_storage_history<T: HotKv>(hot_kv: &T) {
     let addr = address!("0x2222222222222222222222222222222222222222");
-    let slot = b256!("0x0000000000000000000000000000000000000000000000000000000000000042");
+    let slot = U256::from(42);
     let touched_blocks = BlockNumberList::new([5, 15, 25]).unwrap();
     let highest_block = 50u64;
 
@@ -224,7 +224,7 @@ fn test_account_changes<T: HotKv>(hot_kv: &T) {
 /// Test storage change sets via HotHistoryWrite/HotHistoryRead
 fn test_storage_changes<T: HotKv>(hot_kv: &T) {
     let addr = address!("0x4444444444444444444444444444444444444444");
-    let slot = b256!("0x0000000000000000000000000000000000000000000000000000000000000099");
+    let slot = U256::from(153);
     let pre_value = U256::from(12345);
     let block_number = 200u64;
 
@@ -248,7 +248,7 @@ fn test_storage_changes<T: HotKv>(hot_kv: &T) {
 fn test_missing_reads<T: HotKv>(hot_kv: &T) {
     let missing_addr = address!("0x9999999999999999999999999999999999999999");
     let missing_hash = b256!("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-    let missing_slot = b256!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    let missing_slot = U256::from(99999);
 
     let reader = hot_kv.reader().unwrap();
 

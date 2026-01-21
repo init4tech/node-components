@@ -1,7 +1,8 @@
 use alloy::primitives::{Address, B256, BlockNumber, U256};
-use reth::primitives::{Account, Bytecode, Header};
+use reth::primitives::{Account, Header};
 use reth_db::models::BlockNumberAddress;
 use reth_db_api::{BlockNumberList, models::ShardedKey};
+use trevm::revm::bytecode::Bytecode;
 
 table! {
     /// Records recent block Headers, by their number.
@@ -25,7 +26,7 @@ table! {
 
 table! {
     /// Records plain storage states, keyed by address and storage key.
-    PlainStorageState<Address => B256 => U256> is 32
+    PlainStorageState<Address => U256 => U256> is 32
 }
 
 table! {
@@ -40,10 +41,10 @@ table! {
 
 table! {
     /// Records storage state change history, keyed by address and storage key.
-    StorageHistory<Address => ShardedKey<B256> => BlockNumberList>
+    StorageHistory<Address => ShardedKey<U256> => BlockNumberList>
 }
 
 table! {
     /// Records account states before transactions, keyed by (address, block number).
-    StorageChangeSets<BlockNumberAddress => B256 => U256> is 32
+    StorageChangeSets<BlockNumberAddress => U256 => U256> is 32
 }

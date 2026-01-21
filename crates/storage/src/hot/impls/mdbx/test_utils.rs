@@ -63,9 +63,10 @@ mod tests {
         tables,
     };
     use alloy::primitives::{Address, B256, BlockNumber, Bytes, U256};
-    use reth::primitives::{Account, Bytecode, Header, SealedHeader};
+    use reth::primitives::{Account, Header, SealedHeader};
     use reth_libmdbx::{RO, RW};
     use serial_test::serial;
+    use trevm::revm::bytecode::Bytecode;
 
     /// Create a temporary MDBX database for testing that will be automatically cleaned up
     fn run_test<F: FnOnce(&DatabaseEnv)>(f: F) {
@@ -89,7 +90,7 @@ mod tests {
 
     fn create_test_bytecode() -> (B256, Bytecode) {
         let hash = B256::from_slice(&[0x2; 32]);
-        let code = reth::primitives::Bytecode::new_raw(vec![0x60, 0x80, 0x60, 0x40].into());
+        let code = Bytecode::new_raw(vec![0x60, 0x80, 0x60, 0x40].into());
         (hash, code)
     }
 
@@ -213,7 +214,7 @@ mod tests {
 
     fn test_dual_keyed_operations_inner(db: &DatabaseEnv) {
         let address = Address::from_slice(&[0x1; 20]);
-        let storage_key = B256::from_slice(&[0x5; 32]);
+        let storage_key = U256::from(5);
         let storage_value = U256::from(999u64);
 
         // Test dual-keyed table operations
@@ -792,9 +793,9 @@ mod tests {
         let one_addr = Address::repeat_byte(0x01);
         let two_addr = Address::repeat_byte(0x02);
 
-        let one_slot = B256::with_last_byte(0x01);
-        let two_slot = B256::with_last_byte(0x06);
-        let three_slot = B256::with_last_byte(0x09);
+        let one_slot = U256::from(0x01);
+        let two_slot = U256::from(0x06);
+        let three_slot = U256::from(0x09);
 
         let one_value = U256::from(0x100);
         let two_value = U256::from(0x200);
@@ -803,7 +804,7 @@ mod tests {
         let five_value = U256::from(0x500);
 
         // Setup test storage data
-        let test_storage: Vec<(Address, B256, U256)> = vec![
+        let test_storage: Vec<(Address, U256, U256)> = vec![
             (one_addr, one_slot, one_value),
             (one_addr, two_slot, two_value),
             (one_addr, three_slot, three_value),
@@ -844,7 +845,7 @@ mod tests {
             assert_eq!(exact_result, *expected_value);
 
             // Test range lookup for dual keys
-            let search_key = B256::with_last_byte(0x02);
+            let search_key = U256::from(0x02);
             let range_result = DualTableTraverse::<tables::PlainStorageState, _>::next_dual_above(
                 &mut cursor,
                 &test_storage[0].0, // Address 0x01
@@ -886,7 +887,7 @@ mod tests {
     fn test_dual_table_traverse_empty_results_inner(db: &DatabaseEnv) {
         // Setup minimal test data
         let address = Address::from_slice(&[0x01; 20]);
-        let storage_key = B256::from_slice(&[0x01; 32]);
+        let storage_key = U256::from(1);
         let value = U256::from(100);
 
         {
@@ -903,7 +904,7 @@ mod tests {
 
             // Test exact lookup for non-existent dual key
             let missing_addr = Address::from_slice(&[0xFF; 20]);
-            let missing_key = B256::from_slice(&[0xFF; 32]);
+            let missing_key = U256::from(0xFF);
 
             let exact_missing = DualTableTraverse::<tables::PlainStorageState, _>::exact_dual(
                 &mut cursor,
@@ -914,7 +915,7 @@ mod tests {
             assert!(exact_missing.is_none());
 
             // Test range lookup beyond all data
-            let beyond_key = B256::from_slice(&[0xFF; 32]);
+            let beyond_key = U256::MAX;
             let range_missing = DualTableTraverse::<tables::PlainStorageState, _>::next_dual_above(
                 &mut cursor,
                 &address,
@@ -1059,10 +1060,10 @@ mod tests {
     }
 
     fn test_storage_roundtrip_debug_inner(db: &DatabaseEnv) {
-        use alloy::primitives::{address, b256};
+        use alloy::primitives::address;
 
         let addr = address!("0xabcdef0123456789abcdef0123456789abcdef01");
-        let slot = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let slot = U256::from(1);
         let value = U256::from(999);
 
         // Write storage

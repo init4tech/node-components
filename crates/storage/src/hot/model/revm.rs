@@ -283,7 +283,7 @@ where
 
         let code_hash = account.bytecode_hash.unwrap_or(KECCAK256_EMPTY);
         let code = if code_hash != KECCAK256_EMPTY {
-            self.reader.get::<Bytecodes>(&code_hash)?.map(|b| b.0)
+            self.reader.get::<Bytecodes>(&code_hash)?
         } else {
             None
         };
@@ -292,7 +292,7 @@ where
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<RevmBytecode, Self::Error> {
-        Ok(self.reader.get::<Bytecodes>(&code_hash)?.map(|bytecode| bytecode.0).unwrap_or_default())
+        Ok(self.reader.get::<Bytecodes>(&code_hash)?.unwrap_or_default())
     }
 
     fn storage_ref(
@@ -300,9 +300,7 @@ where
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let key = B256::from_slice(&index.to_be_bytes::<32>());
-
-        Ok(self.reader.get_dual::<tables::PlainStorageState>(&address, &key)?.unwrap_or_default())
+        Ok(self.reader.get_dual::<tables::PlainStorageState>(&address, &index)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -356,7 +354,7 @@ where
 
         let code_hash = account.bytecode_hash.unwrap_or(KECCAK256_EMPTY);
         let code = if code_hash != KECCAK256_EMPTY {
-            self.writer.get::<Bytecodes>(&code_hash)?.map(|b| b.0)
+            self.writer.get::<Bytecodes>(&code_hash)?
         } else {
             None
         };
@@ -365,7 +363,7 @@ where
     }
 
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<RevmBytecode, Self::Error> {
-        Ok(self.writer.get::<Bytecodes>(&code_hash)?.map(|bytecode| bytecode.0).unwrap_or_default())
+        Ok(self.writer.get::<Bytecodes>(&code_hash)?.unwrap_or_default())
     }
 
     fn storage_ref(
@@ -373,8 +371,7 @@ where
         address: Address,
         index: StorageKey,
     ) -> Result<StorageValue, Self::Error> {
-        let key = B256::from_slice(&index.to_be_bytes::<32>());
-        Ok(self.writer.get_dual::<tables::PlainStorageState>(&address, &key)?.unwrap_or_default())
+        Ok(self.writer.get_dual::<tables::PlainStorageState>(&address, &index)?.unwrap_or_default())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
@@ -432,7 +429,6 @@ where
 
             // Handle storage changes
             for (key, value) in account.storage {
-                let key = B256::from_slice(&key.to_be_bytes::<32>());
                 self.writer.queue_put_dual::<tables::PlainStorageState>(
                     &address,
                     &key,
@@ -652,7 +648,7 @@ mod tests {
             assert_eq!(acc.balance, U256::from(2000u64));
             assert_eq!(acc.bytecode_hash, None);
 
-            let key = B256::with_last_byte(100);
+            let key = U256::from(100);
             let storage_val: Option<StorageValue> =
                 reader.get_dual::<tables::PlainStorageState>(&address, &key)?;
             assert_eq!(storage_val, Some(U256::from(200u64)));

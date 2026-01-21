@@ -1,8 +1,9 @@
 use crate::hot::{model::HotKvRead, tables};
 use alloy::primitives::{Address, B256, U256};
-use reth::primitives::{Account, Bytecode, Header, StorageEntry};
+use reth::primitives::{Account, Header, StorageEntry};
 use reth_db::{BlockNumberList, models::BlockNumberAddress};
 use reth_db_api::models::ShardedKey;
+use trevm::revm::bytecode::Bytecode;
 
 /// Trait for database read operations on standard hot tables.
 ///
@@ -34,7 +35,7 @@ pub trait HotDbRead: HotKvRead + super::sealed::Sealed {
     }
 
     /// Read a storage slot by its address and key.
-    fn get_storage(&self, address: &Address, key: &B256) -> Result<Option<U256>, Self::Error> {
+    fn get_storage(&self, address: &Address, key: &U256) -> Result<Option<U256>, Self::Error> {
         self.get_dual::<tables::PlainStorageState>(address, key)
     }
 
@@ -42,10 +43,10 @@ pub trait HotDbRead: HotKvRead + super::sealed::Sealed {
     fn get_storage_entry(
         &self,
         address: &Address,
-        key: &B256,
+        key: &U256,
     ) -> Result<Option<StorageEntry>, Self::Error> {
         let opt = self.get_storage(address, key)?;
-        Ok(opt.map(|value| StorageEntry { key: *key, value }))
+        Ok(opt.map(|value| StorageEntry { key: B256::new(key.to_be_bytes()), value }))
     }
 
     /// Read a block header by its hash.
@@ -99,7 +100,7 @@ pub trait HotHistoryRead: HotDbRead {
     fn get_storage_history(
         &self,
         address: &Address,
-        slot: B256,
+        slot: U256,
         highest_block_number: u64,
     ) -> Result<Option<BlockNumberList>, Self::Error> {
         let sharded_key = ShardedKey::new(slot, highest_block_number);
@@ -118,7 +119,7 @@ pub trait HotHistoryRead: HotDbRead {
         &self,
         block_number: u64,
         address: &Address,
-        slot: &B256,
+        slot: &U256,
     ) -> Result<Option<U256>, Self::Error> {
         let block_number_address = BlockNumberAddress((block_number, *address));
         self.get_dual::<tables::StorageChangeSets>(&block_number_address, slot)

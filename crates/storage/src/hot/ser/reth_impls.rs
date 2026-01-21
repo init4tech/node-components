@@ -7,13 +7,13 @@ use alloy::{
     },
     primitives::{Address, B256, FixedBytes, KECCAK256_EMPTY, Signature, TxKind, U256},
 };
-use reth::{
-    primitives::{Account, Bytecode, Header, Log, LogData, TransactionSigned, TxType},
-    revm::bytecode::{JumpTable, LegacyAnalyzedBytecode, eip7702::Eip7702Bytecode},
-};
+use reth::primitives::{Account, Header, Log, LogData, TransactionSigned, TxType};
 use reth_db_api::{
     BlockNumberList,
     models::{AccountBeforeTx, ShardedKey, StoredBlockBodyIndices},
+};
+use trevm::revm::bytecode::{
+    Bytecode, JumpTable, LegacyAnalyzedBytecode, eip7702::Eip7702Bytecode,
 };
 
 // Specialized impls for the sharded key types. This was implemented
@@ -31,9 +31,7 @@ macro_rules! sharded_key {
             ) -> &'c [u8] {
                 const SIZE: usize = <$ty as KeySer>::SIZE;
 
-                let prefix = self.key.as_slice();
-
-                buf[0..SIZE].copy_from_slice(prefix);
+                buf[0..SIZE].copy_from_slice(&self.key[..SIZE]);
                 buf[SIZE..Self::SIZE].copy_from_slice(&self.highest_block_number.to_be_bytes());
 
                 &buf[0..Self::SIZE]
@@ -49,7 +47,7 @@ macro_rules! sharded_key {
                 }
 
                 let key = <$ty as KeySer>::decode_key(&data[0..SIZE])?;
-                let highest_block_number = u64::decode_key(&data[SIZE..SIZE + 8])?;
+                let highest_block_number = u64::decode_key(&data[SIZE..Self::SIZE])?;
                 Ok(Self { key, highest_block_number })
             }
         }
@@ -58,6 +56,26 @@ macro_rules! sharded_key {
 
 sharded_key!(B256);
 sharded_key!(Address);
+
+impl KeySer for ShardedKey<U256> {
+    const SIZE: usize = U256::SIZE + u64::SIZE;
+
+    fn encode_key<'a: 'c, 'b: 'c, 'c>(&'a self, buf: &'b mut [u8; MAX_KEY_SIZE]) -> &'c [u8] {
+        self.key.encode_key(buf);
+        buf[U256::SIZE..Self::SIZE].copy_from_slice(&self.highest_block_number.to_be_bytes());
+        &buf[0..Self::SIZE]
+    }
+
+    fn decode_key(data: &[u8]) -> Result<Self, DeserError> {
+        if data.len() < Self::SIZE {
+            return Err(DeserError::InsufficientData { needed: Self::SIZE, available: data.len() });
+        }
+
+        let key = U256::decode_key(&data[0..U256::SIZE])?;
+        let highest_block_number = u64::decode_key(&data[U256::SIZE..Self::SIZE])?;
+        Ok(Self { key, highest_block_number })
+    }
+}
 
 macro_rules! by_props {
     (@size $($prop:ident),* $(,)?) => {
@@ -602,9 +620,9 @@ impl ValSer for LegacyAnalyzedBytecode {
 
 impl ValSer for Bytecode {
     fn encoded_size(&self) -> usize {
-        1 + match &self.0 {
-            reth::revm::state::Bytecode::Eip7702(code) => code.encoded_size(),
-            reth::revm::state::Bytecode::LegacyAnalyzed(code) => code.encoded_size(),
+        1 + match &self {
+            Bytecode::Eip7702(code) => code.encoded_size(),
+            Bytecode::LegacyAnalyzed(code) => code.encoded_size(),
         }
     }
 
@@ -612,12 +630,12 @@ impl ValSer for Bytecode {
     where
         B: bytes::BufMut + AsMut<[u8]>,
     {
-        match &self.0 {
-            reth::revm::state::Bytecode::Eip7702(code) => {
+        match &self {
+            Bytecode::Eip7702(code) => {
                 buf.put_u8(1);
                 code.encode_value_to(buf);
             }
-            reth::revm::state::Bytecode::LegacyAnalyzed(code) => {
+            Bytecode::LegacyAnalyzed(code) => {
                 buf.put_u8(0);
                 code.encode_value_to(buf);
             }
@@ -633,11 +651,11 @@ impl ValSer for Bytecode {
         match ty {
             0 => {
                 let analyzed = LegacyAnalyzedBytecode::decode_value(data)?;
-                Ok(Bytecode(reth::revm::state::Bytecode::LegacyAnalyzed(analyzed)))
+                Ok(Bytecode::LegacyAnalyzed(analyzed))
             }
             1 => {
                 let eip7702 = Eip7702Bytecode::decode_value(data)?;
-                Ok(Bytecode(reth::revm::state::Bytecode::Eip7702(eip7702)))
+                Ok(Bytecode::Eip7702(eip7702))
             }
             _ => Err(DeserError::String(format!("Invalid Bytecode type value: {}. Max is 1.", ty))),
         }
@@ -1893,7 +1911,8 @@ mod tests {
         let key1 = ShardedKey { key: Address::ZERO, highest_block_number: 0 };
         test_key_roundtrip(&key1);
 
-        let key2 = ShardedKey { key: Address::repeat_byte(0xFF), highest_block_number: u64::MAX };
+        let key2: ShardedKey<Address> =
+            ShardedKey { key: Address::repeat_byte(0xFF), highest_block_number: u64::MAX };
         test_key_roundtrip(&key2);
 
         let key3 = ShardedKey {
@@ -1904,6 +1923,24 @@ mod tests {
             highest_block_number: 9876543210,
         };
         test_key_roundtrip(&key3);
+    }
+
+    #[test]
+    fn test_sharded_key_u256() {
+        let keys = vec![
+            ShardedKey { key: U256::ZERO, highest_block_number: 0 },
+            ShardedKey { key: U256::ZERO, highest_block_number: 1 },
+            ShardedKey { key: U256::ZERO, highest_block_number: u64::MAX },
+            ShardedKey { key: U256::from(1u64), highest_block_number: 0 },
+            ShardedKey { key: U256::from(1u64), highest_block_number: 1 },
+            ShardedKey { key: U256::MAX, highest_block_number: 0 },
+            ShardedKey { key: U256::MAX, highest_block_number: u64::MAX },
+        ];
+        test_key_ordering(&keys);
+
+        for key in &keys {
+            test_key_roundtrip(key);
+        }
     }
 
     #[test]

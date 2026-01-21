@@ -1,10 +1,13 @@
 use crate::hot::{db::HotHistoryRead, model::HotKvWrite, tables};
 use alloy::primitives::{Address, B256, U256};
-use reth::primitives::{Account, Bytecode, Header, SealedHeader};
+use reth::primitives::{Account, Header, SealedHeader};
 use reth_db::{BlockNumberList, models::BlockNumberAddress};
 use reth_db_api::models::ShardedKey;
 use trevm::revm::{
-    database::states::{PlainStateReverts, PlainStorageRevert},
+    bytecode::Bytecode,
+    database::states::{
+        PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset,
+    },
     state::AccountInfo,
 };
 
@@ -39,7 +42,7 @@ pub trait UnsafeDbWrite: HotKvWrite + super::sealed::Sealed {
     }
 
     /// Write a storage entry by its address and key.
-    fn put_storage(&self, address: &Address, key: &B256, entry: &U256) -> Result<(), Self::Error> {
+    fn put_storage(&self, address: &Address, key: &U256, entry: &U256) -> Result<(), Self::Error> {
         self.queue_put_dual::<tables::PlainStorageState>(address, key, entry)
     }
 
@@ -104,7 +107,7 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
     fn write_storage_history(
         &self,
         address: &Address,
-        slot: B256,
+        slot: U256,
         highest_block_number: u64,
         touched: &BlockNumberList,
     ) -> Result<(), Self::Error> {
@@ -118,7 +121,7 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
         &self,
         block_number: u64,
         address: Address,
-        slot: &B256,
+        slot: &U256,
         prestate: &U256,
     ) -> Result<(), Self::Error> {
         let block_number_address = BlockNumberAddress((block_number, address));
@@ -132,7 +135,7 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
         // valid for the duration of this method.
         let mut cursor = self.traverse_dual::<tables::PlainStorageState>()?;
 
-        let Some(start) = cursor.next_dual_above(address, &B256::ZERO)? else {
+        let Some(start) = cursor.next_dual_above(address, &U256::ZERO)? else {
             // No storage entries at or above this address
             return Ok(());
         };
@@ -167,7 +170,6 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
 
             if let Some(bytecode) = info.as_ref().and_then(|info| info.code.clone()) {
                 let code_hash = account.bytecode_hash.expect("info has bytecode; hash must exist");
-                let bytecode = Bytecode(bytecode);
                 self.put_bytecode(&code_hash, &bytecode)?;
             }
 
@@ -182,7 +184,7 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
                 self.write_storage_prestate(
                     block_number,
                     entry.address,
-                    &B256::from(key.to_be_bytes()),
+                    key,
                     &old_value.to_previous_value(),
                 )?;
             }
@@ -200,6 +202,72 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
         accounts.iter().zip(storage.iter()).enumerate().try_for_each(|(idx, (acc, sto))| {
             self.write_plain_revert(first_block_number + idx as u64, acc, sto)
         })
+    }
+
+    /// Write changed accounts from a [`StateChangeset`].
+    fn write_changed_account(
+        &self,
+        address: &Address,
+        account: &Option<AccountInfo>,
+    ) -> Result<(), Self::Error> {
+        let Some(info) = account.as_ref() else {
+            // Account removal
+            return self.queue_delete::<tables::PlainAccountState>(address);
+        };
+
+        let account = Account::from(info.clone());
+        if let Some(bytecode) = info.code.clone() {
+            let code_hash = account.bytecode_hash.expect("info has bytecode; hash must exist");
+            self.put_bytecode(&code_hash, &bytecode)?;
+        }
+        self.put_account(address, &account)
+    }
+
+    /// Write changed storage from a [`StateChangeset`].
+    fn write_changed_storage(
+        &self,
+        PlainStorageChangeset { address, wipe_storage, storage }: &PlainStorageChangeset,
+    ) -> Result<(), Self::Error> {
+        if *wipe_storage {
+            let mut cursor = self.traverse_dual_mut::<tables::PlainStorageState>()?;
+
+            while let Some((key, _, _)) = cursor.next_k2()? {
+                if key != *address {
+                    break;
+                }
+                cursor.delete_current()?;
+            }
+
+            return Ok(());
+        }
+
+        storage.iter().try_for_each(|(key, value)| self.put_storage(address, key, value))
+    }
+
+    /// Write changed contract bytecode from a [`StateChangeset`].
+    fn write_changed_contracts(
+        &self,
+        code_hash: &B256,
+        bytecode: &Bytecode,
+    ) -> Result<(), Self::Error> {
+        self.put_bytecode(code_hash, bytecode)
+    }
+
+    /// Write a state changeset for a specific block.
+    fn write_state_changes(
+        &self,
+        StateChangeset { accounts, storage, contracts }: &StateChangeset,
+    ) -> Result<(), Self::Error> {
+        contracts.iter().try_for_each(|(code_hash, bytecode)| {
+            self.write_changed_contracts(code_hash, bytecode)
+        })?;
+        accounts
+            .iter()
+            .try_for_each(|(address, account)| self.write_changed_account(address, account))?;
+        storage
+            .iter()
+            .try_for_each(|storage_changeset| self.write_changed_storage(storage_changeset))?;
+        Ok(())
     }
 }
 
