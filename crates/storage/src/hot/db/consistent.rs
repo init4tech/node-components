@@ -1,6 +1,6 @@
-use reth::primitives::SealedHeader;
-
 use crate::hot::db::{HistoryError, UnsafeDbWrite, UnsafeHistoryWrite};
+use reth::primitives::SealedHeader;
+use trevm::revm::database::BundleState;
 
 /// Trait for database write operations on hot history tables. This trait
 /// maintains a consistent state of the database.
@@ -67,6 +67,20 @@ pub trait HistoryWrite: UnsafeDbWrite + UnsafeHistoryWrite {
         }
 
         Ok(())
+    }
+
+    /// Append a range of blocks and their associated state to the database.
+    fn append_blocks(
+        &self,
+        blocks: &[(SealedHeader, BundleState)],
+    ) -> Result<(), HistoryError<Self::Error>> {
+        self.validate_chain_extension(blocks.iter().map(|(h, _)| h))?;
+
+        let Some(first_num) = blocks.first().map(|(h, _)| h.number) else { return Ok(()) };
+        let last_num = blocks.last().map(|(h, _)| h.number).expect("non-empty; qed");
+        self.append_blocks_inconsistent(blocks)?;
+
+        self.update_history_indices_inconsistent(first_num..=last_num)
     }
 }
 

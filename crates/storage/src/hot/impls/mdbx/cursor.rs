@@ -109,6 +109,82 @@ impl<K> DualKeyTraverse<MdbxError> for Cursor<'_, K>
 where
     K: TransactionKind,
 {
+    fn first<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        match self.inner.first::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                // For DUPSORT, the value contains key2 || actual_value.
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn last<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        match self.inner.last::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                // For DUPSORT, the value contains key2 || actual_value.
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn read_next<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        match self.inner.next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                // For DUPSORT, the value contains key2 || actual_value.
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn read_prev<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        match self.inner.prev::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                // For DUPSORT, the value contains key2 || actual_value.
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
+
     fn exact_dual<'a>(
         &'a mut self,
         key1: &[u8],

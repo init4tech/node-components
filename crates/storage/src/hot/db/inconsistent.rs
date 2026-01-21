@@ -7,7 +7,10 @@ use crate::hot::{
 };
 use alloy::primitives::{Address, B256, BlockNumber, U256};
 use itertools::Itertools;
-use reth::primitives::{Account, Header, SealedHeader};
+use reth::{
+    primitives::{Account, Header, SealedHeader},
+    revm::db::BundleState,
+};
 use reth_db::{
     BlockNumberList,
     models::{BlockNumberAddress, sharded_key},
@@ -15,8 +18,9 @@ use reth_db::{
 use reth_db_api::models::ShardedKey;
 use trevm::revm::{
     bytecode::Bytecode,
-    database::states::{
-        PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset,
+    database::{
+        OriginalValuesKnown,
+        states::{PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset},
     },
     state::AccountInfo,
 };
@@ -322,10 +326,8 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
             // Get the existing last shard (if any) and remember its key so we can
             // delete it before writing new shards
             let existing = self.last_account_history(acct)?;
-            let mut last_shard = existing
-                .as_ref()
-                .map(|(_, list)| list.clone())
-                .unwrap_or_default();
+            let mut last_shard =
+                existing.as_ref().map(|(_, list)| list.clone()).unwrap_or_default();
 
             last_shard.append(indices).map_err(HistoryError::IntList)?;
 
@@ -402,10 +404,8 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
             // Get the existing last shard (if any) and remember its key so we can
             // delete it before writing new shards
             let existing = self.last_storage_history(&addr, &slot)?;
-            let mut last_shard = existing
-                .as_ref()
-                .map(|(_, list)| list.clone())
-                .unwrap_or_default();
+            let mut last_shard =
+                existing.as_ref().map(|(_, list)| list.clone()).unwrap_or_default();
 
             last_shard.append(indices).map_err(HistoryError::IntList)?;
 
@@ -469,15 +469,36 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
     /// 1. It MUST be checked that the header is the child of the current chain
     ///    tip before calling this method.
     /// 2. After calling this method, the caller MUST call
-    ///    update_history_indices.
+    ///    `update_history_indices`.
     fn append_block_inconsistent(
         &self,
         header: &SealedHeader,
-        state_changes: &StateChangeset,
+        state_changes: &BundleState,
     ) -> Result<(), Self::Error> {
         self.put_header_inconsistent(header.header())?;
         self.put_header_number_inconsistent(&header.hash(), header.number)?;
-        self.write_state_changes(state_changes)
+
+        let (state_changes, reverts) =
+            state_changes.to_plain_state_and_reverts(OriginalValuesKnown::No);
+
+        self.write_state_changes(&state_changes)?;
+        self.write_plain_reverts(header.number, &reverts)
+    }
+
+    /// Append multiple blocks' headers and state changes in an inconsistent
+    /// manner.
+    ///
+    /// This may leave the database in an inconsistent state. Users should
+    /// prefer higher-level abstractions when possible.
+    /// 1. It MUST be checked that the first header is the child of the current
+    ///    chain tip before calling this method.
+    /// 2. After calling this method, the caller MUST call
+    ///    `update_history_indices`.
+    fn append_blocks_inconsistent(
+        &self,
+        blocks: &[(SealedHeader, BundleState)],
+    ) -> Result<(), Self::Error> {
+        blocks.iter().try_for_each(|(header, state)| self.append_block_inconsistent(header, state))
     }
 }
 

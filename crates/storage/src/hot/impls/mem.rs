@@ -380,6 +380,51 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursor<'a> {
 
 // Implement DualKeyedTraverse (basic implementation - delegates to raw methods)
 impl<'a> DualKeyTraverse<MemKvError> for MemKvCursor<'a> {
+    fn first<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let Some((key, value)) = self.table.first_key_value() else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        self.set_current_key(*key);
+        let (k1, k2) = MemKv::split_dual_key(key);
+        Ok(Some((k1, k2, Cow::Borrowed(value.as_ref()))))
+    }
+
+    fn last<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let Some((key, value)) = self.table.last_key_value() else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        self.set_current_key(*key);
+        let (k1, k2) = MemKv::split_dual_key(key);
+        Ok(Some((k1, k2, Cow::Borrowed(value.as_ref()))))
+    }
+
+    fn read_next<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        use core::ops::Bound;
+        let current = self.current_key();
+        // Use Excluded bound to find strictly greater than current key
+        let Some((found_key, value)) =
+            self.table.range((Bound::Excluded(current), Bound::Unbounded)).next()
+        else {
+            return Ok(None);
+        };
+        self.set_current_key(*found_key);
+        let (k1, k2) = MemKv::split_dual_key(found_key);
+        Ok(Some((k1, k2, Cow::Borrowed(value.as_ref()))))
+    }
+
+    fn read_prev<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current = self.current_key();
+        let Some((k, v)) = self.table.range(..current).next_back() else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        self.set_current_key(*k);
+        let (k1, k2) = MemKv::split_dual_key(k);
+        Ok(Some((k1, k2, Cow::Borrowed(v.as_ref()))))
+    }
+
     fn exact_dual<'b>(
         &'b mut self,
         key1: &[u8],
@@ -842,6 +887,76 @@ impl<'a> KvTraverseMut<MemKvError> for MemKvCursorMut<'a> {
 }
 
 impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
+    fn first<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let start_key = [0u8; MAX_KEY_SIZE * 2];
+
+        // Get the first effective key-value pair
+        if let Some((key, value)) = self.get_range_owned(&start_key) {
+            self.set_current_key(key);
+            let (k1, k2) = MemKv::split_dual_key(&key);
+            Ok(Some((
+                Cow::Owned(k1.to_vec()),
+                Cow::Owned(k2.to_vec()),
+                Cow::Owned(value.to_vec()),
+            )))
+        } else {
+            self.clear_current_key();
+            Ok(None)
+        }
+    }
+
+    fn last<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let end_key = [0xffu8; MAX_KEY_SIZE * 2];
+
+        if let Some((key, value)) = self.get_range_reverse_owned(&end_key) {
+            self.set_current_key(key);
+            let (k1, k2) = MemKv::split_dual_key(&key);
+            Ok(Some((
+                Cow::Owned(k1.to_vec()),
+                Cow::Owned(k2.to_vec()),
+                Cow::Owned(value.to_vec()),
+            )))
+        } else {
+            self.clear_current_key();
+            Ok(None)
+        }
+    }
+
+    fn read_next<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current = self.current_key();
+
+        // Use exclusive range to find strictly greater than current key
+        if let Some((found_key, value)) = self.get_range_exclusive_owned(&current) {
+            self.set_current_key(found_key);
+            let (k1, k2) = MemKv::split_dual_key(&found_key);
+            Ok(Some((
+                Cow::Owned(k1.to_vec()),
+                Cow::Owned(k2.to_vec()),
+                Cow::Owned(value.to_vec()),
+            )))
+        } else {
+            self.clear_current_key();
+            Ok(None)
+        }
+    }
+
+    fn read_prev<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current = self.current_key();
+
+        if let Some((found_key, value)) = self.get_range_reverse_owned(&current) {
+            self.set_current_key(found_key);
+            let (k1, k2) = MemKv::split_dual_key(&found_key);
+            Ok(Some((
+                Cow::Owned(k1.to_vec()),
+                Cow::Owned(k2.to_vec()),
+                Cow::Owned(value.to_vec()),
+            )))
+        } else {
+            self.clear_current_key();
+            Ok(None)
+        }
+    }
+
     fn exact_dual<'b>(
         &'b mut self,
         key1: &[u8],

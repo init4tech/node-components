@@ -139,10 +139,11 @@ pub trait HotHistoryRead: HotDbRead {
         let result = cursor.next_dual_above(address, &target)?;
 
         // Check if we found an exact match for this address and slot
-        if let Some((addr, sharded_key, list)) = result {
-            if addr == *address && sharded_key.key == *slot {
-                return Ok(Some((sharded_key, list)));
-            }
+        if let Some((addr, sharded_key, list)) = result
+            && addr == *address
+            && sharded_key.key == *slot
+        {
+            return Ok(Some((sharded_key, list)));
         }
 
         // The cursor is positioned at or after our target. Go backwards to find
