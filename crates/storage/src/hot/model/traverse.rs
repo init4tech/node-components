@@ -163,7 +163,7 @@ pub trait TableTraverseMut<T: Table, E: HotKvReadError>: KvTraverseMut<E> {
     }
 }
 
-/// Blanket implementation of `TableTraverseMut` for any cursor that implements `KvTraverseMut`.
+/// Blanket implementation of [`TableTraverseMut`] for any cursor that implements [`KvTraverseMut`].
 impl<C, T, E> TableTraverseMut<T, E> for C
 where
     C: KvTraverseMut<E>,
@@ -177,10 +177,10 @@ where
 /// This is an extension trait rather than a wrapper struct because MDBX
 /// requires specialized implementations for DUPSORT tables that need access
 /// to the table type `T` to handle fixed-size values correctly.
-pub trait DualTableTraverse<T: DualKey, E: HotKvReadError> {
+pub trait DualTableTraverse<T: DualKey, E: HotKvReadError>: DualKeyTraverse<E> {
     /// Return the EXACT value for the specified dual key if it exists.
     fn exact_dual(&mut self, key1: &T::Key, key2: &T::Key2) -> Result<Option<T::Value>, E> {
-        let Some((k1, k2, v)) = self.next_dual_above(key1, key2)? else {
+        let Some((k1, k2, v)) = DualTableTraverse::next_dual_above(self, key1, key2)? else {
             return Ok(None);
         };
 
@@ -199,6 +199,37 @@ pub trait DualTableTraverse<T: DualKey, E: HotKvReadError> {
 
     /// Seek to the next distinct key2 for the current key1.
     fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E>;
+}
+
+impl<C, T, E> DualTableTraverse<T, E> for C
+where
+    C: DualKeyTraverse<E>,
+    T: DualKey,
+    E: HotKvReadError,
+{
+    fn next_dual_above(
+        &mut self,
+        key1: &T::Key,
+        key2: &T::Key2,
+    ) -> Result<Option<DualKeyValue<T>>, E> {
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let mut key2_buf = [0u8; MAX_KEY_SIZE];
+        let key1_bytes = key1.encode_key(&mut key1_buf);
+        let key2_bytes = key2.encode_key(&mut key2_buf);
+
+        DualKeyTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
+            .map(T::decode_kkv_tuple)
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualKeyTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+    }
+
+    fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+    }
 }
 
 // ============================================================================

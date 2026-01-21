@@ -31,7 +31,7 @@ pub trait Table: Sized + Send + Sync + 'static {
     const NAME: &'static str;
 
     /// Indicates that this table uses dual keys.
-    const DUAL_KEY: bool = false;
+    const DUAL_KEY: bool = Self::DUAL_KEY_SIZE.is_some();
 
     /// True if the table is guaranteed to have fixed-size values of size
     /// [`MAX_FIXED_VAL_SIZE`] or less, false otherwise.
@@ -42,6 +42,10 @@ pub trait Table: Sized + Send + Sync + 'static {
         }
     };
 
+    /// If the table uses dual keys, this is the size of the second key.
+    /// Otherwise, it is `None`.
+    const DUAL_KEY_SIZE: Option<usize> = None;
+
     /// Indicates that this table has fixed-size values.
     const IS_FIXED_VAL: bool = Self::FIXED_VAL_SIZE.is_some();
 
@@ -51,6 +55,13 @@ pub trait Table: Sized + Send + Sync + 'static {
         // Ensure that fixed-size values do not exceed the maximum allowed size.
         if let Some(size) = Self::FIXED_VAL_SIZE {
             assert!(size <= MAX_FIXED_VAL_SIZE, "Fixed value size exceeds maximum allowed size");
+        }
+
+        if let Some(dual_key_size) = Self::DUAL_KEY_SIZE {
+            assert!(Self::DUAL_KEY, "DUAL_KEY_SIZE is set but DUAL_KEY is false");
+            assert!(dual_key_size > 0, "DUAL_KEY_SIZE must be greater than zero");
+        } else {
+            assert!(!Self::DUAL_KEY, "DUAL_KEY is true but DUAL_KEY_SIZE is None");
         }
 
         assert!(std::mem::size_of::<Self>() == 0, "Table types must be zero-sized types (ZSTs).");

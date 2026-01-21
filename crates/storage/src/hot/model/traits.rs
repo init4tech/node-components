@@ -1,7 +1,7 @@
 use crate::hot::{
     model::{
-        DualTableCursor, GetManyItem, HotKvError, HotKvReadError, KvTraverse, KvTraverseMut,
-        TableCursor,
+        DualKeyTraverse, DualTableCursor, GetManyItem, HotKvError, HotKvReadError, KvTraverse,
+        KvTraverseMut, TableCursor,
         revm::{RevmRead, RevmWrite},
     },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
@@ -72,12 +72,12 @@ pub trait HotKvRead {
     type Error: HotKvReadError;
 
     /// The cursor type for traversing key-value pairs.
-    type Traverse<'a>: KvTraverse<Self::Error>
+    type Traverse<'a>: KvTraverse<Self::Error> + DualKeyTraverse<Self::Error>
     where
         Self: 'a;
 
     /// Get a raw cursor to traverse the database.
-    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error>;
+    fn raw_traverse<'a>(&'a self, table: &'static str) -> Result<Self::Traverse<'a>, Self::Error>;
 
     /// Get a raw value from a specific table.
     ///
@@ -85,8 +85,11 @@ pub trait HotKvRead {
     /// allowed to panic if this is not the case.
     ///
     /// If the table is dual-keyed, the output MAY be implementation-defined.
-    fn raw_get<'a>(&'a self, table: &str, key: &[u8])
-    -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
+    fn raw_get<'a>(
+        &'a self,
+        table: &'static str,
+        key: &[u8],
+    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
 
     /// Get a raw value from a specific table with dual keys.
     ///
@@ -99,7 +102,7 @@ pub trait HotKvRead {
     /// implementation-defined.
     fn raw_get_dual<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error>;
@@ -205,21 +208,26 @@ pub trait HotKvRead {
 /// This extends the [`HotKvRead`] trait with write capabilities.
 pub trait HotKvWrite: HotKvRead {
     /// The mutable cursor type for traversing key-value pairs.
-    type TraverseMut<'a>: KvTraverseMut<Self::Error>
+    type TraverseMut<'a>: KvTraverseMut<Self::Error> + DualKeyTraverse<Self::Error>
     where
         Self: 'a;
 
     /// Get a raw mutable cursor to traverse the database.
     fn raw_traverse_mut<'a>(
         &'a mut self,
-        table: &str,
+        table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error>;
 
     /// Queue a raw put operation.
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
     /// allowed to panic if this is not the case.
-    fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
+    fn queue_raw_put(
+        &mut self,
+        table: &'static str,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error>;
 
     /// Queue a raw put operation for a dual-keyed table.
     ////
@@ -227,7 +235,7 @@ pub trait HotKvWrite: HotKvRead {
     /// Implementations are allowed to panic if this is not the case.
     fn queue_raw_put_dual(
         &mut self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
         value: &[u8],
@@ -237,24 +245,38 @@ pub trait HotKvWrite: HotKvRead {
     ///
     /// The `key` buf must be <= [`MAX_KEY_SIZE`] bytes. Implementations are
     /// allowed to panic if this is not the case.
-    fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error>;
+    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error>;
+
+    /// Queue a raw delete operation for a dual-keyed table.
+    ///
+    /// The `key1` and `key2` buf must be <= [`MAX_KEY_SIZE`] bytes.
+    /// Implementations are allowed to panic if this is not the case.
+    fn queue_raw_delete_dual(
+        &mut self,
+        table: &'static str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<(), Self::Error>;
 
     /// Queue a raw clear operation for a specific table.
-    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error>;
+    fn queue_raw_clear(&mut self, table: &'static str) -> Result<(), Self::Error>;
 
     /// Queue a raw create operation for a specific table.
     ///
     /// This abstraction supports two table specializations:
-    /// 1. `dual_key`: whether the table uses dual keys (interior maps, called
-    ///    `DUPSORT` in LMDB/MDBX).
-    /// 2. `fixed_val`: whether the table has fixed-size values.
+    /// 1. `dual_key_size` - whether the table is dual-keyed (i.e.,
+    ///    `DUPSORT` in LMDB/MDBX). If so, the argument MUST be the
+    ///    encoded size of the second key. If not, it MUST be `None`.
+    /// 2. `fixed_val_size`: whether the table has fixed-size values.
+    ///    If so, the argument MUST be the size of the fixed value.
+    ///    If not, it MUST be `None`.
     ///
     /// Database implementations can use this information for optimizations.
     fn queue_raw_create(
         &mut self,
-        table: &str,
-        dual_key: bool,
-        fixed_val: bool,
+        table: &'static str,
+        dual_key_size: Option<usize>,
+        fixed_val: Option<usize>,
     ) -> Result<(), Self::Error>;
 
     /// Traverse a specific table. Returns a mutable typed cursor wrapper.
@@ -313,6 +335,20 @@ pub trait HotKvWrite: HotKvRead {
         self.queue_raw_delete(T::NAME, key_bytes)
     }
 
+    /// Queue a delete operation for a specific dual-keyed table.
+    fn queue_delete_dual<T: DualKey>(
+        &mut self,
+        key1: &T::Key,
+        key2: &T::Key2,
+    ) -> Result<(), Self::Error> {
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let mut key2_buf = [0u8; MAX_KEY_SIZE];
+        let key1_bytes = key1.encode_key(&mut key1_buf);
+        let key2_bytes = key2.encode_key(&mut key2_buf);
+
+        self.queue_raw_delete_dual(T::NAME, key1_bytes, key2_bytes)
+    }
+
     /// Queue many put operations for a specific table.
     fn queue_put_many<'a, 'b, T, I>(&mut self, entries: I) -> Result<(), Self::Error>
     where
@@ -338,7 +374,7 @@ pub trait HotKvWrite: HotKvRead {
     where
         T: Table,
     {
-        self.queue_raw_create(T::NAME, T::DUAL_KEY, T::IS_FIXED_VAL)
+        self.queue_raw_create(T::NAME, T::DUAL_KEY_SIZE, T::FIXED_VAL_SIZE)
     }
 
     /// Queue clearing all entries in a specific table.

@@ -1,357 +1,54 @@
+//! Utilities for testing MDBX storage implementation.
+
 use crate::hot::{
-    DeserError, KeySer, MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
-    model::{
-        DualKeyTraverse, DualKeyValue, DualTableTraverse, HotKv, HotKvError, HotKvRead,
-        HotKvReadError, HotKvWrite, KvTraverse, KvTraverseMut, RawDualKeyValue, RawKeyValue,
-        RawValue,
-    },
-    tables::DualKey,
+    impls::mdbx::{DatabaseArguments, DatabaseEnv, DatabaseEnvKind},
+    model::{HotDbWrite, HotKv, HotKvWrite},
+    tables::{self, SingleKey, Table},
 };
-use bytes::{BufMut, BytesMut};
-use reth_db::{
-    Database, DatabaseEnv,
-    mdbx::{RW, TransactionKind, WriteFlags, tx::Tx},
-};
-use reth_db_api::DatabaseError;
-use reth_libmdbx::{Cursor, DatabaseFlags, RO};
-use std::borrow::Cow;
+use alloy::primitives::Bytes;
+use reth_libmdbx::MaxReadTransactionDuration;
+use tempfile::{TempDir, tempdir};
 
-/// Error type for reth-libmdbx based hot storage.
-#[derive(Debug, thiserror::Error)]
-pub enum MdbxError {
-    /// Inner error
-    #[error(transparent)]
-    Mdbx(#[from] reth_libmdbx::Error),
+// Test table definitions for traversal tests
+#[derive(Debug)]
+struct TestTable;
 
-    /// Reth error.
-    #[error(transparent)]
-    Reth(#[from] DatabaseError),
-
-    /// Deser.
-    #[error(transparent)]
-    Deser(#[from] DeserError),
+impl Table for TestTable {
+    const NAME: &'static str = "mdbx_test_table";
+    type Key = u64;
+    type Value = Bytes;
 }
 
-impl trevm::revm::database::DBErrorMarker for MdbxError {}
+impl SingleKey for TestTable {}
 
-impl HotKvReadError for MdbxError {
-    fn into_hot_kv_error(self) -> HotKvError {
-        match self {
-            MdbxError::Mdbx(e) => HotKvError::from_err(e),
-            MdbxError::Deser(e) => HotKvError::Deser(e),
-            MdbxError::Reth(e) => HotKvError::from_err(e),
-        }
-    }
-}
+/// Creates a temporary MDBX database for testing that will be automatically
+/// cleaned up when the TempDir is dropped.
+pub fn create_test_rw_db() -> (TempDir, DatabaseEnv) {
+    let dir = tempdir().unwrap();
 
-impl From<DeserError> for DatabaseError {
-    fn from(value: DeserError) -> Self {
-        DatabaseError::Other(value.to_string())
-    }
-}
+    let args = DatabaseArguments::new()
+        .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded));
 
-impl HotKv for DatabaseEnv {
-    type RoTx = Tx<RO>;
-    type RwTx = Tx<RW>;
+    let db = DatabaseEnv::open(dir.path(), DatabaseEnvKind::RW, args).unwrap();
 
-    fn reader(&self) -> Result<Self::RoTx, HotKvError> {
-        self.tx().map_err(HotKvError::from_err)
-    }
+    // Create tables from the `crate::tables::hot` module
+    let mut writer = db.writer().unwrap();
 
-    fn writer(&self) -> Result<Self::RwTx, HotKvError> {
-        self.tx_mut().map_err(HotKvError::from_err)
-    }
-}
+    writer.queue_create::<tables::Headers>().unwrap();
+    writer.queue_create::<tables::HeaderNumbers>().unwrap();
+    writer.queue_create::<tables::Bytecodes>().unwrap();
+    writer.queue_create::<tables::PlainAccountState>().unwrap();
+    writer.queue_create::<tables::AccountsHistory>().unwrap();
+    writer.queue_create::<tables::StorageHistory>().unwrap();
+    writer.queue_create::<tables::PlainStorageState>().unwrap();
+    writer.queue_create::<tables::StorageChangeSets>().unwrap();
+    writer.queue_create::<tables::AccountChangeSets>().unwrap();
 
-impl<K> HotKvRead for Tx<K>
-where
-    K: TransactionKind,
-{
-    type Error = MdbxError;
+    writer.queue_create::<TestTable>().unwrap();
 
-    type Traverse<'a> = Cursor<K>;
+    writer.commit().expect("Failed to commit table creation");
 
-    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-        let cursor = self.inner.cursor(dbi)?;
-
-        Ok(cursor)
-    }
-
-    fn raw_get<'a>(
-        &'a self,
-        table: &str,
-        key: &[u8],
-    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-
-        self.inner.get(dbi, key.as_ref()).map_err(MdbxError::Mdbx)
-    }
-
-    fn raw_get_dual<'a>(
-        &'a self,
-        _table: &str,
-        _key1: &[u8],
-        _key2: &[u8],
-    ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
-        unimplemented!("Not implemented: raw_get_dual. Use get_dual instead.");
-    }
-
-    fn get_dual<T: DualKey>(
-        &self,
-        key1: &T::Key,
-        key2: &T::Key2,
-    ) -> Result<Option<T::Value>, Self::Error> {
-        let dbi = self.get_dbi_raw(T::NAME)?;
-        let mut cursor = self.inner.cursor(dbi)?;
-
-        DualTableTraverse::<T, MdbxError>::exact_dual(&mut cursor, key1, key2)
-    }
-}
-
-impl HotKvWrite for Tx<RW> {
-    type TraverseMut<'a> = Cursor<RW>;
-
-    fn raw_traverse_mut<'a>(
-        &'a mut self,
-        table: &str,
-    ) -> Result<Self::TraverseMut<'a>, Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-        let cursor = self.inner.cursor(dbi)?;
-
-        Ok(cursor)
-    }
-
-    fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-
-        self.inner.put(dbi, key, value, WriteFlags::UPSERT).map(|_| ()).map_err(MdbxError::Mdbx)
-    }
-
-    fn queue_raw_put_dual(
-        &mut self,
-        _table: &str,
-        _key1: &[u8],
-        _key2: &[u8],
-        _value: &[u8],
-    ) -> Result<(), Self::Error> {
-        unimplemented!("Not implemented: queue_raw_put_dual. Use queue_put_dual instead.");
-    }
-
-    // Specialized put for dual-keyed tables.
-    fn queue_put_dual<T: DualKey>(
-        &mut self,
-        key1: &T::Key,
-        key2: &T::Key2,
-        value: &T::Value,
-    ) -> Result<(), Self::Error> {
-        let k2_size = <T::Key2 as KeySer>::SIZE;
-        let mut scratch = [0u8; MAX_KEY_SIZE];
-
-        // This will be the total length of key2 + value, reserved in mdbx
-        let encoded_len = k2_size + value.encoded_size();
-
-        // Prepend the value with k2.
-        let mut buf = BytesMut::with_capacity(encoded_len);
-        let encoded_k2 = key2.encode_key(&mut scratch);
-        buf.put_slice(encoded_k2);
-        value.encode_value_to(&mut buf);
-
-        let encoded_k1 = key1.encode_key(&mut scratch);
-        // NB: DUPSORT and RESERVE are incompatible :(
-        let dbi = self.get_dbi_raw(T::NAME)?;
-        self.inner.put(dbi, encoded_k1, &buf, Default::default())?;
-
-        Ok(())
-    }
-
-    fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-        self.inner.del(dbi, key, None).map(|_| ()).map_err(MdbxError::Mdbx)
-    }
-
-    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error> {
-        let dbi = self.get_dbi_raw(table)?;
-        self.inner.clear_db(dbi).map(|_| ()).map_err(MdbxError::Mdbx)
-    }
-
-    fn queue_raw_create(
-        &mut self,
-        table: &str,
-        dual_key: bool,
-        fixed_val: bool,
-    ) -> Result<(), Self::Error> {
-        let mut flags = DatabaseFlags::default();
-
-        if dual_key {
-            flags.set(reth_libmdbx::DatabaseFlags::DUP_SORT, true);
-            if fixed_val {
-                flags.set(reth_libmdbx::DatabaseFlags::DUP_FIXED, true);
-            }
-        }
-
-        self.inner.create_db(Some(table), flags).map(|_| ()).map_err(MdbxError::Mdbx)
-    }
-
-    fn raw_commit(self) -> Result<(), Self::Error> {
-        // when committing, mdbx returns true on failure
-        self.inner.commit().map(drop).map_err(MdbxError::Mdbx)
-    }
-}
-
-impl<K> KvTraverse<MdbxError> for Cursor<K>
-where
-    K: TransactionKind,
-{
-    fn first<'a>(&'a mut self) -> Result<Option<RawKeyValue<'a>>, MdbxError> {
-        Cursor::first(self).map_err(MdbxError::Mdbx)
-    }
-
-    fn last<'a>(&'a mut self) -> Result<Option<RawKeyValue<'a>>, MdbxError> {
-        Cursor::last(self).map_err(MdbxError::Mdbx)
-    }
-
-    fn exact<'a>(&'a mut self, key: &[u8]) -> Result<Option<RawValue<'a>>, MdbxError> {
-        Cursor::set(self, key).map_err(MdbxError::Mdbx)
-    }
-
-    fn lower_bound<'a>(&'a mut self, key: &[u8]) -> Result<Option<RawKeyValue<'a>>, MdbxError> {
-        Cursor::set_range(self, key).map_err(MdbxError::Mdbx)
-    }
-
-    fn read_next<'a>(&'a mut self) -> Result<Option<RawKeyValue<'a>>, MdbxError> {
-        Cursor::next(self).map_err(MdbxError::Mdbx)
-    }
-
-    fn read_prev<'a>(&'a mut self) -> Result<Option<RawKeyValue<'a>>, MdbxError> {
-        Cursor::prev(self).map_err(MdbxError::Mdbx)
-    }
-}
-
-impl KvTraverseMut<MdbxError> for Cursor<RW> {
-    fn delete_current(&mut self) -> Result<(), MdbxError> {
-        Cursor::del(self, Default::default()).map_err(MdbxError::Mdbx)
-    }
-}
-
-impl<K> DualKeyTraverse<MdbxError> for Cursor<K>
-where
-    K: TransactionKind,
-{
-    fn exact_dual<'a>(
-        &'a mut self,
-        _key1: &[u8],
-        _key2: &[u8],
-    ) -> Result<Option<RawValue<'a>>, MdbxError> {
-        unimplemented!("Use DualTableTraverse for exact_dual");
-    }
-
-    fn next_dual_above<'a>(
-        &'a mut self,
-        _key1: &[u8],
-        _key2: &[u8],
-    ) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
-        unimplemented!("Use DualTableTraverse for next_dual_above");
-    }
-
-    fn next_k1<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
-        unimplemented!("Use DualTableTraverse for next_k1");
-    }
-
-    fn next_k2<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
-        unimplemented!("Use DualTableTraverse for next_k2");
-    }
-}
-
-impl<T, K> DualTableTraverse<T, MdbxError> for Cursor<K>
-where
-    T: DualKey,
-    K: TransactionKind,
-{
-    fn next_dual_above(
-        &mut self,
-        key1: &T::Key,
-        key2: &T::Key2,
-    ) -> Result<Option<DualKeyValue<T>>, MdbxError> {
-        Ok(get_both_range_helper::<T, K>(self, key1, key2)?
-            .map(T::decode_prepended_value)
-            .transpose()?
-            .map(|(k2, v)| (key1.clone(), k2, v)))
-    }
-
-    fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, MdbxError> {
-        let Some((k, v)) = self.next_nodup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? else {
-            return Ok(None);
-        };
-
-        let k1 = T::Key::decode_key(&k)?;
-        let (k2, v) = T::decode_prepended_value(v)?;
-
-        Ok(Some((k1, k2, v)))
-    }
-
-    fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, MdbxError> {
-        let Some((k, v)) = self.next_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? else {
-            return Ok(None);
-        };
-
-        let k = T::Key::decode_key(&k)?;
-        let (k2, v) = T::decode_prepended_value(v)?;
-
-        Ok(Some((k, k2, v)))
-    }
-}
-
-/// Helper to handle dup fixed value tables
-fn dup_fixed_helper<T, K, Out>(
-    cursor: &mut Cursor<K>,
-    key1: &T::Key,
-    key2: &T::Key2,
-    f: impl FnOnce(&mut Cursor<K>, &[u8], &[u8]) -> Result<Out, MdbxError>,
-) -> Result<Out, MdbxError>
-where
-    T: DualKey,
-    K: TransactionKind,
-{
-    let mut key1_buf = [0u8; MAX_KEY_SIZE];
-    let mut key2_buf = [0u8; MAX_KEY_SIZE];
-    let key1_bytes = key1.encode_key(&mut key1_buf);
-    let key2_bytes = key2.encode_key(&mut key2_buf);
-
-    // K2 slice must be EXACTLY the size of the fixed value size, if the
-    // table has one. This is a bit ugly, and results in an extra
-    // allocation for fixed-size values. This could be avoided using
-    // max value size.
-    if T::IS_FIXED_VAL {
-        let mut buf = [0u8; MAX_KEY_SIZE + MAX_FIXED_VAL_SIZE];
-        buf[..<T::Key2 as KeySer>::SIZE].copy_from_slice(key2_bytes);
-
-        let kvs: usize = <T::Key2 as KeySer>::SIZE + T::FIXED_VAL_SIZE.unwrap();
-
-        f(cursor, key1_bytes, &buf[..kvs])
-    } else {
-        f(cursor, key1_bytes, key2_bytes)
-    }
-}
-
-// Helper to call get_both_range with dup fixed handling
-fn get_both_range_helper<'a, T, K>(
-    cursor: &'a mut Cursor<K>,
-    key1: &T::Key,
-    key2: &T::Key2,
-) -> Result<Option<RawValue<'a>>, MdbxError>
-where
-    T: DualKey,
-    K: TransactionKind,
-{
-    dup_fixed_helper::<T, K, Option<RawValue<'a>>>(
-        cursor,
-        key1,
-        key2,
-        |cursor, key1_bytes, key2_bytes| {
-            cursor.get_both_range(key1_bytes, key2_bytes).map_err(MdbxError::Mdbx)
-        },
-    )
+    (dir, db)
 }
 
 #[cfg(test)]
@@ -359,48 +56,25 @@ mod tests {
     use super::*;
     use crate::hot::{
         conformance::conformance,
-        model::{HotDbWrite, HotKv, HotKvRead, HotKvWrite, TableTraverse, TableTraverseMut},
-        tables::{self, SingleKey, Table},
+        impls::mdbx::Tx,
+        model::{
+            DualTableTraverse, HotDbWrite, HotKv, HotKvRead, HotKvWrite, TableTraverse,
+            TableTraverseMut,
+        },
+        tables,
     };
     use alloy::primitives::{Address, B256, BlockNumber, Bytes, U256};
     use reth::primitives::{Account, Bytecode, Header, SealedHeader};
-    use reth_db::{ClientVersion, DatabaseEnv, mdbx::DatabaseArguments, test_utils::tempdir_path};
-    use reth_libmdbx::MaxReadTransactionDuration;
+    use reth_libmdbx::{RO, RW};
     use serial_test::serial;
-
-    // Test table definitions for traversal tests
-    #[derive(Debug)]
-    struct TestTable;
-
-    impl Table for TestTable {
-        const NAME: &'static str = "mdbx_test_table";
-        type Key = u64;
-        type Value = Bytes;
-    }
-
-    impl SingleKey for TestTable {}
 
     /// Create a temporary MDBX database for testing that will be automatically cleaned up
     fn run_test<F: FnOnce(&DatabaseEnv)>(f: F) {
-        let db = reth_db::test_utils::create_test_rw_db();
+        let (dir, db) = create_test_rw_db();
 
-        // Create tables from the `crate::tables::hot` module
-        let mut writer = db.db().writer().unwrap();
+        f(&db);
 
-        writer.queue_create::<tables::Headers>().unwrap();
-        writer.queue_create::<tables::HeaderNumbers>().unwrap();
-        writer.queue_create::<tables::Bytecodes>().unwrap();
-        writer.queue_create::<tables::PlainAccountState>().unwrap();
-        writer.queue_create::<tables::AccountsHistory>().unwrap();
-        writer.queue_create::<tables::StorageHistory>().unwrap();
-        writer.queue_create::<tables::PlainStorageState>().unwrap();
-        writer.queue_create::<tables::StorageChangeSets>().unwrap();
-        writer.queue_create::<tables::AccountChangeSets>().unwrap();
-        writer.queue_create::<TestTable>().unwrap();
-
-        writer.commit().expect("Failed to commit table creation");
-
-        f(db.db());
+        drop(dir);
     }
 
     /// Create test data
@@ -496,7 +170,7 @@ mod tests {
             let mut writer: Tx<RW> = db.writer().unwrap();
 
             // Create table
-            writer.queue_raw_create(table_name, false, false).unwrap();
+            writer.queue_raw_create(table_name, None, None).unwrap();
 
             // Put raw data
             writer.queue_raw_put(table_name, key, value).unwrap();
@@ -862,8 +536,7 @@ mod tests {
         // Test cursor traversal
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // Test first()
             let first_result = TableTraverse::<TestTable, _>::first(&mut cursor).unwrap();
@@ -927,8 +600,7 @@ mod tests {
         // Test sequential navigation
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // Start from first and traverse forward
             let mut current_idx = 0;
@@ -995,8 +667,7 @@ mod tests {
         {
             let tx: Tx<RW> = db.writer().unwrap();
 
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // Navigate to middle entry
             let first = TableTraverse::<TestTable, _>::first(&mut cursor).unwrap().unwrap();
@@ -1008,14 +679,14 @@ mod tests {
             // Delete current entry (key 2)
             TableTraverseMut::<TestTable, _>::delete_current(&mut cursor).unwrap();
 
+            drop(cursor);
             tx.raw_commit().unwrap();
         }
 
         // Verify deletion
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // Should only have first and third entries
             let first = TableTraverse::<TestTable, _>::first(&mut cursor).unwrap().unwrap();
@@ -1070,8 +741,7 @@ mod tests {
         // Test typed table traversal
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(tables::PlainAccountState::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<tables::PlainAccountState>().unwrap();
 
             // Test first with type-safe operations
             let first_raw =
@@ -1158,8 +828,7 @@ mod tests {
         // Test dual-keyed traversal
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(tables::PlainStorageState::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<tables::PlainStorageState>().unwrap();
 
             // Test exact dual lookup
             let address = &test_storage[1].0;
@@ -1231,8 +900,7 @@ mod tests {
 
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(tables::PlainStorageState::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<tables::PlainStorageState>().unwrap();
 
             // Test exact lookup for non-existent dual key
             let missing_addr = Address::from_slice(&[0xFF; 20]);
@@ -1279,8 +947,7 @@ mod tests {
         // TestTable is already created but empty
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // All operations should return None on empty table
             assert!(TableTraverse::<TestTable, _>::first(&mut cursor).unwrap().is_none());
@@ -1316,8 +983,7 @@ mod tests {
 
         {
             let tx: Tx<RO> = db.reader().unwrap();
-            let dbi = tx.get_dbi_raw(TestTable::NAME).unwrap();
-            let mut cursor = tx.inner.cursor(dbi).unwrap();
+            let mut cursor = tx.new_cursor::<TestTable>().unwrap();
 
             // Test that cursor operations maintain state correctly
 
@@ -1363,29 +1029,76 @@ mod tests {
 
     #[test]
     fn mdbx_conformance() {
-        let path = tempdir_path();
-        let db = reth_db::create_db(
-            &path,
-            DatabaseArguments::new(ClientVersion::default())
-                .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded)),
-        )
-        .unwrap();
-
-        // Create tables from the `crate::tables::hot` module
-        let mut writer = db.writer().unwrap();
-
-        writer.queue_create::<tables::Headers>().unwrap();
-        writer.queue_create::<tables::HeaderNumbers>().unwrap();
-        writer.queue_create::<tables::Bytecodes>().unwrap();
-        writer.queue_create::<tables::PlainAccountState>().unwrap();
-        writer.queue_create::<tables::AccountsHistory>().unwrap();
-        writer.queue_create::<tables::StorageHistory>().unwrap();
-        writer.queue_create::<tables::PlainStorageState>().unwrap();
-        writer.queue_create::<tables::StorageChangeSets>().unwrap();
-        writer.queue_create::<tables::AccountChangeSets>().unwrap();
-
-        writer.commit().expect("Failed to commit table creation");
-
-        conformance(&db);
+        run_test(conformance)
     }
+
+    #[test]
+    fn test_cache_db_info() {
+        run_test(test_cache_db_info_inner)
+    }
+
+    fn test_cache_db_info_inner(db: &DatabaseEnv) {
+        // Tables are already created in create_test_rw_db()
+        // Try to get cache_db_info for an existing table
+        let reader: Tx<RO> = db.reader().unwrap();
+
+        // This should work - Headers table was created in setup
+        reader.cache_db_info::<tables::Headers>().unwrap();
+
+        // Try with TestTable which was also created
+        reader.cache_db_info::<TestTable>().unwrap();
+
+        // Use a DUP_FIXED table and assert the result contains the expected
+        // flags
+        let result3 = reader.cache_db_info::<tables::PlainStorageState>().unwrap();
+        assert!(result3.is_dupfixed());
+    }
+
+    #[test]
+    fn test_storage_roundtrip_debug() {
+        run_test(test_storage_roundtrip_debug_inner)
+    }
+
+    fn test_storage_roundtrip_debug_inner(db: &DatabaseEnv) {
+        use alloy::primitives::{address, b256};
+
+        let addr = address!("0xabcdef0123456789abcdef0123456789abcdef01");
+        let slot = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let value = U256::from(999);
+
+        // Write storage
+        {
+            let mut writer: Tx<RW> = db.writer().unwrap();
+
+            // Check db_info before write
+            {
+                let db_info = writer.cache_db_info::<tables::PlainStorageState>().unwrap();
+                assert!(db_info.is_dupfixed());
+            }
+
+            writer.queue_put_dual::<tables::PlainStorageState>(&addr, &slot, &value).unwrap();
+            writer.raw_commit().unwrap();
+        }
+
+        // Read storage
+        {
+            let reader: Tx<RO> = db.reader().unwrap();
+
+            // Check db_info after write
+            {
+                let db_info = reader.cache_db_info::<tables::PlainStorageState>().unwrap();
+                assert!(db_info.is_dupfixed());
+            }
+
+            let read_value = reader.get_dual::<tables::PlainStorageState>(&addr, &slot).unwrap();
+            assert!(read_value.is_some());
+            assert_eq!(read_value.unwrap(), U256::from(999));
+        }
+    }
+
+    // #[test]
+    // fn mdbx_append_unwind_conformance() {
+    //     let (dir, db) = create_test_rw_db();
+    //     conformance_append_unwind(&db);
+    // }
 }

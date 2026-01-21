@@ -42,13 +42,13 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
     where
         U: 'a;
 
-    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error> {
+    fn raw_traverse<'a>(&'a self, table: &'static str) -> Result<Self::Traverse<'a>, Self::Error> {
         self.reader.raw_traverse(table)
     }
 
     fn raw_get<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key: &[u8],
     ) -> Result<Option<std::borrow::Cow<'a, [u8]>>, Self::Error> {
         self.reader.raw_get(table, key)
@@ -56,7 +56,7 @@ impl<U: HotKvRead> HotKvRead for RevmRead<U> {
 
     fn raw_get_dual<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
@@ -120,13 +120,13 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
     where
         U: 'a;
 
-    fn raw_traverse<'a>(&'a self, table: &str) -> Result<Self::Traverse<'a>, Self::Error> {
+    fn raw_traverse<'a>(&'a self, table: &'static str) -> Result<Self::Traverse<'a>, Self::Error> {
         self.writer.raw_traverse(table)
     }
 
     fn raw_get<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key: &[u8],
     ) -> Result<Option<std::borrow::Cow<'a, [u8]>>, Self::Error> {
         self.writer.raw_get(table, key)
@@ -134,7 +134,7 @@ impl<U: HotKvWrite> HotKvRead for RevmWrite<U> {
 
     fn raw_get_dual<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
@@ -171,18 +171,23 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
 
     fn raw_traverse_mut<'a>(
         &'a mut self,
-        table: &str,
+        table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error> {
         self.writer.raw_traverse_mut(table)
     }
 
-    fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_put(
+        &mut self,
+        table: &'static str,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error> {
         self.writer.queue_raw_put(table, key, value)
     }
 
     fn queue_raw_put_dual(
         &mut self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
         value: &[u8],
@@ -190,19 +195,28 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_raw_put_dual(table, key1, key2, value)
     }
 
-    fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
         self.writer.queue_raw_delete(table, key)
     }
 
-    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error> {
+    fn queue_raw_delete_dual(
+        &mut self,
+        table: &'static str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<(), Self::Error> {
+        self.writer.queue_raw_delete_dual(table, key1, key2)
+    }
+
+    fn queue_raw_clear(&mut self, table: &'static str) -> Result<(), Self::Error> {
         self.writer.queue_raw_clear(table)
     }
 
     fn queue_raw_create(
         &mut self,
-        table: &str,
-        dual_key: bool,
-        dual_fixed: bool,
+        table: &'static str,
+        dual_key: Option<usize>,
+        dual_fixed: Option<usize>,
     ) -> Result<(), Self::Error> {
         self.writer.queue_raw_create(table, dual_key, dual_fixed)
     }

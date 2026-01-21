@@ -10,9 +10,8 @@ macro_rules! table {
 
         impl crate::hot::tables::Table for $name {
             const NAME: &'static str = stringify!($name);
-            const DUAL_KEY: bool = $dual;
             const FIXED_VAL_SIZE: Option<usize> = $fixed;
-
+            const DUAL_KEY_SIZE: Option<usize> = $dual;
             type Key = $key;
             type Value = $value;
         }
@@ -28,7 +27,7 @@ macro_rules! table {
             $name,
             $key,
             $value,
-            false,
+            None,
             None
         );
 
@@ -45,7 +44,7 @@ macro_rules! table {
             $name,
             $key,
             $value,
-            true,
+            Some(<$subkey as crate::hot::ser::KeySer>::SIZE),
             None
         );
 
@@ -63,7 +62,7 @@ macro_rules! table {
             $name,
             $key,
             $value,
-            true,
+            Some(<$subkey as crate::hot::ser::KeySer>::SIZE),
             Some($fixed)
         );
 

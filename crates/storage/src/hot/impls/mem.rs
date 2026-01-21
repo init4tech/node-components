@@ -1,11 +1,9 @@
 use crate::hot::{
     model::{
-        DualKeyTraverse, DualKeyValue, DualTableTraverse, HotKv, HotKvError, HotKvRead,
-        HotKvReadError, HotKvWrite, KvTraverse, KvTraverseMut, RawDualKeyValue, RawKeyValue,
-        RawValue,
+        DualKeyTraverse, HotKv, HotKvError, HotKvRead, HotKvReadError, HotKvWrite, KvTraverse,
+        KvTraverseMut, RawDualKeyValue, RawKeyValue, RawValue,
     },
-    ser::{DeserError, KeySer, MAX_KEY_SIZE},
-    tables::DualKey,
+    ser::{DeserError, MAX_KEY_SIZE},
 };
 use bytes::Bytes;
 use std::{
@@ -404,36 +402,6 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursor<'a> {
     }
 }
 
-// Implement DualTableTraverse for typed dual-keyed table access
-impl<'a, T> DualTableTraverse<T, MemKvError> for MemKvCursor<'a>
-where
-    T: DualKey,
-{
-    fn next_dual_above(
-        &mut self,
-        key1: &T::Key,
-        key2: &T::Key2,
-    ) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        let mut key1_buf = [0u8; MAX_KEY_SIZE];
-        let mut key2_buf = [0u8; MAX_KEY_SIZE];
-        let key1_bytes = key1.encode_key(&mut key1_buf);
-        let key2_bytes = key2.encode_key(&mut key2_buf);
-
-        DualKeyTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
-            .map(T::decode_kkv_tuple)
-            .transpose()
-            .map_err(Into::into)
-    }
-
-    fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
-    }
-
-    fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
-    }
-}
-
 /// Memory cursor for read-write operations
 pub struct MemKvCursorMut<'a> {
     table: &'a StoreTable,
@@ -767,36 +735,6 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
     }
 }
 
-// Implement DualTableTraverse for typed dual-keyed table access
-impl<'a, T> DualTableTraverse<T, MemKvError> for MemKvCursorMut<'a>
-where
-    T: DualKey,
-{
-    fn next_dual_above(
-        &mut self,
-        key1: &T::Key,
-        key2: &T::Key2,
-    ) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        let mut key1_buf = [0u8; MAX_KEY_SIZE];
-        let mut key2_buf = [0u8; MAX_KEY_SIZE];
-        let key1_bytes = key1.encode_key(&mut key1_buf);
-        let key2_bytes = key2.encode_key(&mut key2_buf);
-
-        DualKeyTraverse::next_dual_above(self, key1_bytes, key2_bytes)?
-            .map(T::decode_kkv_tuple)
-            .transpose()
-            .map_err(Into::into)
-    }
-
-    fn next_k1(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyTraverse::next_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
-    }
-
-    fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, MemKvError> {
-        DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
-    }
-}
-
 impl HotKv for MemKv {
     type RoTx = MemKvRoTx;
     type RwTx = MemKvRwTx;
@@ -837,7 +775,7 @@ impl HotKvRead for MemKvRoTx {
 
     fn raw_get<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
         // Check queued operations first (read-your-writes consistency)
@@ -854,7 +792,7 @@ impl HotKvRead for MemKvRoTx {
 
     fn raw_get_dual<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
@@ -885,7 +823,7 @@ impl HotKvRead for MemKvRwTx {
 
     fn raw_get<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
         // Check queued operations first (read-your-writes consistency)
@@ -917,7 +855,7 @@ impl HotKvRead for MemKvRwTx {
 
     fn raw_get_dual<'a>(
         &'a self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
     ) -> Result<Option<Cow<'a, [u8]>>, Self::Error> {
@@ -966,12 +904,17 @@ impl HotKvWrite for MemKvRwTx {
 
     fn raw_traverse_mut<'a>(
         &'a mut self,
-        table: &str,
+        table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error> {
         self.cursor_mut(table)
     }
 
-    fn queue_raw_put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_put(
+        &mut self,
+        table: &'static str,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), Self::Error> {
         let key = MemKv::key(key);
 
         let value_bytes = Bytes::copy_from_slice(value);
@@ -985,7 +928,7 @@ impl HotKvWrite for MemKvRwTx {
 
     fn queue_raw_put_dual(
         &mut self,
-        table: &str,
+        table: &'static str,
         key1: &[u8],
         key2: &[u8],
         value: &[u8],
@@ -994,11 +937,21 @@ impl HotKvWrite for MemKvRwTx {
         self.queue_raw_put(table, &key, value)
     }
 
-    fn queue_raw_delete(&mut self, table: &str, key: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
         let key = MemKv::key(key);
 
         self.queued_ops.entry(table.to_owned()).or_default().delete(key);
         Ok(())
+    }
+
+    fn queue_raw_delete_dual(
+        &mut self,
+        table: &'static str,
+        key1: &[u8],
+        key2: &[u8],
+    ) -> Result<(), Self::Error> {
+        let key = MemKv::dual_key(key1, key2);
+        self.queue_raw_delete(table, &key)
     }
 
     fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error> {
@@ -1009,9 +962,9 @@ impl HotKvWrite for MemKvRwTx {
 
     fn queue_raw_create(
         &mut self,
-        _table: &str,
-        _dual_key: bool,
-        _dual_fixed: bool,
+        _table: &'static str,
+        _dual_key: Option<usize>,
+        _dual_fixed: Option<usize>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -1755,7 +1708,7 @@ mod tests {
         // Create an empty table first
         {
             let mut writer = store.writer().unwrap();
-            writer.queue_raw_create(TestTable::NAME, false, false).unwrap();
+            writer.queue_raw_create(TestTable::NAME, None, None).unwrap();
             writer.raw_commit().unwrap();
         }
 
@@ -1902,4 +1855,10 @@ mod tests {
         let hot_kv = MemKv::new();
         conformance(&hot_kv);
     }
+
+    // #[test]
+    // fn mem_append_unwind_conformance() {
+    //     let hot_kv = MemKv::new();
+    //     conformance_append_unwind(&hot_kv);
+    // }
 }

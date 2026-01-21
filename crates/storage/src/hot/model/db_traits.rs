@@ -6,6 +6,57 @@ use alloy::primitives::{Address, B256, U256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader, StorageEntry};
 use reth_db::{BlockNumberList, models::BlockNumberAddress};
 use reth_db_api::models::ShardedKey;
+use std::fmt;
+
+/// Error type for history operations.
+///
+/// This error is returned by methods that append or unwind history,
+/// and includes both chain consistency errors and database errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryError<E> {
+    /// Block number doesn't extend the chain contiguously.
+    NonContiguousBlock {
+        /// The expected block number (current tip + 1).
+        expected: u64,
+        /// The actual block number provided.
+        got: u64,
+    },
+    /// Parent hash doesn't match current tip or previous block in range.
+    ParentHashMismatch {
+        /// The expected parent hash.
+        expected: B256,
+        /// The actual parent hash provided.
+        got: B256,
+    },
+    /// Empty header range provided to a method that requires at least one header.
+    EmptyRange,
+    /// Database error.
+    Db(E),
+}
+
+impl<E: fmt::Display> fmt::Display for HistoryError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonContiguousBlock { expected, got } => {
+                write!(f, "non-contiguous block: expected {expected}, got {got}")
+            }
+            Self::ParentHashMismatch { expected, got } => {
+                write!(f, "parent hash mismatch: expected {expected}, got {got}")
+            }
+            Self::EmptyRange => write!(f, "empty header range provided"),
+            Self::Db(e) => write!(f, "database error: {e}"),
+        }
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for HistoryError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Db(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 /// Trait for database read operations on standard hot tables.
 ///
@@ -112,6 +163,16 @@ pub trait HotDbWrite: HotKvWrite + sealed::Sealed {
             .and_then(|_| self.put_header_number_inconsistent(&header.hash(), header.number))
     }
 
+    /// Delete a header by block number.
+    fn delete_header(&mut self, number: u64) -> Result<(), Self::Error> {
+        self.queue_delete::<tables::Headers>(&number)
+    }
+
+    /// Delete a header number mapping by hash.
+    fn delete_header_number(&mut self, hash: &B256) -> Result<(), Self::Error> {
+        self.queue_delete::<tables::HeaderNumbers>(hash)
+    }
+
     /// Commit the write transaction.
     fn commit(self) -> Result<(), Self::Error>
     where
@@ -187,6 +248,70 @@ pub trait HotHistoryRead: HotDbRead {
         let block_number_address = BlockNumberAddress((block_number, *address));
         self.get_dual::<tables::StorageChangeSets>(&block_number_address, slot)
     }
+
+    /// Get the last (highest) header in the database.
+    /// Returns None if the database is empty.
+    fn last_header(&self) -> Result<Option<Header>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        Ok(cursor.last()?.map(|(_, header)| header))
+    }
+
+    /// Get the first (lowest) header in the database.
+    /// Returns None if the database is empty.
+    fn first_header(&self) -> Result<Option<Header>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        Ok(cursor.first()?.map(|(_, header)| header))
+    }
+
+    /// Get the current chain tip (highest block number and hash).
+    /// Returns None if the database is empty.
+    fn get_chain_tip(&self) -> Result<Option<(u64, B256)>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        let Some((number, header)) = cursor.last()? else {
+            return Ok(None);
+        };
+        let hash = header.hash_slow();
+        Ok(Some((number, hash)))
+    }
+
+    /// Get the execution range (first and last block numbers with headers).
+    /// Returns None if the database is empty.
+    fn get_execution_range(&self) -> Result<Option<(u64, u64)>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        let Some((first, _)) = cursor.first()? else {
+            return Ok(None);
+        };
+        let Some((last, _)) = cursor.last()? else {
+            return Ok(None);
+        };
+        Ok(Some((first, last)))
+    }
+
+    /// Check if a specific block number exists in history.
+    fn has_block(&self, number: u64) -> Result<bool, Self::Error> {
+        self.get_header(number).map(|opt| opt.is_some())
+    }
+
+    /// Get headers in a range (inclusive).
+    fn get_headers_range(&self, start: u64, end: u64) -> Result<Vec<Header>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        let mut headers = Vec::new();
+
+        if cursor.lower_bound(&start)?.is_none() {
+            return Ok(headers);
+        }
+
+        loop {
+            match cursor.read_next()? {
+                Some((num, header)) if num <= end => {
+                    headers.push(header);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(headers)
+    }
 }
 
 impl<T> HotHistoryRead for T where T: HotDbRead {}
@@ -196,7 +321,7 @@ impl<T> HotHistoryRead for T where T: HotDbRead {}
 /// These tables maintain historical information about accounts and storage
 /// changes, and their contents can be used to reconstruct past states or
 /// roll back changes.
-pub trait HotHistoryWrite: HotDbWrite {
+pub trait HotHistoryWrite: HotDbWrite + HotHistoryRead {
     /// Maintain a list of block numbers where an account was touched.
     ///
     /// Accounts are keyed
@@ -211,7 +336,7 @@ pub trait HotHistoryWrite: HotDbWrite {
 
     /// Write an account change (pre-state) for an account at a specific
     /// block.
-    fn write_account_change(
+    fn write_account_prestate(
         &mut self,
         block_number: u64,
         address: Address,
@@ -235,16 +360,168 @@ pub trait HotHistoryWrite: HotDbWrite {
 
     /// Write a storage change (before state) for an account at a specific
     /// block.
-    fn write_storage_change(
+    fn write_storage_prestate(
         &mut self,
         block_number: u64,
         address: Address,
         slot: &B256,
-        value: &U256,
+        prestate: &U256,
     ) -> Result<(), Self::Error> {
         let block_number_address = BlockNumberAddress((block_number, address));
-        self.queue_put_dual::<tables::StorageChangeSets>(&block_number_address, slot, value)
+        self.queue_put_dual::<tables::StorageChangeSets>(&block_number_address, slot, prestate)
     }
+
+    /// Validate that a range of headers forms a valid chain extension.
+    ///
+    /// Headers must be in order and each must extend the previous.
+    /// The first header must extend the current database tip (or be the first
+    /// block if the database is empty).
+    ///
+    /// Returns `Ok(())` if valid, or an error describing the inconsistency.
+    fn validate_chain_extension<'a, I>(&self, headers: I) -> Result<(), HistoryError<Self::Error>>
+    where
+        I: IntoIterator<Item = &'a SealedHeader>,
+    {
+        let headers: Vec<_> = headers.into_iter().collect();
+        if headers.is_empty() {
+            return Err(HistoryError::EmptyRange);
+        }
+
+        // Validate first header against current DB tip
+        let first = headers[0];
+        match self.get_chain_tip().map_err(HistoryError::Db)? {
+            None => {
+                // Empty DB - first block is valid as genesis
+            }
+            Some((tip_number, tip_hash)) => {
+                let expected_number = tip_number + 1;
+                if first.number != expected_number {
+                    return Err(HistoryError::NonContiguousBlock {
+                        expected: expected_number,
+                        got: first.number,
+                    });
+                }
+                if first.parent_hash != tip_hash {
+                    return Err(HistoryError::ParentHashMismatch {
+                        expected: tip_hash,
+                        got: first.parent_hash,
+                    });
+                }
+            }
+        }
+
+        // Validate each subsequent header extends the previous
+        for window in headers.windows(2) {
+            let prev = window[0];
+            let curr = window[1];
+
+            let expected_number = prev.number + 1;
+            if curr.number != expected_number {
+                return Err(HistoryError::NonContiguousBlock {
+                    expected: expected_number,
+                    got: curr.number,
+                });
+            }
+
+            let expected_hash = prev.hash();
+            if curr.parent_hash != expected_hash {
+                return Err(HistoryError::ParentHashMismatch {
+                    expected: expected_hash,
+                    got: curr.parent_hash,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    // /// Write reverts for a wiped storage account.
+    // fn write_wiped_revert(
+    //     &mut self,
+    //     block_number: u64,
+    //     account: Address,
+    // ) -> Result<(), Self::Error> {
+    //     // Traverse the PlainStorageState table to find all storage entries for
+    //     // the account, write_storage_change for each, then return.
+    //     let mut cursor = self.traverse_dual::<tables::PlainStorageState>()?;
+
+    //     let first_key = cursor.next_dual_above(&account, &B256::ZERO)?;
+
+    //     while let Some((_, key, value)) = cursor.next_k2()? {
+    //         self.write_storage_prestate(block_number, account, &key, &value)?;
+    //     }
+    //     Ok(())
+    // }
+
+    // fn write_updated_revert(
+    //     &mut self,
+    //     block_number: u64,
+    //     address: Address,
+    //     plain_revert: &[(U256, RevertToSlot)],
+    // ) -> Result<(), Self::Error> {
+    //     for (key, revert_to) in plain_revert {
+    //         let val = revert_to.to_previous_value();
+    //         self.write_storage_prestate(
+    //             block_number,
+    //             address,
+    //             &B256::from(key.to_be_bytes()),
+    //             &val,
+    //         )?
+    //     }
+    //     Ok(())
+    // }
+
+    // fn write_storage_revert(
+    //     &mut self,
+    //     block_number: u64,
+    //     plain_revert: &PlainStorageRevert,
+    // ) -> Result<(), Self::Error> {
+    //     if plain_revert.wiped {
+    //         self.write_wiped_revert(block_number, plain_revert.address)
+    //     } else {
+    //         self.write_updated_revert(
+    //             block_number,
+    //             plain_revert.address,
+    //             &plain_revert.storage_revert,
+    //         )
+    //     }
+    // }
+
+    // /// Write a set of reverts to the database.
+    // ///
+    // /// This method writes the necessary historical data to allow reverting
+    // /// the changes made in a specific block.
+    // ///
+    // /// The reverts MUST be sorted by address.
+    // fn write_reverts(
+    //     &mut self,
+    //     block_number: u64,
+    //     acct_reverts: &[(Address, Option<Account>)],
+    //     storage_reverts: &[PlainStorageRevert],
+    // ) -> Result<(), Self::Error> {
+    //     // Debug assertion to ensure reverts are sorted by address
+    //     debug_assert!(
+    //         acct_reverts.windows(2).all(|w| w[0].0 <= w[1].0),
+    //         "Account reverts must be sorted by address"
+    //     );
+    //     debug_assert!(
+    //         storage_reverts.windows(2).all(|w| w[0].address <= w[1].address),
+    //         "Storage reverts must be sorted by address"
+    //     );
+
+    //     // Write account reverts
+    //     for (address, pre_state) in acct_reverts {
+    //         if let Some(account) = pre_state {
+    //             self.write_account_prestate(block_number, *address, account)?;
+    //         }
+    //     }
+
+    //     for revert in storage_reverts {
+    //         self.write_storage_revert(block_number, revert)?;
+    //     }
+
+    //     Ok(())
+    // }
 }
 
 impl<T> HotHistoryWrite for T where T: HotDbWrite + HotKvWrite {}
