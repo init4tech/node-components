@@ -894,11 +894,7 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
         if let Some((key, value)) = self.get_range_owned(&start_key) {
             self.set_current_key(key);
             let (k1, k2) = MemKv::split_dual_key(&key);
-            Ok(Some((
-                Cow::Owned(k1.to_vec()),
-                Cow::Owned(k2.to_vec()),
-                Cow::Owned(value.to_vec()),
-            )))
+            Ok(Some((Cow::Owned(k1.to_vec()), Cow::Owned(k2.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
             self.clear_current_key();
             Ok(None)
@@ -911,11 +907,7 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
         if let Some((key, value)) = self.get_range_reverse_owned(&end_key) {
             self.set_current_key(key);
             let (k1, k2) = MemKv::split_dual_key(&key);
-            Ok(Some((
-                Cow::Owned(k1.to_vec()),
-                Cow::Owned(k2.to_vec()),
-                Cow::Owned(value.to_vec()),
-            )))
+            Ok(Some((Cow::Owned(k1.to_vec()), Cow::Owned(k2.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
             self.clear_current_key();
             Ok(None)
@@ -929,11 +921,7 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
         if let Some((found_key, value)) = self.get_range_exclusive_owned(&current) {
             self.set_current_key(found_key);
             let (k1, k2) = MemKv::split_dual_key(&found_key);
-            Ok(Some((
-                Cow::Owned(k1.to_vec()),
-                Cow::Owned(k2.to_vec()),
-                Cow::Owned(value.to_vec()),
-            )))
+            Ok(Some((Cow::Owned(k1.to_vec()), Cow::Owned(k2.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
             self.clear_current_key();
             Ok(None)
@@ -946,11 +934,7 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
         if let Some((found_key, value)) = self.get_range_reverse_owned(&current) {
             self.set_current_key(found_key);
             let (k1, k2) = MemKv::split_dual_key(&found_key);
-            Ok(Some((
-                Cow::Owned(k1.to_vec()),
-                Cow::Owned(k2.to_vec()),
-                Cow::Owned(value.to_vec()),
-            )))
+            Ok(Some((Cow::Owned(k1.to_vec()), Cow::Owned(k2.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
             self.clear_current_key();
             Ok(None)

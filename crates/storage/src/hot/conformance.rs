@@ -1094,7 +1094,7 @@ pub fn test_take_range<T: HotKv>(hot_kv: &T) {
     {
         let writer = hot_kv.writer().unwrap();
         for header in headers.iter() {
-            writer.put_header_inconsistent(&header).unwrap();
+            writer.put_header_inconsistent(header).unwrap();
         }
         writer.commit().unwrap();
     }

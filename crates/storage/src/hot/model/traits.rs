@@ -1,7 +1,7 @@
 use crate::hot::{
     model::{
-        DualKeyTraverse, DualTableCursor, GetManyItem, HotKvError, HotKvReadError, KvTraverse,
-        KvTraverseMut, TableCursor,
+        DualKeyTraverse, DualKeyValue, DualTableCursor, GetManyItem, HotKvError, HotKvReadError,
+        KeyValue, KvTraverse, KvTraverseMut, TableCursor,
         revm::{RevmRead, RevmWrite},
     },
     ser::{KeySer, MAX_KEY_SIZE, ValSer},
@@ -425,7 +425,7 @@ pub trait HotKvWrite: HotKvRead {
     fn take_range<T: SingleKey>(
         &self,
         range: RangeInclusive<T::Key>,
-    ) -> Result<Vec<(T::Key, T::Value)>, Self::Error> {
+    ) -> Result<Vec<KeyValue<T>>, Self::Error> {
         let mut vec = Vec::new();
         self.clear_with_op::<T>(range, |key, value| vec.push((key, value)))?;
         Ok(vec)
@@ -442,7 +442,7 @@ pub trait HotKvWrite: HotKvRead {
         let (start_k1, start_k2) = range.start();
 
         // Position at first entry at or above (range.start(), minimal_k2)
-        let Some((k1, k2, value)) = cursor.next_dual_above(&start_k1, &start_k2)? else {
+        let Some((k1, k2, value)) = cursor.next_dual_above(start_k1, start_k2)? else {
             // No entries at or above range start
             return Ok(());
         };
@@ -495,7 +495,7 @@ pub trait HotKvWrite: HotKvRead {
     fn take_range_dual<T: DualKey>(
         &self,
         range: RangeInclusive<(T::Key, T::Key2)>,
-    ) -> Result<Vec<(T::Key, T::Key2, T::Value)>, Self::Error> {
+    ) -> Result<Vec<DualKeyValue<T>>, Self::Error> {
         let mut vec = Vec::new();
         self.clear_range_dual_with_op::<T>(range, |k1, k2, value| {
             vec.push((k1, k2, value));
