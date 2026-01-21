@@ -1,7 +1,4 @@
-//! Primary access for hot storage backends.
-//!
-//!
-//!
+//! Primary access traits for hot storage backends.
 
 mod consistent;
 pub use consistent::HistoryWrite;
@@ -18,7 +15,7 @@ pub use read::{HotDbRead, HotHistoryRead};
 pub(crate) mod sealed {
     use crate::hot::model::HotKvRead;
 
-    /// Sealed trait to prevent external implementations of HotDbReader and HotDbWriter.
+    /// Sealed trait to prevent external implementations of hot database traits.
     #[allow(dead_code, unreachable_pub)]
     pub trait Sealed {}
     impl<T> Sealed for T where T: HotKvRead {}

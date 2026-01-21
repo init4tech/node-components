@@ -10,7 +10,7 @@ use dashmap::mapref::one::Ref;
 use reth_libmdbx::{DatabaseFlags, RW, Transaction, TransactionKind, WriteFlags};
 use std::borrow::Cow;
 
-const TX_BUFFER_SIZE: usize = MAX_KEY_SIZE + MAX_KEY_SIZE + MAX_FIXED_VAL_SIZE;
+const TX_BUFFER_SIZE: usize = MAX_KEY_SIZE + MAX_FIXED_VAL_SIZE;
 
 /// Wrapper for the libmdbx transaction.
 #[derive(Debug)]
@@ -20,16 +20,14 @@ pub struct Tx<K: TransactionKind> {
 
     /// Cached MDBX DBIs for reuse.
     dbs: DbCache,
-
-    /// Scratch buffer for operations requiring KV encoding.
-    buf: [u8; TX_BUFFER_SIZE],
 }
+
 
 impl<K: TransactionKind> Tx<K> {
     /// Creates new `Tx` object with a `RO` or `RW` transaction and optionally enables metrics.
     #[inline]
     pub(crate) const fn new(inner: Transaction<K>, dbis: DbCache) -> Self {
-        Self { inner, dbs: dbis, buf: [0; TX_BUFFER_SIZE] }
+        Self { inner, dbs: dbis }
     }
 
     /// Gets the database handle for the DbInfo table.
@@ -103,14 +101,17 @@ impl<K: TransactionKind> Tx<K> {
 }
 
 impl Tx<RW> {
-    fn store_db_info(&mut self, table: &'static str, db_info: DbInfo) -> Result<(), MdbxError> {
+    fn store_db_info(&self, table: &'static str, db_info: DbInfo) -> Result<(), MdbxError> {
         // This needs to be low-level to avoid issues
         let dbi = self.db_info_table_dbi()?;
 
         // reuse the scratch buffer for encoding the DbInfo key
         // The first 32 bytes are for the key, the rest for the value
 
-        let (key_buf, mut value_buf) = self.buf.split_at_mut(32);
+        // SAFETY: The write buffer cannot be aliased while we have &self
+
+        let mut key_buf = [0u8; MAX_KEY_SIZE];
+        let mut value_buf: &mut [u8] = &mut [0u8; MAX_FIXED_VAL_SIZE];
 
         {
             let to_copy = core::cmp::min(32, table.len());
@@ -177,14 +178,14 @@ impl HotKvWrite for Tx<RW> {
     type TraverseMut<'a> = Cursor<'a, RW>;
 
     fn raw_traverse_mut<'a>(
-        &'a mut self,
+        &'a self,
         table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error> {
         self.new_cursor_raw(table)
     }
 
     fn queue_raw_put(
-        &mut self,
+        &self,
         table: &'static str,
         key: &[u8],
         value: &[u8],
@@ -195,7 +196,7 @@ impl HotKvWrite for Tx<RW> {
     }
 
     fn queue_raw_put_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -240,7 +241,8 @@ impl HotKvWrite for Tx<RW> {
                 .map_err(MdbxError::Mdbx);
         } else {
             // Use the scratch buffer
-            let buf = &mut self.buf[..key2.len() + value.len()];
+            let mut buffer = [0u8; TX_BUFFER_SIZE];
+            let buf = &mut buffer[..key2.len() + value.len()];
             buf[..key2.len()].copy_from_slice(key2);
             buf[key2.len()..].copy_from_slice(value);
             self.inner.put(dbi, key1, buf, Default::default())?;
@@ -249,13 +251,13 @@ impl HotKvWrite for Tx<RW> {
         Ok(())
     }
 
-    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_delete(&self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
         let dbi = self.get_dbi_raw(table)?;
         self.inner.del(dbi, key, None).map(|_| ()).map_err(MdbxError::Mdbx)
     }
 
     fn queue_raw_delete_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -267,27 +269,28 @@ impl HotKvWrite for Tx<RW> {
         drop(db_info);
 
         // For DUPSORT tables, the "value" is key2 concatenated with the actual
-        // value.
-        // If the table is ALSO dupfixed, we need to pad key2 to the fixed size
-        let key2_prepared = if let FixedSizeInfo::Size { key2_size, .. } = fixed_val {
+        // value. If the table is ALSO dupfixed, we need to pad key2 to the
+        // fixed size
+        if let Some(total_size) = fixed_val.total_size() {
             // Copy key2 to scratch buffer and zero-pad to total fixed size
-            self.buf[..key2.len()].copy_from_slice(key2);
-            self.buf[key2.len()..key2_size].fill(0);
-            &self.buf[..key2_size]
-        } else {
-            key2
-        };
+            let mut buffer = [0u8; TX_BUFFER_SIZE];
+            buffer[..key2.len()].copy_from_slice(key2);
+            buffer[key2.len()..total_size].fill(0);
+            let k2 = &buffer[..total_size];
 
-        self.inner.del(dbi, key1, Some(key2_prepared)).map(|_| ()).map_err(MdbxError::Mdbx)
+            self.inner.del(dbi, key1, Some(k2)).map(|_| ()).map_err(MdbxError::Mdbx)
+        } else {
+            self.inner.del(dbi, key1, Some(key2)).map(|_| ()).map_err(MdbxError::Mdbx)
+        }
     }
 
-    fn queue_raw_clear(&mut self, table: &'static str) -> Result<(), Self::Error> {
+    fn queue_raw_clear(&self, table: &'static str) -> Result<(), Self::Error> {
         let dbi = self.get_dbi_raw(table)?;
         self.inner.clear_db(dbi).map(|_| ()).map_err(MdbxError::Mdbx)
     }
 
     fn queue_raw_create(
-        &mut self,
+        &self,
         table: &'static str,
         dual_key: Option<usize>,
         fixed_val: Option<usize>,

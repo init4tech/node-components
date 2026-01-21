@@ -9,7 +9,7 @@ use bytes::Bytes;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 // Type aliases for store structure
@@ -106,7 +106,7 @@ unsafe impl Sync for MemKvRoTx {}
 /// Read-write transaction for MemKv.
 pub struct MemKvRwTx {
     guard: RwLockWriteGuard<'static, Store>,
-    queued_ops: OpStore,
+    queued_ops: Mutex<OpStore>,
 
     // Keep the store alive while the transaction exists
     _store: Arc<RwLock<Store>>,
@@ -114,7 +114,7 @@ pub struct MemKvRwTx {
 
 impl MemKvRwTx {
     fn commit_inner(&mut self) {
-        let ops = std::mem::take(&mut self.queued_ops);
+        let ops = std::mem::take(&mut *self.queued_ops.lock().unwrap());
 
         for (table, table_op) in ops.into_iter() {
             table_op.apply(&table, &mut self.guard);
@@ -169,13 +169,13 @@ impl QueuedKvOp {
 /// Queued table operation
 #[derive(Debug)]
 enum QueuedTableOp {
-    Modify { ops: TableOp },
-    Clear { new_table: TableOp },
+    Modify { ops: Mutex<TableOp> },
+    Clear { new_table: Mutex<TableOp> },
 }
 
 impl Default for QueuedTableOp {
     fn default() -> Self {
-        QueuedTableOp::Modify { ops: TableOp::new() }
+        QueuedTableOp::Modify { ops: Mutex::new(TableOp::new()) }
     }
 }
 
@@ -184,41 +184,55 @@ impl QueuedTableOp {
         matches!(self, QueuedTableOp::Clear { .. })
     }
 
-    fn get(&self, key: &MemStoreKey) -> Option<&QueuedKvOp> {
+    fn get(&self, key: &MemStoreKey) -> Option<QueuedKvOp> {
         match self {
-            QueuedTableOp::Modify { ops } => ops.get(key),
-            QueuedTableOp::Clear { new_table } => new_table.get(key),
+            QueuedTableOp::Modify { ops } => ops.lock().unwrap().get(key).cloned(),
+            QueuedTableOp::Clear { new_table } => new_table.lock().unwrap().get(key).cloned(),
         }
     }
 
-    fn put(&mut self, key: MemStoreKey, op: QueuedKvOp) {
+    fn put(&self, key: MemStoreKey, op: QueuedKvOp) {
         match self {
-            QueuedTableOp::Modify { ops } | QueuedTableOp::Clear { new_table: ops } => {
-                ops.insert(key, op);
+            QueuedTableOp::Modify { ops } => {
+                ops.lock().unwrap().insert(key, op);
+            }
+            QueuedTableOp::Clear { new_table } => {
+                new_table.lock().unwrap().insert(key, op);
             }
         }
     }
 
-    fn delete(&mut self, key: MemStoreKey) {
+    fn delete(&self, key: MemStoreKey) {
         match self {
-            QueuedTableOp::Modify { ops } | QueuedTableOp::Clear { new_table: ops } => {
-                ops.insert(key, QueuedKvOp::Delete);
+            QueuedTableOp::Modify { ops } => {
+                ops.lock().unwrap().insert(key, QueuedKvOp::Delete);
+            }
+            QueuedTableOp::Clear { new_table } => {
+                new_table.lock().unwrap().insert(key, QueuedKvOp::Delete);
             }
         }
     }
 
-    /// Get mutable reference to the inner ops if applicable
+    /// Get the inner ops mutex
+    const fn ops_mutex(&self) -> &Mutex<TableOp> {
+        match self {
+            QueuedTableOp::Modify { ops } => ops,
+            QueuedTableOp::Clear { new_table } => new_table,
+        }
+    }
+
+    /// Apply the queued operations to the store
     fn apply(self, key: &str, store: &mut Store) {
         match self {
             QueuedTableOp::Modify { ops } => {
                 let table = store.entry(key.to_owned()).or_default();
-                for (key, op) in ops {
+                for (key, op) in ops.into_inner().unwrap() {
                     op.apply(table, key);
                 }
             }
             QueuedTableOp::Clear { new_table } => {
                 let mut table = StoreTable::new();
-                for (k, op) in new_table {
+                for (k, op) in new_table.into_inner().unwrap() {
                     op.apply(&mut table, k);
                 }
 
@@ -258,7 +272,7 @@ impl HotKvReadError for MemKvError {
 /// Memory cursor for traversing a BTreeMap
 pub struct MemKvCursor<'a> {
     table: &'a StoreTable,
-    current_key: Option<MemStoreKey>,
+    current_key: Mutex<Option<MemStoreKey>>,
 }
 
 impl core::fmt::Debug for MemKvCursor<'_> {
@@ -270,27 +284,29 @@ impl core::fmt::Debug for MemKvCursor<'_> {
 impl<'a> MemKvCursor<'a> {
     /// Create a new cursor for the given table
     pub const fn new(table: &'a StoreTable) -> Self {
-        Self { table, current_key: None }
+        Self { table, current_key: Mutex::new(None) }
     }
 
     /// Get the current key the cursor is positioned at
     pub fn current_key(&self) -> MemStoreKey {
-        self.current_key.unwrap_or([0u8; MAX_KEY_SIZE * 2])
+        self.current_key.lock().unwrap().unwrap_or([0u8; MAX_KEY_SIZE * 2])
     }
 
     /// Set the current key the cursor is positioned at
-    pub const fn set_current_key(&mut self, key: MemStoreKey) {
-        self.current_key = Some(key);
+    pub fn set_current_key(&self, key: MemStoreKey) {
+        *self.current_key.lock().unwrap() = Some(key);
     }
 
     /// Clear the current key the cursor is positioned at
-    pub const fn clear_current_key(&mut self) {
-        self.current_key = None;
+    pub fn clear_current_key(&self) {
+        *self.current_key.lock().unwrap() = None;
     }
 
     /// Get the current k1 the cursor is positioned at
     fn current_k1(&self) -> [u8; MAX_KEY_SIZE] {
         self.current_key
+            .lock()
+            .unwrap()
             .map(|key| key[..MAX_KEY_SIZE].try_into().unwrap())
             .unwrap_or([0u8; MAX_KEY_SIZE])
     }
@@ -302,7 +318,7 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursor<'a> {
             self.clear_current_key();
             return Ok(None);
         };
-        self.current_key = Some(*key);
+        self.set_current_key(*key);
         Ok(Some((Cow::Borrowed(key), Cow::Borrowed(value.as_ref()))))
     }
 
@@ -311,7 +327,7 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursor<'a> {
             self.clear_current_key();
             return Ok(None);
         };
-        self.current_key = Some(*key);
+        self.set_current_key(*key);
         Ok(Some((Cow::Borrowed(key), Cow::Borrowed(value.as_ref()))))
     }
 
@@ -333,7 +349,7 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursor<'a> {
             self.set_current_key(*found_key);
             Ok(Some((Cow::Borrowed(found_key), Cow::Borrowed(value.as_ref()))))
         } else {
-            self.current_key = self.table.last_key_value().map(|(k, _)| *k);
+            *self.current_key.lock().unwrap() = self.table.last_key_value().map(|(k, _)| *k);
             Ok(None)
         }
     }
@@ -405,9 +421,9 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursor<'a> {
 /// Memory cursor for read-write operations
 pub struct MemKvCursorMut<'a> {
     table: &'a StoreTable,
-    queued_ops: &'a mut TableOp,
+    queued_ops: &'a Mutex<TableOp>,
     is_cleared: bool,
-    current_key: Option<MemStoreKey>,
+    current_key: Mutex<Option<MemStoreKey>>,
 }
 
 impl core::fmt::Debug for MemKvCursorMut<'_> {
@@ -418,35 +434,38 @@ impl core::fmt::Debug for MemKvCursorMut<'_> {
 
 impl<'a> MemKvCursorMut<'a> {
     /// Create a new mutable cursor for the given table and queued operations
-    const fn new(table: &'a StoreTable, queued_ops: &'a mut TableOp, is_cleared: bool) -> Self {
-        Self { table, queued_ops, is_cleared, current_key: None }
+    const fn new(table: &'a StoreTable, queued_ops: &'a Mutex<TableOp>, is_cleared: bool) -> Self {
+        Self { table, queued_ops, is_cleared, current_key: Mutex::new(None) }
     }
 
     /// Get the current key the cursor is positioned at
     pub fn current_key(&self) -> MemStoreKey {
-        self.current_key.unwrap_or([0u8; MAX_KEY_SIZE * 2])
+        self.current_key.lock().unwrap().unwrap_or([0u8; MAX_KEY_SIZE * 2])
     }
 
     /// Set the current key the cursor is positioned at
-    pub const fn set_current_key(&mut self, key: MemStoreKey) {
-        self.current_key = Some(key);
+    pub fn set_current_key(&self, key: MemStoreKey) {
+        *self.current_key.lock().unwrap() = Some(key);
     }
 
     /// Clear the current key the cursor is positioned at
-    pub const fn clear_current_key(&mut self) {
-        self.current_key = None;
+    pub fn clear_current_key(&self) {
+        *self.current_key.lock().unwrap() = None;
     }
 
     /// Get the current k1 the cursor is positioned at
     fn current_k1(&self) -> [u8; MAX_KEY_SIZE] {
         self.current_key
+            .lock()
+            .unwrap()
             .map(|key| key[..MAX_KEY_SIZE].try_into().unwrap())
             .unwrap_or([0u8; MAX_KEY_SIZE])
     }
 
     /// Get value for a key, returning owned bytes
     fn get_owned(&self, key: &MemStoreKey) -> Option<Bytes> {
-        if let Some(op) = self.queued_ops.get(key) {
+        let queued_ops = self.queued_ops.lock().unwrap();
+        if let Some(op) = queued_ops.get(key) {
             match op {
                 QueuedKvOp::Put { value } => Some(value.clone()),
                 QueuedKvOp::Delete => None,
@@ -464,7 +483,8 @@ impl<'a> MemKvCursorMut<'a> {
     /// ops for read-your-writes consistency.
     fn get_range_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
         // Find the first candidate from both queued ops and committed storage.
-        let q = self.queued_ops.range(*key..).next();
+        let queued_ops = self.queued_ops.lock().unwrap();
+        let q = queued_ops.range(*key..).next();
         let c = if !self.is_cleared { self.table.range(*key..).next() } else { None };
 
         match (q, c) {
@@ -487,6 +507,7 @@ impl<'a> MemKvCursorMut<'a> {
                                 }
                                 next_key[i] = 0;
                             }
+                            drop(queued_ops);
                             self.get_range_owned(&next_key)
                         }
                     }
@@ -508,6 +529,7 @@ impl<'a> MemKvCursorMut<'a> {
                         }
                         next_key[i] = 0;
                     }
+                    drop(queued_ops);
                     self.get_range_owned(&next_key)
                 }
             },
@@ -525,7 +547,8 @@ impl<'a> MemKvCursorMut<'a> {
         use core::ops::Bound;
 
         // Find candidates strictly greater than the given key.
-        let q = self.queued_ops.range((Bound::Excluded(*key), Bound::Unbounded)).next();
+        let queued_ops = self.queued_ops.lock().unwrap();
+        let q = queued_ops.range((Bound::Excluded(*key), Bound::Unbounded)).next();
         let c = if !self.is_cleared {
             self.table.range((Bound::Excluded(*key), Bound::Unbounded)).next()
         } else {
@@ -541,12 +564,18 @@ impl<'a> MemKvCursorMut<'a> {
                     match queued {
                         QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                         // Deleted in queue; skip and recurse.
-                        QueuedKvOp::Delete => self.get_range_exclusive_owned(qk),
+                        QueuedKvOp::Delete => {
+                            let next_key = *qk;
+                            drop(queued_ops);
+                            self.get_range_exclusive_owned(&next_key)
+                        }
                     }
                 } else {
                     // Committed key is smaller, but check if it's been deleted.
-                    if let Some(QueuedKvOp::Delete) = self.queued_ops.get(ck) {
-                        self.get_range_exclusive_owned(ck)
+                    if let Some(QueuedKvOp::Delete) = queued_ops.get(ck) {
+                        let next_key = *ck;
+                        drop(queued_ops);
+                        self.get_range_exclusive_owned(&next_key)
                     } else {
                         Some((*ck, current.clone()))
                     }
@@ -556,13 +585,19 @@ impl<'a> MemKvCursorMut<'a> {
             // Only queued ops have a candidate.
             (Some((qk, queued)), None) => match queued {
                 QueuedKvOp::Put { value } => Some((*qk, value.clone())),
-                QueuedKvOp::Delete => self.get_range_exclusive_owned(qk),
+                QueuedKvOp::Delete => {
+                    let next_key = *qk;
+                    drop(queued_ops);
+                    self.get_range_exclusive_owned(&next_key)
+                }
             },
 
             // Only committed storage has a candidate; verify not deleted.
             (None, Some((ck, current))) => {
-                if let Some(QueuedKvOp::Delete) = self.queued_ops.get(ck) {
-                    self.get_range_exclusive_owned(ck)
+                if let Some(QueuedKvOp::Delete) = queued_ops.get(ck) {
+                    let next_key = *ck;
+                    drop(queued_ops);
+                    self.get_range_exclusive_owned(&next_key)
                 } else {
                     Some((*ck, current.clone()))
                 }
@@ -576,7 +611,8 @@ impl<'a> MemKvCursorMut<'a> {
     /// with committed data, preferring the larger key (closest to search key).
     fn get_range_reverse_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
         // Find candidates strictly less than the given key, scanning backwards.
-        let q = self.queued_ops.range(..*key).next_back();
+        let queued_ops = self.queued_ops.lock().unwrap();
+        let q = queued_ops.range(..*key).next_back();
         let c = if !self.is_cleared { self.table.range(..*key).next_back() } else { None };
 
         match (q, c) {
@@ -589,7 +625,11 @@ impl<'a> MemKvCursorMut<'a> {
                     match queued {
                         QueuedKvOp::Put { value } => Some((*qk, value.clone())),
                         // Deleted; recurse to find the previous valid entry.
-                        QueuedKvOp::Delete => self.get_range_reverse_owned(qk),
+                        QueuedKvOp::Delete => {
+                            let next_key = *qk;
+                            drop(queued_ops);
+                            self.get_range_reverse_owned(&next_key)
+                        }
                     }
                 } else {
                     Some((*ck, current.clone()))
@@ -599,7 +639,11 @@ impl<'a> MemKvCursorMut<'a> {
             // Only queued ops have a candidate.
             (Some((qk, queued)), None) => match queued {
                 QueuedKvOp::Put { value } => Some((*qk, value.clone())),
-                QueuedKvOp::Delete => self.get_range_reverse_owned(qk),
+                QueuedKvOp::Delete => {
+                    let next_key = *qk;
+                    drop(queued_ops);
+                    self.get_range_reverse_owned(&next_key)
+                }
             },
 
             // Only committed storage has a candidate.
@@ -614,10 +658,10 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
 
         // Get the first effective key-value pair
         if let Some((key, value)) = self.get_range_owned(&start_key) {
-            self.current_key = Some(key);
+            self.set_current_key(key);
             Ok(Some((Cow::Owned(key.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
-            self.current_key = None;
+            self.clear_current_key();
             Ok(None)
         }
     }
@@ -626,17 +670,17 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
         let end_key = [0xffu8; MAX_KEY_SIZE * 2];
 
         if let Some((key, value)) = self.get_range_reverse_owned(&end_key) {
-            self.current_key = Some(key);
+            self.set_current_key(key);
             Ok(Some((Cow::Owned(key.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
-            self.current_key = None;
+            self.clear_current_key();
             Ok(None)
         }
     }
 
     fn exact<'b>(&'b mut self, key: &[u8]) -> Result<Option<RawValue<'b>>, MemKvError> {
         let search_key = MemKv::key(key);
-        self.current_key = Some(search_key);
+        self.set_current_key(search_key);
 
         if let Some(value) = self.get_owned(&search_key) {
             Ok(Some(Cow::Owned(value.to_vec())))
@@ -649,10 +693,10 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
         let search_key = MemKv::key(key);
 
         if let Some((found_key, value)) = self.get_range_owned(&search_key) {
-            self.current_key = Some(found_key);
+            self.set_current_key(found_key);
             Ok(Some((Cow::Owned(found_key.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
-            self.current_key = None;
+            self.clear_current_key();
             Ok(None)
         }
     }
@@ -662,10 +706,10 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
 
         // Use exclusive range to find strictly greater than current key
         if let Some((found_key, value)) = self.get_range_exclusive_owned(&current) {
-            self.current_key = Some(found_key);
+            self.set_current_key(found_key);
             Ok(Some((Cow::Owned(found_key.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
-            self.current_key = None;
+            self.clear_current_key();
             Ok(None)
         }
     }
@@ -674,10 +718,10 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
         let current = self.current_key();
 
         if let Some((found_key, value)) = self.get_range_reverse_owned(&current) {
-            self.current_key = Some(found_key);
+            self.set_current_key(found_key);
             Ok(Some((Cow::Owned(found_key.to_vec()), Cow::Owned(value.to_vec()))))
         } else {
-            self.current_key = None;
+            self.clear_current_key();
             Ok(None)
         }
     }
@@ -685,9 +729,10 @@ impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
 
 impl<'a> KvTraverseMut<MemKvError> for MemKvCursorMut<'a> {
     fn delete_current(&mut self) -> Result<(), MemKvError> {
-        if let Some(key) = self.current_key {
+        let current_key = *self.current_key.lock().unwrap();
+        if let Some(key) = current_key {
             // Queue a delete operation
-            self.queued_ops.insert(key, QueuedKvOp::Delete);
+            self.queued_ops.lock().unwrap().insert(key, QueuedKvOp::Delete);
             Ok(())
         } else {
             Err(MemKvError::HotKv(HotKvError::Inner("No current key to delete".into())))
@@ -759,7 +804,7 @@ impl HotKv for MemKv {
         // the guard is also dropped.
         let guard: RwLockWriteGuard<'static, Store> = unsafe { std::mem::transmute(guard) };
 
-        Ok(MemKvRwTx { guard, _store: self.map.clone(), queued_ops: OpStore::new() })
+        Ok(MemKvRwTx { guard, _store: self.map.clone(), queued_ops: Mutex::new(OpStore::new()) })
     }
 }
 
@@ -829,14 +874,15 @@ impl HotKvRead for MemKvRwTx {
         // Check queued operations first (read-your-writes consistency)
         let key = MemKv::key(key);
 
-        if let Some(table) = self.queued_ops.get(table) {
-            if table.is_clear() {
+        let queued_ops = self.queued_ops.lock().unwrap();
+        if let Some(table_op) = queued_ops.get(table) {
+            if table_op.is_clear() {
                 return Ok(None);
             }
 
-            match table.get(&key) {
+            match table_op.get(&key) {
                 Some(QueuedKvOp::Put { value }) => {
-                    return Ok(Some(Cow::Borrowed(value.as_ref())));
+                    return Ok(Some(Cow::Owned(value.to_vec())));
                 }
                 Some(QueuedKvOp::Delete) => {
                     return Ok(None);
@@ -844,6 +890,7 @@ impl HotKvRead for MemKvRwTx {
                 None => {}
             }
         }
+        drop(queued_ops);
 
         // If not found in queued ops, check the underlying map
         Ok(self
@@ -877,22 +924,29 @@ impl MemKvRwTx {
 
     /// Get a mutable cursor for the specified table
     /// This cursor will see both committed data and pending writes from this transaction
-    pub fn cursor_mut<'a>(&'a mut self, table: &str) -> Result<MemKvCursorMut<'a>, MemKvError> {
-        // Get or create the table data
-        let table_data = self.guard.entry(table.to_owned()).or_default();
+    pub fn cursor_mut<'a>(&'a self, table: &str) -> Result<MemKvCursorMut<'a>, MemKvError> {
+        // Get the table data (use EMPTY_TABLE if not present)
+        let table_data = self.guard.get(table).unwrap_or(&EMPTY_TABLE);
 
         // Get or create the queued operations for this table
-        let table_ops = self.queued_ops.entry(table.to_owned()).or_default();
+        let mut queued_ops = self.queued_ops.lock().unwrap();
+        let table_ops = queued_ops.entry(table.to_owned()).or_default();
 
         let is_cleared = table_ops.is_clear();
 
-        // Extract the inner TableOp from QueuedTableOp
-        let ops = match table_ops {
-            QueuedTableOp::Modify { ops } => ops,
-            QueuedTableOp::Clear { new_table } => new_table,
-        };
+        // Get reference to the inner ops mutex
+        let ops_mutex = table_ops.ops_mutex();
 
-        Ok(MemKvCursorMut::new(table_data, ops, is_cleared))
+        // SAFETY: We need to return a reference that outlives the lock guard.
+        // This is safe because:
+        // 1. The Mutex<TableOp> is owned by the QueuedTableOp in the OpStore
+        // 2. The OpStore is owned by the MemKvRwTx (inside its Mutex)
+        // 3. The cursor only lives as long as 'a which is tied to &'a self
+        let ops_mutex: &'a Mutex<TableOp> = unsafe { std::mem::transmute(ops_mutex) };
+
+        drop(queued_ops);
+
+        Ok(MemKvCursorMut::new(table_data, ops_mutex, is_cleared))
     }
 }
 
@@ -903,14 +957,14 @@ impl HotKvWrite for MemKvRwTx {
         Self: 'a;
 
     fn raw_traverse_mut<'a>(
-        &'a mut self,
+        &'a self,
         table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error> {
         self.cursor_mut(table)
     }
 
     fn queue_raw_put(
-        &mut self,
+        &self,
         table: &'static str,
         key: &[u8],
         value: &[u8],
@@ -920,6 +974,8 @@ impl HotKvWrite for MemKvRwTx {
         let value_bytes = Bytes::copy_from_slice(value);
 
         self.queued_ops
+            .lock()
+            .unwrap()
             .entry(table.to_owned())
             .or_default()
             .put(key, QueuedKvOp::Put { value: value_bytes });
@@ -927,7 +983,7 @@ impl HotKvWrite for MemKvRwTx {
     }
 
     fn queue_raw_put_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -937,15 +993,15 @@ impl HotKvWrite for MemKvRwTx {
         self.queue_raw_put(table, &key, value)
     }
 
-    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_delete(&self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
         let key = MemKv::key(key);
 
-        self.queued_ops.entry(table.to_owned()).or_default().delete(key);
+        self.queued_ops.lock().unwrap().entry(table.to_owned()).or_default().delete(key);
         Ok(())
     }
 
     fn queue_raw_delete_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -954,14 +1010,16 @@ impl HotKvWrite for MemKvRwTx {
         self.queue_raw_delete(table, &key)
     }
 
-    fn queue_raw_clear(&mut self, table: &str) -> Result<(), Self::Error> {
-        self.queued_ops
-            .insert(table.to_owned(), QueuedTableOp::Clear { new_table: TableOp::new() });
+    fn queue_raw_clear(&self, table: &str) -> Result<(), Self::Error> {
+        self.queued_ops.lock().unwrap().insert(
+            table.to_owned(),
+            QueuedTableOp::Clear { new_table: Mutex::new(TableOp::new()) },
+        );
         Ok(())
     }
 
     fn queue_raw_create(
-        &mut self,
+        &self,
         _table: &'static str,
         _dual_key: Option<usize>,
         _dual_fixed: Option<usize>,
@@ -1041,7 +1099,7 @@ mod tests {
 
         // Write some data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1, 2, 3], b"value1").unwrap();
             writer.queue_raw_put("table1", &[4, 5, 6], b"value2").unwrap();
             writer.raw_commit().unwrap();
@@ -1066,7 +1124,7 @@ mod tests {
 
         // Write to different tables
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"table1_value").unwrap();
             writer.queue_raw_put("table2", &[1], b"table2_value").unwrap();
             writer.raw_commit().unwrap();
@@ -1089,14 +1147,14 @@ mod tests {
 
         // Write initial value
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"original").unwrap();
             writer.raw_commit().unwrap();
         }
 
         // Overwrite with new value
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"updated").unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1112,7 +1170,7 @@ mod tests {
     #[test]
     fn test_read_your_writes() {
         let store = MemKv::new();
-        let mut writer = store.writer().unwrap();
+        let writer = store.writer().unwrap();
 
         // Queue some operations but don't commit yet
         writer.queue_raw_put("table1", &[1], b"queued_value").unwrap();
@@ -1137,7 +1195,7 @@ mod tests {
 
         // Write using typed interface
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_put::<TestTable>(&42u64, &Bytes::from_static(b"hello world")).unwrap();
             writer.queue_put::<TestTable>(&100u64, &Bytes::from_static(b"another value")).unwrap();
             writer.raw_commit().unwrap();
@@ -1167,7 +1225,7 @@ mod tests {
 
         // Write address data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_put::<AddressTable>(&addr1, &balance1).unwrap();
             writer.queue_put::<AddressTable>(&addr2, &balance2).unwrap();
             writer.raw_commit().unwrap();
@@ -1196,7 +1254,7 @@ mod tests {
 
         // Write batch
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             let entry_refs: Vec<_> = entries.iter().map(|(k, v)| (k, v)).collect();
             writer.queue_put_many::<TestTable, _>(entry_refs).unwrap();
             writer.raw_commit().unwrap();
@@ -1221,7 +1279,7 @@ mod tests {
 
         // Write some initial data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"value1").unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1257,7 +1315,7 @@ mod tests {
         let store = MemKv::new();
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"").unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1274,7 +1332,7 @@ mod tests {
         let store = MemKv::new();
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
 
             // Multiple operations on same key - last one should win
             writer.queue_raw_put("table1", &[1], b"first").unwrap();
@@ -1301,7 +1359,7 @@ mod tests {
 
         // Write initial value
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"original").unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1315,7 +1373,7 @@ mod tests {
 
         // Update the value in a separate transaction
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"updated").unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1334,7 +1392,7 @@ mod tests {
         let store = MemKv::new();
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"should_not_persist").unwrap();
             // Drop without committing
         }
@@ -1352,7 +1410,7 @@ mod tests {
         let store = MemKv::new();
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"value1").unwrap();
             writer.queue_raw_put("table2", &[2], b"value2").unwrap();
             writer.raw_commit().unwrap();
@@ -1374,7 +1432,7 @@ mod tests {
         {
             // Write some data
             // Start a read-write transaction
-            let mut rw_tx = store.writer().unwrap();
+            let rw_tx = store.writer().unwrap();
             rw_tx.queue_raw_put("table1", &[1, 2, 3], b"value1").unwrap();
             rw_tx.queue_raw_put("table1", &[4, 5, 6], b"value2").unwrap();
 
@@ -1390,7 +1448,7 @@ mod tests {
 
         {
             // Start another read-write transaction
-            let mut rw_tx = store.writer().unwrap();
+            let rw_tx = store.writer().unwrap();
             rw_tx.queue_raw_put("table2", &[7, 8, 9], b"value3").unwrap();
 
             // Value should not be set
@@ -1408,7 +1466,7 @@ mod tests {
         let store = MemKv::new();
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_put("table1", &[1], b"value1").unwrap();
             writer.queue_raw_put("table1", &[2], b"value2").unwrap();
             writer.raw_commit().unwrap();
@@ -1425,7 +1483,7 @@ mod tests {
         }
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
 
             let value1 = writer.raw_get("table1", &[1]).unwrap();
             let value2 = writer.raw_get("table1", &[2]).unwrap();
@@ -1473,7 +1531,7 @@ mod tests {
 
         // Insert data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1527,7 +1585,7 @@ mod tests {
 
         // Insert data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1593,7 +1651,7 @@ mod tests {
 
         // Insert initial data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1602,7 +1660,7 @@ mod tests {
 
         // Test mutable cursor operations
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             let mut cursor = writer.cursor_mut(TestTable::NAME).unwrap();
 
             // Navigate to middle entry
@@ -1656,7 +1714,7 @@ mod tests {
 
         // Insert data
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1707,7 +1765,7 @@ mod tests {
 
         // Create an empty table first
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             writer.queue_raw_create(TestTable::NAME, None, None).unwrap();
             writer.raw_commit().unwrap();
         }
@@ -1739,7 +1797,7 @@ mod tests {
         ];
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1804,7 +1862,7 @@ mod tests {
         ];
 
         {
-            let mut writer = store.writer().unwrap();
+            let writer = store.writer().unwrap();
             for (key1, key2, value) in &dual_data {
                 writer.queue_put_dual::<DualTestTable>(key1, key2, value).unwrap();
             }

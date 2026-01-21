@@ -33,7 +33,7 @@ pub fn create_test_rw_db() -> (TempDir, DatabaseEnv) {
     let db = DatabaseEnv::open(dir.path(), DatabaseEnvKind::RW, args).unwrap();
 
     // Create tables from the `crate::tables::hot` module
-    let mut writer = db.writer().unwrap();
+    let writer = db.writer().unwrap();
 
     writer.queue_create::<tables::Headers>().unwrap();
     writer.queue_create::<tables::HeaderNumbers>().unwrap();
@@ -119,7 +119,7 @@ mod tests {
 
         // Test HotKv::writer() and basic write operations
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Create tables first
             writer.queue_create::<tables::Bytecodes>().unwrap();
@@ -166,7 +166,7 @@ mod tests {
 
         // Test raw write operations
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Create table
             writer.queue_raw_create(table_name, None, None).unwrap();
@@ -191,7 +191,7 @@ mod tests {
 
         // Test raw delete
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             writer.queue_raw_delete(table_name, key).unwrap();
             writer.raw_commit().unwrap();
@@ -218,7 +218,7 @@ mod tests {
 
         // Test dual-keyed table operations
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Put storage data using dual keys
             writer
@@ -252,7 +252,7 @@ mod tests {
         // Add some data
         let (block_number, header) = create_test_header();
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer.queue_put::<tables::Headers>(&block_number, &header).unwrap();
             writer.raw_commit().unwrap();
         }
@@ -266,7 +266,7 @@ mod tests {
 
         // Clear the table
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer.queue_clear::<tables::Headers>().unwrap();
             writer.raw_commit().unwrap();
         }
@@ -302,7 +302,7 @@ mod tests {
 
         // Test batch writes
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Write multiple accounts
             for (address, account) in &accounts {
@@ -346,7 +346,7 @@ mod tests {
 
         // Setup initial data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer.queue_put::<tables::PlainAccountState>(&address, &account).unwrap();
             writer.raw_commit().unwrap();
         }
@@ -356,7 +356,7 @@ mod tests {
 
         // Modify data in a writer transaction
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             let modified_account =
                 Account { nonce: 999, balance: U256::from(9999u64), bytecode_hash: None };
             writer.queue_put::<tables::PlainAccountState>(&address, &modified_account).unwrap();
@@ -389,7 +389,7 @@ mod tests {
 
         // Setup data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer.queue_put::<tables::PlainAccountState>(&address, &account).unwrap();
             writer.raw_commit().unwrap();
         }
@@ -430,7 +430,7 @@ mod tests {
 
         // Test writing to a table without creating it first
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             let (address, account) = create_test_account();
 
             // This should handle the case where table doesn't exist
@@ -458,7 +458,7 @@ mod tests {
         let header = SealedHeader::new_unhashed(header);
 
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Write different types
             writer.put_header(&header).unwrap();
@@ -491,7 +491,7 @@ mod tests {
         let large_bytecode = Bytecode::new_raw(large_code_vec.clone().into());
 
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer.queue_create::<tables::Bytecodes>().unwrap();
             writer.queue_put::<tables::Bytecodes>(&hash, &large_bytecode).unwrap();
             writer.raw_commit().unwrap();
@@ -525,7 +525,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -589,7 +589,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -656,7 +656,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -728,7 +728,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             for (address, account) in &test_accounts {
                 writer.queue_put::<tables::PlainAccountState>(address, account).unwrap();
@@ -813,7 +813,7 @@ mod tests {
 
         // Insert test data
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             for (address, storage_key, value) in &test_storage {
                 writer
@@ -890,7 +890,7 @@ mod tests {
         let value = U256::from(100);
 
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             writer
                 .queue_put_dual::<tables::PlainStorageState>(&address, &storage_key, &value)
                 .unwrap();
@@ -973,7 +973,7 @@ mod tests {
         ];
 
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
             for (key, value) in &test_data {
                 writer.queue_put::<TestTable>(key, value).unwrap();
             }
@@ -1067,7 +1067,7 @@ mod tests {
 
         // Write storage
         {
-            let mut writer: Tx<RW> = db.writer().unwrap();
+            let writer: Tx<RW> = db.writer().unwrap();
 
             // Check db_info before write
             {

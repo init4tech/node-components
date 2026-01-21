@@ -170,14 +170,14 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         U: 'a;
 
     fn raw_traverse_mut<'a>(
-        &'a mut self,
+        &'a self,
         table: &'static str,
     ) -> Result<Self::TraverseMut<'a>, Self::Error> {
         self.writer.raw_traverse_mut(table)
     }
 
     fn queue_raw_put(
-        &mut self,
+        &self,
         table: &'static str,
         key: &[u8],
         value: &[u8],
@@ -186,7 +186,7 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
     }
 
     fn queue_raw_put_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -195,12 +195,12 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_raw_put_dual(table, key1, key2, value)
     }
 
-    fn queue_raw_delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
+    fn queue_raw_delete(&self, table: &'static str, key: &[u8]) -> Result<(), Self::Error> {
         self.writer.queue_raw_delete(table, key)
     }
 
     fn queue_raw_delete_dual(
-        &mut self,
+        &self,
         table: &'static str,
         key1: &[u8],
         key2: &[u8],
@@ -208,12 +208,12 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_raw_delete_dual(table, key1, key2)
     }
 
-    fn queue_raw_clear(&mut self, table: &'static str) -> Result<(), Self::Error> {
+    fn queue_raw_clear(&self, table: &'static str) -> Result<(), Self::Error> {
         self.writer.queue_raw_clear(table)
     }
 
     fn queue_raw_create(
-        &mut self,
+        &self,
         table: &'static str,
         dual_key: Option<usize>,
         dual_fixed: Option<usize>,
@@ -225,16 +225,12 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.raw_commit()
     }
 
-    fn queue_put<T: SingleKey>(
-        &mut self,
-        key: &T::Key,
-        value: &T::Value,
-    ) -> Result<(), Self::Error> {
+    fn queue_put<T: SingleKey>(&self, key: &T::Key, value: &T::Value) -> Result<(), Self::Error> {
         self.writer.queue_put::<T>(key, value)
     }
 
     fn queue_put_dual<T: DualKey>(
-        &mut self,
+        &self,
         key1: &T::Key,
         key2: &T::Key2,
         value: &T::Value,
@@ -242,11 +238,11 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_put_dual::<T>(key1, key2, value)
     }
 
-    fn queue_delete<T: SingleKey>(&mut self, key: &T::Key) -> Result<(), Self::Error> {
+    fn queue_delete<T: SingleKey>(&self, key: &T::Key) -> Result<(), Self::Error> {
         self.writer.queue_delete::<T>(key)
     }
 
-    fn queue_put_many<'a, 'b, T, I>(&mut self, entries: I) -> Result<(), Self::Error>
+    fn queue_put_many<'a, 'b, T, I>(&self, entries: I) -> Result<(), Self::Error>
     where
         T: SingleKey,
         T::Key: 'a,
@@ -256,14 +252,14 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         self.writer.queue_put_many::<T, I>(entries)
     }
 
-    fn queue_create<T>(&mut self) -> Result<(), Self::Error>
+    fn queue_create<T>(&self) -> Result<(), Self::Error>
     where
         T: Table,
     {
         self.writer.queue_create::<T>()
     }
 
-    fn queue_clear<T>(&mut self) -> Result<(), Self::Error>
+    fn queue_clear<T>(&self) -> Result<(), Self::Error>
     where
         T: Table,
     {
@@ -493,7 +489,7 @@ mod tests {
 
         {
             // Setup data using HotKv
-            let mut writer = mem_kv.revm_writer()?;
+            let writer = mem_kv.revm_writer()?;
             writer.queue_put::<PlainAccountState>(&address, &account)?;
             writer.queue_put::<Bytecodes>(&hash, &bytecode)?;
             writer.persist()?;
@@ -536,7 +532,7 @@ mod tests {
 
         {
             // Setup data using HotKv
-            let mut writer = mem_kv.revm_writer()?;
+            let writer = mem_kv.revm_writer()?;
             writer.queue_put::<PlainAccountState>(&address, &account)?;
             writer.queue_put::<Bytecodes>(&hash, &bytecode)?;
             writer.persist()?;
@@ -578,7 +574,7 @@ mod tests {
 
         {
             // Setup initial data
-            let mut writer = mem_kv.revm_writer()?;
+            let writer = mem_kv.revm_writer()?;
             writer.queue_put::<PlainAccountState>(&address, &account)?;
             writer.queue_put::<Bytecodes>(&hash, &bytecode)?;
             writer.persist()?;
@@ -674,7 +670,7 @@ mod tests {
 
         // Write some data using HotKv
         {
-            let mut writer = mem_kv.revm_writer()?;
+            let writer = mem_kv.revm_writer()?;
             let account = Account { nonce: 10, balance: U256::from(500u64), bytecode_hash: None };
             writer.queue_put::<PlainAccountState>(&address1, &account)?;
             writer.persist()?;
@@ -750,7 +746,7 @@ mod tests {
 
         // Setup data
         {
-            let mut writer = mem_kv.revm_writer()?;
+            let writer = mem_kv.revm_writer()?;
             writer.queue_put::<PlainAccountState>(&address, &account)?;
             writer.persist()?;
         }
