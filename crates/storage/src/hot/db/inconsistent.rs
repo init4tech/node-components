@@ -1,7 +1,17 @@
-use crate::hot::{db::HotHistoryRead, model::HotKvWrite, tables};
-use alloy::primitives::{Address, B256, U256};
+use std::{collections::BTreeMap, ops::RangeInclusive};
+
+use crate::hot::{
+    db::{HistoryError, HotHistoryRead},
+    model::HotKvWrite,
+    tables,
+};
+use alloy::primitives::{Address, B256, BlockNumber, U256};
+use itertools::Itertools;
 use reth::primitives::{Account, Header, SealedHeader};
-use reth_db::{BlockNumberList, models::BlockNumberAddress};
+use reth_db::{
+    BlockNumberList,
+    models::{BlockNumberAddress, sharded_key},
+};
 use reth_db_api::models::ShardedKey;
 use trevm::revm::{
     bytecode::Bytecode,
@@ -268,6 +278,206 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
             .iter()
             .try_for_each(|storage_changeset| self.write_changed_storage(storage_changeset))?;
         Ok(())
+    }
+
+    /// Get all changed accounts with the list of block numbers in the given
+    /// range.
+    fn changed_accounts_with_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> Result<BTreeMap<Address, Vec<u64>>, Self::Error> {
+        let mut changeset_cursor = self.traverse_dual::<tables::AccountChangeSets>()?;
+
+        let mut result: BTreeMap<Address, Vec<u64>> = BTreeMap::new();
+
+        // Position cursor at first entry at or above range start
+        let Some((num, addr, _)) =
+            changeset_cursor.next_dual_above(range.start(), &Address::ZERO)?
+        else {
+            return Ok(result);
+        };
+
+        if !range.contains(&num) {
+            return Ok(result);
+        }
+        result.entry(addr).or_default().push(num);
+
+        // Iterate through remaining entries
+        while let Some((num, addr, _)) = changeset_cursor.next_k2()? {
+            if !range.contains(&num) {
+                break;
+            }
+            result.entry(addr).or_default().push(num);
+        }
+
+        Ok(result)
+    }
+
+    /// Append account history indices for multiple accounts.
+    fn append_account_history_index(
+        &self,
+        index_updates: impl IntoIterator<Item = (Address, impl IntoIterator<Item = u64>)>,
+    ) -> Result<(), HistoryError<Self::Error>> {
+        for (acct, indices) in index_updates {
+            // Get the existing last shard (if any) and remember its key so we can
+            // delete it before writing new shards
+            let existing = self.last_account_history(acct)?;
+            let mut last_shard = existing
+                .as_ref()
+                .map(|(_, list)| list.clone())
+                .unwrap_or_default();
+
+            last_shard.append(indices).map_err(HistoryError::IntList)?;
+
+            // Delete the existing shard before writing new ones to avoid duplicates
+            if let Some((old_key, _)) = existing {
+                self.queue_delete_dual::<tables::AccountsHistory>(&acct, &old_key)?;
+            }
+
+            // fast path: all indices fit in one shard
+            if last_shard.len() <= sharded_key::NUM_OF_INDICES_IN_SHARD as u64 {
+                self.write_account_history(&acct, u64::MAX, &last_shard)?;
+                continue;
+            }
+
+            // slow path: rechunk into multiple shards
+            let chunks = last_shard.iter().chunks(sharded_key::NUM_OF_INDICES_IN_SHARD);
+
+            let mut chunks = chunks.into_iter().peekable();
+
+            while let Some(chunk) = chunks.next() {
+                let shard = BlockNumberList::new_pre_sorted(chunk);
+                let highest_block_number = if chunks.peek().is_some() {
+                    shard.iter().next_back().expect("`chunks` does not return empty list")
+                } else {
+                    // Insert last list with `u64::MAX`.
+                    u64::MAX
+                };
+
+                self.write_account_history(&acct, highest_block_number, &shard)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Get all changed storages with the list of block numbers in the given
+    /// range.
+    #[allow(clippy::type_complexity)]
+    fn changed_storages_with_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> Result<BTreeMap<(Address, U256), Vec<u64>>, Self::Error> {
+        let mut changeset_cursor = self.traverse_dual::<tables::StorageChangeSets>()?;
+
+        let mut result: BTreeMap<(Address, U256), Vec<u64>> = BTreeMap::new();
+        // Position cursor at first entry at or above range start
+        let Some((num_addr, slot, _)) = changeset_cursor
+            .next_dual_above(&BlockNumberAddress((*range.start(), Address::ZERO)), &U256::ZERO)?
+        else {
+            return Ok(result);
+        };
+
+        if !range.contains(&num_addr.block_number()) {
+            return Ok(result);
+        }
+        result.entry((num_addr.address(), slot)).or_default().push(num_addr.block_number());
+
+        // Iterate through remaining entries
+        while let Some((num_addr, slot, _)) = changeset_cursor.next_k2()? {
+            if !range.contains(&num_addr.block_number()) {
+                break;
+            }
+            result.entry((num_addr.address(), slot)).or_default().push(num_addr.block_number());
+        }
+
+        Ok(result)
+    }
+
+    /// Append storage history indices for multiple (address, slot) pairs.
+    fn append_storage_history_index(
+        &self,
+        index_updates: impl IntoIterator<Item = ((Address, U256), impl IntoIterator<Item = u64>)>,
+    ) -> Result<(), HistoryError<Self::Error>> {
+        for ((addr, slot), indices) in index_updates {
+            // Get the existing last shard (if any) and remember its key so we can
+            // delete it before writing new shards
+            let existing = self.last_storage_history(&addr, &slot)?;
+            let mut last_shard = existing
+                .as_ref()
+                .map(|(_, list)| list.clone())
+                .unwrap_or_default();
+
+            last_shard.append(indices).map_err(HistoryError::IntList)?;
+
+            // Delete the existing shard before writing new ones to avoid duplicates
+            if let Some((old_key, _)) = existing {
+                self.queue_delete_dual::<tables::StorageHistory>(&addr, &old_key)?;
+            }
+
+            // fast path: all indices fit in one shard
+            if last_shard.len() <= sharded_key::NUM_OF_INDICES_IN_SHARD as u64 {
+                self.write_storage_history(&addr, slot, u64::MAX, &last_shard)?;
+                continue;
+            }
+
+            // slow path: rechunk into multiple shards
+            let chunks = last_shard.iter().chunks(sharded_key::NUM_OF_INDICES_IN_SHARD);
+
+            let mut chunks = chunks.into_iter().peekable();
+
+            while let Some(chunk) = chunks.next() {
+                let shard = BlockNumberList::new_pre_sorted(chunk);
+                let highest_block_number = if chunks.peek().is_some() {
+                    shard.iter().next_back().expect("`chunks` does not return empty list")
+                } else {
+                    // Insert last list with `u64::MAX`.
+                    u64::MAX
+                };
+
+                self.write_storage_history(&addr, slot, highest_block_number, &shard)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Update the history indices for accounts and storage in the given block
+    /// range.
+    fn update_history_indices_inconsistent(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> Result<(), HistoryError<Self::Error>> {
+        // account history stage
+        {
+            let indices = self.changed_accounts_with_range(range.clone())?;
+            self.append_account_history_index(indices)?;
+        }
+
+        // storage history stage
+        {
+            let indices = self.changed_storages_with_range(range)?;
+            self.append_storage_history_index(indices)?;
+        }
+
+        Ok(())
+    }
+
+    /// Append a block's header and state changes in an inconsistent manner.
+    ///
+    /// This may leave the database in an inconsistent state. Users should
+    /// prefer higher-level abstractions when possible.
+    ///
+    /// 1. It MUST be checked that the header is the child of the current chain
+    ///    tip before calling this method.
+    /// 2. After calling this method, the caller MUST call
+    ///    update_history_indices.
+    fn append_block_inconsistent(
+        &self,
+        header: &SealedHeader,
+        state_changes: &StateChangeset,
+    ) -> Result<(), Self::Error> {
+        self.put_header_inconsistent(header.header())?;
+        self.put_header_number_inconsistent(&header.hash(), header.number)?;
+        self.write_state_changes(state_changes)
     }
 }
 

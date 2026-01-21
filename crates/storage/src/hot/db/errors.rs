@@ -1,5 +1,5 @@
 use alloy::primitives::B256;
-use std::fmt;
+use reth_db::models::integer_list::IntegerListError;
 
 /// A result type for history operations.
 pub type HistoryResult<T, E> = Result<T, HistoryError<E>>;
@@ -8,9 +8,10 @@ pub type HistoryResult<T, E> = Result<T, HistoryError<E>>;
 ///
 /// This error is returned by methods that append or unwind history,
 /// and includes both chain consistency errors and database errors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HistoryError<E> {
+#[derive(Debug, thiserror::Error)]
+pub enum HistoryError<E: std::error::Error> {
     /// Block number doesn't extend the chain contiguously.
+    #[error("non-contiguous block: expected {expected}, got {got}")]
     NonContiguousBlock {
         /// The expected block number (current tip + 1).
         expected: u64,
@@ -18,38 +19,31 @@ pub enum HistoryError<E> {
         got: u64,
     },
     /// Parent hash doesn't match current tip or previous block in range.
+
+    #[error("parent hash mismatch: expected {expected}, got {got}")]
     ParentHashMismatch {
         /// The expected parent hash.
         expected: B256,
         /// The actual parent hash provided.
         got: B256,
     },
+
     /// Empty header range provided to a method that requires at least one header.
+    #[error("empty header range provided")]
     EmptyRange,
+
     /// Database error.
-    Db(E),
+    #[error("{0}")]
+    Db(#[from] E),
+
+    /// Integer List
+    #[error(transparent)]
+    IntList(IntegerListError),
 }
 
-impl<E: fmt::Display> fmt::Display for HistoryError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NonContiguousBlock { expected, got } => {
-                write!(f, "non-contiguous block: expected {expected}, got {got}")
-            }
-            Self::ParentHashMismatch { expected, got } => {
-                write!(f, "parent hash mismatch: expected {expected}, got {got}")
-            }
-            Self::EmptyRange => write!(f, "empty header range provided"),
-            Self::Db(e) => write!(f, "database error: {e}"),
-        }
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for HistoryError<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Db(e) => Some(e),
-            _ => None,
-        }
+impl<E: std::error::Error> HistoryError<E> {
+    /// Helper to create a database error
+    pub const fn intlist(err: IntegerListError) -> Self {
+        HistoryError::IntList(err)
     }
 }

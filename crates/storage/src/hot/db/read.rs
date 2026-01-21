@@ -83,6 +83,22 @@ pub trait HotHistoryRead: HotDbRead {
     ) -> Result<Option<BlockNumberList>, Self::Error> {
         self.get_dual::<tables::AccountsHistory>(address, &latest_height)
     }
+
+    /// Get the last (highest) account history entry for an address.
+    fn last_account_history(
+        &self,
+        address: Address,
+    ) -> Result<Option<(u64, BlockNumberList)>, Self::Error> {
+        let mut cursor = self.traverse_dual::<tables::AccountsHistory>()?;
+
+        // Move the cursor to the last entry for the given address
+        let Some(res) = cursor.last_of_k1(&address)? else {
+            return Ok(None);
+        };
+
+        Ok(Some((res.1, res.2)))
+    }
+
     /// Get the account change (pre-state) for an account at a specific block.
     ///
     /// If the return value is `None`, the account was not changed in that
@@ -105,6 +121,41 @@ pub trait HotHistoryRead: HotDbRead {
     ) -> Result<Option<BlockNumberList>, Self::Error> {
         let sharded_key = ShardedKey::new(slot, highest_block_number);
         self.get_dual::<tables::StorageHistory>(address, &sharded_key)
+    }
+
+    /// Get the last (highest) storage history entry for an address and slot.
+    fn last_storage_history(
+        &self,
+        address: &Address,
+        slot: &U256,
+    ) -> Result<Option<(ShardedKey<U256>, BlockNumberList)>, Self::Error> {
+        let mut cursor = self.traverse_dual::<tables::StorageHistory>()?;
+
+        // Seek to the highest possible key for this (address, slot) combination.
+        // ShardedKey encodes as slot || highest_block_number, so seeking to
+        // (address, ShardedKey::new(slot, u64::MAX)) positions us at or after
+        // the last shard for this slot.
+        let target = ShardedKey::new(*slot, u64::MAX);
+        let result = cursor.next_dual_above(address, &target)?;
+
+        // Check if we found an exact match for this address and slot
+        if let Some((addr, sharded_key, list)) = result {
+            if addr == *address && sharded_key.key == *slot {
+                return Ok(Some((sharded_key, list)));
+            }
+        }
+
+        // The cursor is positioned at or after our target. Go backwards to find
+        // the last entry for this (address, slot).
+        let Some((addr, sharded_key, list)) = cursor.previous_k2()? else {
+            return Ok(None);
+        };
+
+        if addr == *address && sharded_key.key == *slot {
+            Ok(Some((sharded_key, list)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get the storage change (before state) for a specific storage slot at a

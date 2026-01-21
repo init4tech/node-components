@@ -416,6 +416,54 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursor<'a> {
         // scan forward until finding a new k2 for the same k1
         DualKeyTraverse::next_dual_above(self, &current_k1, &current_k2)
     }
+
+    fn last_of_k1<'b>(
+        &'b mut self,
+        key1: &[u8],
+    ) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        // Search for (k1, 0xff...) and find last entry <= that
+        let search_key = MemKv::dual_key(key1, &[0xffu8; MAX_KEY_SIZE]);
+        let Some((found_key, value)) = self.table.range(..=search_key).next_back() else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        let (found_k1, found_k2) = MemKv::split_dual_key(found_key);
+        // Compare only the relevant prefix of found_k1 with key1
+        // found_k1 is MAX_KEY_SIZE bytes, key1 may be shorter
+        if &found_k1.as_ref()[..key1.len()] != key1 {
+            self.clear_current_key();
+            return Ok(None);
+        }
+        self.set_current_key(*found_key);
+        Ok(Some((found_k1, found_k2, Cow::Borrowed(value.as_ref()))))
+    }
+
+    fn previous_k1<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current_k1 = self.current_k1();
+        // Find entries before start of current k1
+        let search_start = MemKv::dual_key(&current_k1, &[0u8; MAX_KEY_SIZE]);
+        let Some((found_key, value)) = self.table.range(..search_start).next_back() else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        self.set_current_key(*found_key);
+        let (k1, k2) = MemKv::split_dual_key(found_key);
+        Ok(Some((k1, k2, Cow::Borrowed(value.as_ref()))))
+    }
+
+    fn previous_k2<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current_key = self.current_key();
+        let (current_k1, _) = MemKv::split_dual_key(&current_key);
+        let Some((found_key, value)) = self.table.range(..current_key).next_back() else {
+            return Ok(None);
+        };
+        let (found_k1, found_k2) = MemKv::split_dual_key(found_key);
+        if found_k1.as_ref() != current_k1.as_ref() {
+            return Ok(None); // Previous entry has different k1
+        }
+        self.set_current_key(*found_key);
+        Ok(Some((found_k1, found_k2, Cow::Borrowed(value.as_ref()))))
+    }
 }
 
 /// Memory cursor for read-write operations
@@ -650,6 +698,59 @@ impl<'a> MemKvCursorMut<'a> {
             (None, Some((ck, current))) => Some((*ck, current.clone())),
         }
     }
+
+    /// Get the last key-value pair <= key, returning owned data.
+    ///
+    /// Reverse iteration for cursor navigation (last_of_k1). Merges queued ops
+    /// with committed data, preferring the larger key (closest to search key).
+    fn get_range_reverse_inclusive_owned(&self, key: &MemStoreKey) -> Option<(MemStoreKey, Bytes)> {
+        // Find candidates <= the given key, scanning backwards.
+        let queued_ops = self.queued_ops.lock().unwrap();
+        let q = queued_ops.range(..=*key).next_back();
+        let c = if !self.is_cleared { self.table.range(..=*key).next_back() } else { None };
+
+        match (q, c) {
+            (None, None) => None,
+
+            // Both sources have candidates - pick the larger key (closest to
+            // search position), preferring queued ops on ties.
+            (Some((qk, queued)), Some((ck, current))) => {
+                if qk >= ck {
+                    match queued {
+                        QueuedKvOp::Put { value } => Some((*qk, value.clone())),
+                        // Deleted; recurse to find the previous valid entry.
+                        QueuedKvOp::Delete => {
+                            let next_key = *qk;
+                            drop(queued_ops);
+                            self.get_range_reverse_owned(&next_key)
+                        }
+                    }
+                } else {
+                    // Check if the committed key was deleted
+                    if let Some(QueuedKvOp::Delete) = queued_ops.get(ck) {
+                        let next_key = *ck;
+                        drop(queued_ops);
+                        self.get_range_reverse_owned(&next_key)
+                    } else {
+                        Some((*ck, current.clone()))
+                    }
+                }
+            }
+
+            // Only queued ops have a candidate.
+            (Some((qk, queued)), None) => match queued {
+                QueuedKvOp::Put { value } => Some((*qk, value.clone())),
+                QueuedKvOp::Delete => {
+                    let next_key = *qk;
+                    drop(queued_ops);
+                    self.get_range_reverse_owned(&next_key)
+                }
+            },
+
+            // Only committed storage has a candidate.
+            (None, Some((ck, current))) => Some((*ck, current.clone())),
+        }
+    }
 }
 
 impl<'a> KvTraverse<MemKvError> for MemKvCursorMut<'a> {
@@ -777,6 +878,60 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
 
         // scan forward until finding a new k2 for the same k1
         DualKeyTraverse::next_dual_above(self, &current_k1, &current_k2)
+    }
+
+    fn last_of_k1<'b>(
+        &'b mut self,
+        key1: &[u8],
+    ) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        // Search for (k1, 0xff...) and find last entry <= that
+        let search_key = MemKv::dual_key(key1, &[0xffu8; MAX_KEY_SIZE]);
+        let Some((found_key, value)) = self.get_range_reverse_inclusive_owned(&search_key) else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        let (found_k1, found_k2) = MemKv::split_dual_key(&found_key);
+        if found_k1.as_ref() != key1 {
+            self.clear_current_key();
+            return Ok(None);
+        }
+        self.set_current_key(found_key);
+        Ok(Some((
+            Cow::Owned(found_k1.to_vec()),
+            Cow::Owned(found_k2.to_vec()),
+            Cow::Owned(value.to_vec()),
+        )))
+    }
+
+    fn previous_k1<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current_k1 = self.current_k1();
+        // Find entries before start of current k1
+        let search_start = MemKv::dual_key(&current_k1, &[0u8; MAX_KEY_SIZE]);
+        let Some((found_key, value)) = self.get_range_reverse_owned(&search_start) else {
+            self.clear_current_key();
+            return Ok(None);
+        };
+        self.set_current_key(found_key);
+        let (k1, k2) = MemKv::split_dual_key(&found_key);
+        Ok(Some((Cow::Owned(k1.to_vec()), Cow::Owned(k2.to_vec()), Cow::Owned(value.to_vec()))))
+    }
+
+    fn previous_k2<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
+        let current_key = self.current_key();
+        let (current_k1, _) = MemKv::split_dual_key(&current_key);
+        let Some((found_key, value)) = self.get_range_reverse_owned(&current_key) else {
+            return Ok(None);
+        };
+        let (found_k1, found_k2) = MemKv::split_dual_key(&found_key);
+        if found_k1.as_ref() != current_k1.as_ref() {
+            return Ok(None); // Previous entry has different k1
+        }
+        self.set_current_key(found_key);
+        Ok(Some((
+            Cow::Owned(found_k1.to_vec()),
+            Cow::Owned(found_k2.to_vec()),
+            Cow::Owned(value.to_vec()),
+        )))
     }
 }
 
@@ -1919,4 +2074,189 @@ mod tests {
     //     let hot_kv = MemKv::new();
     //     conformance_append_unwind(&hot_kv);
     // }
+
+    #[test]
+    fn test_dual_key_last_of_k1() {
+        let store = MemKv::new();
+
+        // Setup test data:
+        // k1=1: k2=[10, 20, 30]
+        // k1=2: k2=[100, 200]
+        // k1=3: k2=[1000]
+        let dual_data = vec![
+            (1u64, 10u32, Bytes::from_static(b"v1_10")),
+            (1u64, 20u32, Bytes::from_static(b"v1_20")),
+            (1u64, 30u32, Bytes::from_static(b"v1_30")),
+            (2u64, 100u32, Bytes::from_static(b"v2_100")),
+            (2u64, 200u32, Bytes::from_static(b"v2_200")),
+            (3u64, 1000u32, Bytes::from_static(b"v3_1000")),
+        ];
+
+        {
+            let writer = store.writer().unwrap();
+            for (key1, key2, value) in &dual_data {
+                writer.queue_put_dual::<DualTestTable>(key1, key2, value).unwrap();
+            }
+            writer.raw_commit().unwrap();
+        }
+
+        let reader = store.reader().unwrap();
+        let mut cursor = reader.cursor(DualTestTable::NAME).unwrap();
+
+        // Test last_of_k1 for k1=1 should return k2=30
+        let result = DualTableTraverse::<DualTestTable, _>::last_of_k1(&mut cursor, &1u64).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 1u64);
+        assert_eq!(k2, 30u32);
+        assert_eq!(value, Bytes::from_static(b"v1_30"));
+
+        // Test last_of_k1 for k1=2 should return k2=200
+        let result = DualTableTraverse::<DualTestTable, _>::last_of_k1(&mut cursor, &2u64).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 2u64);
+        assert_eq!(k2, 200u32);
+        assert_eq!(value, Bytes::from_static(b"v2_200"));
+
+        // Test last_of_k1 for k1=3 should return k2=1000 (only entry)
+        let result = DualTableTraverse::<DualTestTable, _>::last_of_k1(&mut cursor, &3u64).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, _) = result.unwrap();
+        assert_eq!(k1, 3u64);
+        assert_eq!(k2, 1000u32);
+
+        // Test last_of_k1 for non-existent k1=999 should return None
+        let result =
+            DualTableTraverse::<DualTestTable, _>::last_of_k1(&mut cursor, &999u64).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dual_key_previous_k1() {
+        let store = MemKv::new();
+
+        let dual_data = vec![
+            (1u64, 10u32, Bytes::from_static(b"v1_10")),
+            (1u64, 20u32, Bytes::from_static(b"v1_20")),
+            (1u64, 30u32, Bytes::from_static(b"v1_30")),
+            (2u64, 100u32, Bytes::from_static(b"v2_100")),
+            (2u64, 200u32, Bytes::from_static(b"v2_200")),
+            (3u64, 1000u32, Bytes::from_static(b"v3_1000")),
+        ];
+
+        {
+            let writer = store.writer().unwrap();
+            for (key1, key2, value) in &dual_data {
+                writer.queue_put_dual::<DualTestTable>(key1, key2, value).unwrap();
+            }
+            writer.raw_commit().unwrap();
+        }
+
+        let reader = store.reader().unwrap();
+        let mut cursor = reader.cursor(DualTestTable::NAME).unwrap();
+
+        // Position at k1=3, k2=1000
+        let _ = DualTableTraverse::<DualTestTable, _>::next_dual_above(&mut cursor, &3u64, &0u32)
+            .unwrap();
+
+        // previous_k1 should return last entry of k1=2 (k2=200)
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k1(&mut cursor).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 2u64);
+        assert_eq!(k2, 200u32);
+        assert_eq!(value, Bytes::from_static(b"v2_200"));
+
+        // previous_k1 again should return last entry of k1=1 (k2=30)
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k1(&mut cursor).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 1u64);
+        assert_eq!(k2, 30u32);
+        assert_eq!(value, Bytes::from_static(b"v1_30"));
+
+        // previous_k1 again should return None (no k1 before 1)
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k1(&mut cursor).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dual_key_previous_k2() {
+        let store = MemKv::new();
+
+        let dual_data = vec![
+            (1u64, 10u32, Bytes::from_static(b"v1_10")),
+            (1u64, 20u32, Bytes::from_static(b"v1_20")),
+            (1u64, 30u32, Bytes::from_static(b"v1_30")),
+            (2u64, 100u32, Bytes::from_static(b"v2_100")),
+        ];
+
+        {
+            let writer = store.writer().unwrap();
+            for (key1, key2, value) in &dual_data {
+                writer.queue_put_dual::<DualTestTable>(key1, key2, value).unwrap();
+            }
+            writer.raw_commit().unwrap();
+        }
+
+        let reader = store.reader().unwrap();
+        let mut cursor = reader.cursor(DualTestTable::NAME).unwrap();
+
+        // Position at last of k1=1 (k2=30)
+        let _ = DualTableTraverse::<DualTestTable, _>::last_of_k1(&mut cursor, &1u64).unwrap();
+
+        // previous_k2 should return k2=20
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k2(&mut cursor).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 1u64);
+        assert_eq!(k2, 20u32);
+        assert_eq!(value, Bytes::from_static(b"v1_20"));
+
+        // previous_k2 should return k2=10
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k2(&mut cursor).unwrap();
+        assert!(result.is_some());
+        let (k1, k2, value) = result.unwrap();
+        assert_eq!(k1, 1u64);
+        assert_eq!(k2, 10u32);
+        assert_eq!(value, Bytes::from_static(b"v1_10"));
+
+        // previous_k2 should return None (no k2 before 10 for k1=1)
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k2(&mut cursor).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dual_key_backward_edge_cases() {
+        let store = MemKv::new();
+
+        let dual_data = vec![
+            (1u64, 10u32, Bytes::from_static(b"v1_10")),
+            (2u64, 100u32, Bytes::from_static(b"v2_100")),
+        ];
+
+        {
+            let writer = store.writer().unwrap();
+            for (key1, key2, value) in &dual_data {
+                writer.queue_put_dual::<DualTestTable>(key1, key2, value).unwrap();
+            }
+            writer.raw_commit().unwrap();
+        }
+
+        let reader = store.reader().unwrap();
+        let mut cursor = reader.cursor(DualTestTable::NAME).unwrap();
+
+        // Position at first entry (k1=1, k2=10)
+        let _ = DualTableTraverse::<DualTestTable, _>::next_dual_above(&mut cursor, &1u64, &10u32)
+            .unwrap();
+
+        // previous_k2 at first entry of k1 should return None
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k2(&mut cursor).unwrap();
+        assert!(result.is_none());
+
+        // previous_k1 at first k1 should return None
+        let result = DualTableTraverse::<DualTestTable, _>::previous_k1(&mut cursor).unwrap();
+        assert!(result.is_none());
+    }
 }

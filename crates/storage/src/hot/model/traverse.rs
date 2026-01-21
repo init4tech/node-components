@@ -85,6 +85,26 @@ pub trait DualKeyTraverse<E: HotKvReadError>: KvTraverse<E> {
     /// Move the cursor to the next distinct key2 for the current key1, and
     /// return the first key-value pair with that key2.
     fn next_k2<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, E>;
+
+    /// Seek to the LAST key2 entry for the specified key1.
+    ///
+    /// This positions the cursor at the last duplicate value for the given key1.
+    /// Returning `Ok(None)` indicates the key1 does not exist.
+    fn last_of_k1<'a>(&'a mut self, key1: &[u8]) -> Result<Option<RawDualKeyValue<'a>>, E>;
+
+    /// Move the cursor to the LAST key2 entry of the PREVIOUS key1.
+    ///
+    /// This is the reverse of `next_k1` - it moves backward to the previous distinct
+    /// key1 and positions at its last key2 entry.
+    /// Returning `Ok(None)` indicates there is no previous key1.
+    fn previous_k1<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, E>;
+
+    /// Move the cursor to the PREVIOUS key2 entry for the CURRENT key1.
+    ///
+    /// This is the reverse of `next_k2` - it moves backward within the current key1's
+    /// duplicate values.
+    /// Returning `Ok(None)` indicates there is no previous key2 for this key1.
+    fn previous_k2<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, E>;
 }
 
 // ============================================================================
@@ -199,6 +219,15 @@ pub trait DualTableTraverse<T: DualKey, E: HotKvReadError>: DualKeyTraverse<E> {
 
     /// Seek to the next distinct key2 for the current key1.
     fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E>;
+
+    /// Seek to the LAST key2 entry for the specified key1.
+    fn last_of_k1(&mut self, key1: &T::Key) -> Result<Option<DualKeyValue<T>>, E>;
+
+    /// Move to the LAST key2 entry of the PREVIOUS key1.
+    fn previous_k1(&mut self) -> Result<Option<DualKeyValue<T>>, E>;
+
+    /// Move to the PREVIOUS key2 entry for the CURRENT key1.
+    fn previous_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E>;
 }
 
 impl<C, T, E> DualTableTraverse<T, E> for C
@@ -229,6 +258,24 @@ where
 
     fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
         DualKeyTraverse::next_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+    }
+
+    fn last_of_k1(&mut self, key1: &T::Key) -> Result<Option<DualKeyValue<T>>, E> {
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let key1_bytes = key1.encode_key(&mut key1_buf);
+
+        DualKeyTraverse::last_of_k1(self, key1_bytes)?
+            .map(T::decode_kkv_tuple)
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    fn previous_k1(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualKeyTraverse::previous_k1(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
+    }
+
+    fn previous_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualKeyTraverse::previous_k2(self)?.map(T::decode_kkv_tuple).transpose().map_err(Into::into)
     }
 }
 
@@ -386,6 +433,21 @@ where
     /// Seek to the next distinct key2 for the current key1.
     pub fn next_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
         DualTableTraverse::<T, E>::next_k2(&mut self.inner)
+    }
+
+    /// Seek to the LAST key2 entry for the specified key1.
+    pub fn last_of_k1(&mut self, key1: &T::Key) -> Result<Option<DualKeyValue<T>>, E> {
+        DualTableTraverse::<T, E>::last_of_k1(&mut self.inner, key1)
+    }
+
+    /// Move to the LAST key2 entry of the PREVIOUS key1.
+    pub fn previous_k1(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualTableTraverse::<T, E>::previous_k1(&mut self.inner)
+    }
+
+    /// Move to the PREVIOUS key2 entry for the CURRENT key1.
+    pub fn previous_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
+        DualTableTraverse::<T, E>::previous_k2(&mut self.inner)
     }
 }
 

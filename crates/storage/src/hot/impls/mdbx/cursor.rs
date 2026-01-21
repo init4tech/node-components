@@ -218,4 +218,69 @@ where
             Ok(None)
         }
     }
+
+    fn last_of_k1<'a>(&'a mut self, key1: &[u8]) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        // First, position at key1 (any duplicate)
+        let Some(_) = self.inner.set::<Cow<'_, [u8]>>(key1)? else {
+            return Ok(None);
+        };
+
+        // Then move to the last duplicate for this key1
+        let Some(v) = self.inner.last_dup::<Cow<'_, [u8]>>()? else {
+            return Ok(None);
+        };
+
+        // Split the value into key2 and actual value
+        let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+            return Err(MdbxError::UnknownFixedSize);
+        };
+        let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+        let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+
+        Ok(Some((Cow::Owned(key1.to_vec()), k2, val)))
+    }
+
+    fn previous_k1<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        // prev_nodup positions at the last data item of the previous key
+        match self.inner.prev_nodup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                // For DUPSORT, prev_nodup already positions at the last duplicate
+                // of the previous key. Split the value.
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn previous_k2<'a>(&'a mut self) -> Result<Option<RawDualKeyValue<'a>>, MdbxError> {
+        if !self.db_info.is_dupsort() {
+            return Err(MdbxError::NotDupSort);
+        }
+
+        // prev_dup positions at the previous duplicate of the current key
+        match self.inner.prev_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+            Some((k1, v)) => {
+                let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
+                    return Err(MdbxError::UnknownFixedSize);
+                };
+                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                Ok(Some((k1, k2, val)))
+            }
+            None => Ok(None),
+        }
+    }
 }
