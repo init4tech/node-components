@@ -42,7 +42,7 @@ fn test_header_roundtrip<T: HotKv>(hot_kv: &T) {
 
     // Write header
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.put_header(&sealed).unwrap();
         writer.commit().unwrap();
     }
@@ -79,7 +79,7 @@ fn test_account_roundtrip<T: HotKv>(hot_kv: &T) {
 
     // Write account
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.put_account(&addr, &account).unwrap();
         writer.commit().unwrap();
     }
@@ -103,7 +103,7 @@ fn test_storage_roundtrip<T: HotKv>(hot_kv: &T) {
 
     // Write storage
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.put_storage(&addr, &slot, &value).unwrap();
         writer.commit().unwrap();
     }
@@ -135,7 +135,7 @@ fn test_bytecode_roundtrip<T: HotKv>(hot_kv: &T) {
 
     // Write bytecode
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.put_bytecode(&code_hash, &bytecode).unwrap();
         writer.commit().unwrap();
     }
@@ -156,7 +156,7 @@ fn test_account_history<T: HotKv>(hot_kv: &T) {
 
     // Write account history
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.write_account_history(&addr, latest_height, &touched_blocks).unwrap();
         writer.commit().unwrap();
     }
@@ -180,7 +180,7 @@ fn test_storage_history<T: HotKv>(hot_kv: &T) {
 
     // Write storage history
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.write_storage_history(&addr, slot, highest_block, &touched_blocks).unwrap();
         writer.commit().unwrap();
     }
@@ -203,7 +203,7 @@ fn test_account_changes<T: HotKv>(hot_kv: &T) {
 
     // Write account change
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.write_account_prestate(block_number, addr, &pre_state).unwrap();
         writer.commit().unwrap();
     }
@@ -230,7 +230,7 @@ fn test_storage_changes<T: HotKv>(hot_kv: &T) {
 
     // Write storage change
     {
-        let mut writer = hot_kv.writer().unwrap();
+        let writer = hot_kv.writer().unwrap();
         writer.write_storage_prestate(block_number, addr, &slot, &pre_value).unwrap();
         writer.commit().unwrap();
     }
@@ -322,7 +322,7 @@ fn make_header(number: u64, parent_hash: B256) -> SealedHeader {
 //     let shard_key = u64::MAX;
 
 //     {
-//         let mut writer = hot_kv.writer().unwrap();
+//         let writer = hot_kv.writer().unwrap();
 
 //         // Block 1: Create addr1 with nonce=1, balance=100
 //         writer.put_header(&headers[0]).unwrap();
@@ -406,7 +406,7 @@ fn make_header(number: u64, parent_hash: B256) -> SealedHeader {
 
 //     // ========== Phase 2: Unwind 2 blocks (to block 3) ==========
 //     {
-//         let mut writer = hot_kv.writer().unwrap();
+//         let writer = hot_kv.writer().unwrap();
 //         let unwound = writer.unwind_to(3).unwrap();
 //         assert_eq!(unwound, 2);
 //         writer.commit().unwrap();
@@ -439,7 +439,7 @@ fn make_header(number: u64, parent_hash: B256) -> SealedHeader {
 //     let header5_new = make_header(5, header4_new.hash());
 
 //     {
-//         let mut writer = hot_kv.writer().unwrap();
+//         let writer = hot_kv.writer().unwrap();
 
 //         // Block 4 (new): Different state changes
 //         writer.put_header(&header4_new).unwrap();
