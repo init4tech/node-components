@@ -53,6 +53,8 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod conformance;
 
+pub mod db;
+
 pub mod model;
 
 /// Implementations of hot storage backends.

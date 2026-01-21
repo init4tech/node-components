@@ -36,8 +36,6 @@
 //! The library wraps these into the [`TableCursor`] and [`DualTableCursor`]
 //! structs for ease of use and consistency across different backends.
 
-mod db_traits;
-pub use db_traits::{HotDbRead, HotDbWrite, HotHistoryRead, HotHistoryWrite};
 
 mod error;
 pub use error::{HotKvError, HotKvReadError, HotKvResult};

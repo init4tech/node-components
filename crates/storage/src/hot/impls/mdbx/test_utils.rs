@@ -1,8 +1,9 @@
 //! Utilities for testing MDBX storage implementation.
 
 use crate::hot::{
+    db::UnsafeDbWrite,
     impls::mdbx::{DatabaseArguments, DatabaseEnv, DatabaseEnvKind},
-    model::{HotDbWrite, HotKv, HotKvWrite},
+    model::{HotKv, HotKvWrite},
     tables::{self, SingleKey, Table},
 };
 use alloy::primitives::Bytes;
@@ -56,11 +57,9 @@ mod tests {
     use super::*;
     use crate::hot::{
         conformance::conformance,
+        db::UnsafeDbWrite,
         impls::mdbx::Tx,
-        model::{
-            DualTableTraverse, HotDbWrite, HotKv, HotKvRead, HotKvWrite, TableTraverse,
-            TableTraverseMut,
-        },
+        model::{DualTableTraverse, HotKv, HotKvRead, HotKvWrite, TableTraverse, TableTraverseMut},
         tables,
     };
     use alloy::primitives::{Address, B256, BlockNumber, Bytes, U256};

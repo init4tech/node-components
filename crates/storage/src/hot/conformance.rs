@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use crate::hot::model::{HotDbRead, HotDbWrite, HotHistoryRead, HotHistoryWrite, HotKv};
+use crate::hot::{
+    db::{HotDbRead, HotHistoryRead, UnsafeDbWrite, UnsafeHistoryWrite},
+    model::HotKv,
+};
 use alloy::primitives::{B256, Bytes, U256, address, b256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader};
 use reth_db::BlockNumberList;
