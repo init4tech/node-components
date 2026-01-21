@@ -1,9 +1,41 @@
-//! Module that interacts with MDBX.
+//! Implementation of the hot key-value storage using MDBX as the underlying
+//! database.
+//!
+//! ## Notes on implementation
+//!
+//! This module provides an implementation of the [`HotKv`] trait using MDBX as
+//! the underlying database. It includes functionality for opening and
+//! managing the MDBX environment, handling read-only and read-write
+//! transactions, and managing database tables.
+//!
+//! The [`DatabaseEnv`] struct encapsulates the MDBX environment and provides
+//! methods for starting transactions. The [`DatabaseArguments`] struct
+//! allows for configuring various parameters of the database environment,
+//! such as geometry, sync mode, and maximum readers.
+//!
+//! ### Table Metadata
+//!
+//! This implementation uses the default MDBX table to store metadata about
+//! each table, including whether it uses dual keys or fixed-size values. This
+//! metadata is cached in memory for efficient access during the lifetime of
+//! the environment. Each time a table is opened, its metadata is checked
+//! against the cached values to ensure consistency.
+//!
+//! Rought Edges:
+//! - The cache does not respect dropped transactions. Creating multiple tables
+//!   with the same name but different metadata in different transactions
+//!   may lead to inconsistencies.
+//! - Tables created outside of this implementation (e.g., via external tools)
+//!   will not have their metadata cached, which may lead to inconsistencies if
+//!   the same table is later opened with different metadata.
+//!
+//! Overall, we do NOT recommend using this to open existing databases that
+//! were not created and managed by this implementation.
 
-use reth_db::{DatabaseError, lockfile::StorageLock};
+use reth_db::lockfile::StorageLock;
 use reth_libmdbx::{
-    Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
-    MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
+    ffi, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
+    MaxReadTransactionDuration, Mode, PageSize, SyncMode, RO, RW,
 };
 use std::{
     ops::{Deref, Range},
@@ -46,7 +78,7 @@ const DEFAULT_MAX_READERS: u64 = 32_000;
 /// See [`reth_libmdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
 const MAX_SAFE_READER_SPACE: usize = 10 * GIGABYTE;
 
-/// Environment used when opening a MDBX environment. RO/RW.
+/// Environment used when opening a MDBX environment. Read-only or Read-write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DatabaseEnvKind {
     /// Read-only MDBX environment.
@@ -197,9 +229,21 @@ impl DatabaseArguments {
         self.max_readers = max_readers;
         self
     }
+
+    /// Open a read-only database at `path` with the current arguments
+    pub fn open_ro(self, path: &Path) -> Result<DatabaseEnv, MdbxError> {
+        DatabaseEnv::open(path, DatabaseEnvKind::RO, self)
+    }
+
+    /// Open a read-write database at `path` with the current arguments
+    pub fn open_rw(self, path: &Path) -> Result<DatabaseEnv, MdbxError> {
+        DatabaseEnv::open(path, DatabaseEnvKind::RW, self)
+    }
 }
 
-/// Wrapper for the libmdbx environment: [Environment]
+/// MDBX database environment. Wraps the low-level [Environment], and
+/// implements the [`HotKv`] trait.
+
 #[derive(Debug)]
 pub struct DatabaseEnv {
     /// Libmdbx-sys environment.
@@ -224,14 +268,8 @@ impl DatabaseEnv {
         path: &Path,
         kind: DatabaseEnvKind,
         args: DatabaseArguments,
-    ) -> Result<Self, DatabaseError> {
-        let _lock_file = if kind.is_rw() {
-            StorageLock::try_acquire(path)
-                .map_err(|err| DatabaseError::Other(err.to_string()))?
-                .into()
-        } else {
-            None
-        };
+    ) -> Result<Self, MdbxError> {
+        let _lock_file = if kind.is_rw() { Some(StorageLock::try_acquire(path)?) } else { None };
 
         let mut inner_env = Environment::builder();
 
@@ -334,11 +372,7 @@ impl DatabaseEnv {
             inner_env.set_max_read_transaction_duration(max_read_transaction_duration);
         }
 
-        let env = Self {
-            inner: inner_env.open(path).map_err(|e| DatabaseError::Open(e.into()))?,
-            db_cache: Arc::default(),
-            _lock_file,
-        };
+        let env = Self { inner: inner_env.open(path)?, db_cache: Arc::default(), _lock_file };
 
         Ok(env)
     }

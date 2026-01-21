@@ -1,3 +1,5 @@
+use reth::providers::errors::lockfile::StorageLockError;
+
 use crate::hot::{
     DeserError,
     model::{HotKvError, HotKvReadError},
@@ -36,6 +38,10 @@ pub enum MdbxError {
     /// Table not found
     #[error("table not found: {0}")]
     UnknownTable(&'static str),
+
+    /// Storage lock error
+    #[error(transparent)]
+    Locked(#[from] StorageLockError),
 
     /// Deser.
     #[error(transparent)]
