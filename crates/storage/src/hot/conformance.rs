@@ -32,10 +32,10 @@ pub fn conformance<T: HotKv>(hot_kv: &T) {
     test_storage_roundtrip(hot_kv);
     test_storage_update_replaces(hot_kv);
     test_bytecode_roundtrip(hot_kv);
-    // test_account_history(hot_kv);
-    // test_storage_history(hot_kv);
-    // test_account_changes(hot_kv);
-    // test_storage_changes(hot_kv);
+    test_account_history(hot_kv);
+    test_storage_history(hot_kv);
+    test_account_changes(hot_kv);
+    test_storage_changes(hot_kv);
     test_missing_reads(hot_kv);
 }
 
