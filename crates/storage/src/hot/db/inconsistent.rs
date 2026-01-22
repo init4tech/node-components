@@ -9,7 +9,6 @@ use crate::hot::{
     tables,
 };
 use alloy::primitives::{Address, B256, BlockNumber, U256};
-use itertools::Itertools;
 use reth::{
     primitives::{Account, Header, SealedHeader},
     revm::db::BundleState,
@@ -310,13 +309,15 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HistoryRead {
             // Get the existing last shard (if any) and remember its key so we can
             // delete it before writing new shards
             let existing = self.last_account_history(acct)?;
-            let mut last_shard =
-                existing.as_ref().map(|(_, list)| list.clone()).unwrap_or_default();
+            // Save the old key before taking ownership of the list
+            let old_key = existing.as_ref().map(|(key, _)| *key);
+            // Take ownership instead of cloning
+            let mut last_shard = existing.map(|(_, list)| list).unwrap_or_default();
 
             last_shard.append(indices).map_err(HistoryError::IntList)?;
 
             // Delete the existing shard before writing new ones to avoid duplicates
-            if let Some((old_key, _)) = existing {
+            if let Some(old_key) = old_key {
                 self.queue_delete_dual::<tables::AccountsHistory>(&acct, &old_key)?;
             }
 
@@ -327,19 +328,22 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HistoryRead {
             }
 
             // slow path: rechunk into multiple shards
-            let chunks = last_shard.iter().chunks(sharded_key::NUM_OF_INDICES_IN_SHARD);
+            // Reuse a single buffer to avoid allocating a new Vec per chunk
+            let mut chunk_buf = Vec::with_capacity(sharded_key::NUM_OF_INDICES_IN_SHARD);
+            let mut iter = last_shard.iter().peekable();
 
-            let mut chunks = chunks.into_iter().peekable();
+            while iter.peek().is_some() {
+                chunk_buf.clear();
+                chunk_buf.extend(iter.by_ref().take(sharded_key::NUM_OF_INDICES_IN_SHARD));
 
-            while let Some(chunk) = chunks.next() {
-                let shard = BlockNumberList::new_pre_sorted(chunk);
-                let highest_block_number = if chunks.peek().is_some() {
-                    shard.iter().next_back().expect("`chunks` does not return empty list")
+                let highest_block_number = if iter.peek().is_some() {
+                    *chunk_buf.last().expect("chunk_buf is non-empty")
                 } else {
                     // Insert last list with `u64::MAX`.
                     u64::MAX
                 };
 
+                let shard = BlockNumberList::new_pre_sorted(chunk_buf.iter().copied());
                 self.write_account_history(&acct, highest_block_number, &shard)?;
             }
         }
@@ -382,13 +386,15 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HistoryRead {
             // Get the existing last shard (if any) and remember its key so we can
             // delete it before writing new shards
             let existing = self.last_storage_history(&addr, &slot)?;
-            let mut last_shard =
-                existing.as_ref().map(|(_, list)| list.clone()).unwrap_or_default();
+            // Save the old key before taking ownership of the list (clone is cheap for ShardedKey)
+            let old_key = existing.as_ref().map(|(key, _)| key.clone());
+            // Take ownership instead of cloning the BlockNumberList
+            let mut last_shard = existing.map(|(_, list)| list).unwrap_or_default();
 
             last_shard.append(indices).map_err(HistoryError::IntList)?;
 
             // Delete the existing shard before writing new ones to avoid duplicates
-            if let Some((old_key, _)) = existing {
+            if let Some(old_key) = old_key {
                 self.queue_delete_dual::<tables::StorageHistory>(&addr, &old_key)?;
             }
 
@@ -399,19 +405,22 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HistoryRead {
             }
 
             // slow path: rechunk into multiple shards
-            let chunks = last_shard.iter().chunks(sharded_key::NUM_OF_INDICES_IN_SHARD);
+            // Reuse a single buffer to avoid allocating a new Vec per chunk
+            let mut chunk_buf = Vec::with_capacity(sharded_key::NUM_OF_INDICES_IN_SHARD);
+            let mut iter = last_shard.iter().peekable();
 
-            let mut chunks = chunks.into_iter().peekable();
+            while iter.peek().is_some() {
+                chunk_buf.clear();
+                chunk_buf.extend(iter.by_ref().take(sharded_key::NUM_OF_INDICES_IN_SHARD));
 
-            while let Some(chunk) = chunks.next() {
-                let shard = BlockNumberList::new_pre_sorted(chunk);
-                let highest_block_number = if chunks.peek().is_some() {
-                    shard.iter().next_back().expect("`chunks` does not return empty list")
+                let highest_block_number = if iter.peek().is_some() {
+                    *chunk_buf.last().expect("chunk_buf is non-empty")
                 } else {
                     // Insert last list with `u64::MAX`.
                     u64::MAX
                 };
 
+                let shard = BlockNumberList::new_pre_sorted(chunk_buf.iter().copied());
                 self.write_storage_history(&addr, slot, highest_block_number, &shard)?;
             }
         }

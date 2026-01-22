@@ -105,6 +105,22 @@ impl KvTraverseMut<MdbxError> for Cursor<'_, RW> {
     }
 }
 
+/// Splits a [`Cow`] slice at the given index, preserving borrowed status.
+///
+/// When the input is `Cow::Borrowed`, both outputs will be `Cow::Borrowed`
+/// referencing subslices of the original data. When the input is `Cow::Owned`,
+/// both outputs will be `Cow::Owned` with newly allocated vectors.
+#[inline]
+fn split_cow_at(cow: Cow<'_, [u8]>, at: usize) -> (Cow<'_, [u8]>, Cow<'_, [u8]>) {
+    match cow {
+        Cow::Borrowed(slice) => (Cow::Borrowed(&slice[..at]), Cow::Borrowed(&slice[at..])),
+        Cow::Owned(mut vec) => {
+            let right = vec.split_off(at);
+            (Cow::Owned(vec), Cow::Owned(right))
+        }
+    }
+}
+
 impl<K> DualKeyTraverse<MdbxError> for Cursor<'_, K>
 where
     K: TransactionKind,
@@ -120,8 +136,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
@@ -139,8 +154,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
@@ -158,8 +172,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
@@ -177,8 +190,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
@@ -229,8 +241,7 @@ where
 
         // If found_k1 > search_key1, we have our answer (first entry in next key1)
         if found_k1.as_ref() > key1 {
-            let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-            let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+            let (k2, val) = split_cow_at(v, key2_size);
             return Ok(Some((found_k1, k2, val)));
         }
 
@@ -247,16 +258,15 @@ where
 
         match self.inner.get_both_range::<RawValue<'_>>(key1, key2_prepared)? {
             Some(v) => {
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
+                // key1 must be owned here since we're returning a reference to the input
                 Ok(Some((Cow::Owned(key1.to_vec()), k2, val)))
             }
             None => {
                 // No entry with key2 >= search_key2 in this key1, try next key1
                 match self.inner.next_nodup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
                     Some((k1, v)) => {
-                        let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                        let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                        let (k2, val) = split_cow_at(v, key2_size);
                         Ok(Some((k1, k2, val)))
                     }
                     None => Ok(None),
@@ -275,8 +285,7 @@ where
                     let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                         return Err(MdbxError::UnknownFixedSize);
                     };
-                    let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                    let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                    let (k2, val) = split_cow_at(v, key2_size);
                     Ok(Some((k1, k2, val)))
                 }
                 None => Ok(None),
@@ -300,8 +309,7 @@ where
                     let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                         return Err(MdbxError::UnknownFixedSize);
                     };
-                    let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                    let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                    let (k2, val) = split_cow_at(v, key2_size);
                     Ok(Some((k1, k2, val)))
                 }
                 None => Ok(None),
@@ -331,9 +339,9 @@ where
         let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
             return Err(MdbxError::UnknownFixedSize);
         };
-        let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-        let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+        let (k2, val) = split_cow_at(v, key2_size);
 
+        // key1 must be owned here since we're returning a reference to the input
         Ok(Some((Cow::Owned(key1.to_vec()), k2, val)))
     }
 
@@ -350,8 +358,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
@@ -369,8 +376,7 @@ where
                 let Some(key2_size) = self.db_info.dup_fixed_val_size().key2_size() else {
                     return Err(MdbxError::UnknownFixedSize);
                 };
-                let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
-                let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                let (k2, val) = split_cow_at(v, key2_size);
                 Ok(Some((k1, k2, val)))
             }
             None => Ok(None),
