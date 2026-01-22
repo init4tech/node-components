@@ -10,7 +10,7 @@ mod inconsistent;
 pub use inconsistent::{UnsafeDbWrite, UnsafeHistoryWrite};
 
 mod read;
-pub use read::{HotDbRead, HotHistoryRead};
+pub use read::{HistoryRead, HotDbRead};
 
 pub(crate) mod sealed {
     use crate::hot::model::HotKvRead;

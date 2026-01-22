@@ -31,12 +31,25 @@
 //! ```
 
 mod error;
+pub use error::{ColdResult, ColdStorageError};
+
 mod request;
+pub use request::{
+    AppendBlockRequest, ColdReadRequest, ColdStorageRequest, ColdWriteRequest, Responder,
+};
+
 mod specifier;
+pub use specifier::{
+    BlockTag, HeaderSpecifier, ReceiptSpecifier, SignetEventsSpecifier, TransactionSpecifier,
+    ZenithHeaderSpecifier,
+};
+
 mod traits;
+pub use traits::{BlockData, ColdStorage};
 
 /// Task module containing the storage task runner and handle.
 pub mod task;
+pub use task::{ColdStorageHandle, ColdStorageTask};
 
 /// Backend implementations.
 #[cfg(feature = "impls")]
@@ -45,9 +58,3 @@ pub mod impls;
 /// Conformance tests for cold storage backends.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod conformance;
-
-pub use error::*;
-pub use request::*;
-pub use specifier::*;
-pub use task::{ColdStorageHandle, ColdStorageTask};
-pub use traits::*;

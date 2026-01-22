@@ -78,6 +78,8 @@ Imports should not be separated by empty lines. Remove empty lines and let the
 formatter alphabetize them. Ensure that imports are grouped by crate, with
 `crate::` imports first and all imports merged.
 
+NEVER use glob imports.
+
 ```
 // Avoid:
 use std::collections::HashMap;
@@ -86,6 +88,9 @@ use other_crate::SomeType;
 use other_crate::AnotherType;
 
 use crate::MyType;
+
+// NEVER
+use std::collections::*;
 
 // Preferred:
 use crate::MyType;

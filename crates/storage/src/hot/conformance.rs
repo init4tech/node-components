@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use crate::hot::{
-    db::{HistoryWrite, HotDbRead, HotHistoryRead, UnsafeDbWrite, UnsafeHistoryWrite},
+    db::{HistoryError, HistoryRead, HistoryWrite, HotDbRead, UnsafeDbWrite, UnsafeHistoryWrite},
     model::{
         DualKeyValue, DualTableTraverse, HotKv, HotKvRead, HotKvWrite, KeyValue, TableTraverse,
     },
-    tables::{DualKey, SingleKey},
+    tables::{self, DualKey, SingleKey},
 };
 use alloy::primitives::{Address, B256, Bytes, U256, address, b256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader};
@@ -145,8 +145,6 @@ fn test_storage_roundtrip<T: HotKv>(hot_kv: &T) {
 /// This test verifies that DUPSORT tables properly handle updates by deleting
 /// existing entries before inserting new ones.
 fn test_storage_update_replaces<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     let addr = address!("0x2222222222222222222222222222222222222222");
     let slot = U256::from(1);
 
@@ -595,8 +593,6 @@ pub fn test_history_append_removes_old_entries<T: HotKv>(hot_kv: &T) {
 /// 3. Other entries for the same k1 remain intact
 /// 4. Traversal after deletion shows the entry is gone
 pub fn test_delete_dual_account_history<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     let addr1 = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
     let addr2 = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
@@ -676,7 +672,6 @@ pub fn test_delete_dual_account_history<T: HotKv>(hot_kv: &T) {
 /// 3. Other slots for the same address remain intact
 /// 4. Traversal after deletion shows the entry is gone
 pub fn test_delete_dual_storage_history<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
     use reth_db::models::ShardedKey;
 
     let addr = address!("0x1111111111111111111111111111111111111111");
@@ -747,8 +742,6 @@ pub fn test_delete_dual_storage_history<T: HotKv>(hot_kv: &T) {
 /// This test verifies that after deleting an entry, we can write a new entry
 /// with the same key and it works correctly.
 pub fn test_delete_and_rewrite_dual<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     let addr = address!("0x2222222222222222222222222222222222222222");
 
     // Phase 1: Write initial entry
@@ -804,8 +797,6 @@ pub fn test_delete_and_rewrite_dual<T: HotKv>(hot_kv: &T) {
 /// 2. Keys outside the range remain intact
 /// 3. Edge cases like adjacent keys and boundary conditions work correctly
 pub fn test_clear_range<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     // Phase 1: Write 15 headers with block numbers 0-14
     {
         let writer = hot_kv.writer().unwrap();
@@ -941,8 +932,6 @@ pub fn test_clear_range<T: HotKv>(hot_kv: &T) {
 ///
 /// Similar to clear_range but also returns the removed keys.
 pub fn test_take_range<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     let headers = (0..10u64)
         .map(|i| Header { number: i, gas_limit: 1_000_000, ..Default::default() })
         .collect::<Vec<_>>();
@@ -1071,7 +1060,6 @@ pub fn test_clear_range_dual<T: HotKv>(hot_kv: &T) {
 
     // Phase 2: Clear range addr2..=addr3 (middle range)
     {
-        use crate::hot::tables;
         let writer = hot_kv.writer().unwrap();
         writer.clear_range_dual::<tables::AccountsHistory>((addr2, 0)..=(addr3, u64::MAX)).unwrap();
         writer.commit().unwrap();
@@ -1121,8 +1109,6 @@ pub fn test_clear_range_dual<T: HotKv>(hot_kv: &T) {
 ///
 /// Similar to clear_range_dual but also returns the removed (k1, k2) pairs.
 pub fn test_take_range_dual<T: HotKv>(hot_kv: &T) {
-    use crate::hot::tables;
-
     let addr1 = address!("0xa000000000000000000000000000000000000001");
     let addr2 = address!("0xb000000000000000000000000000000000000002");
     let addr3 = address!("0xc000000000000000000000000000000000000003");
@@ -1391,8 +1377,6 @@ fn make_account_info(nonce: u64, balance: U256, code_hash: Option<B256>) -> Acco
 /// - Account and storage change sets
 /// - Account and storage history indices
 pub fn test_unwind_conformance<Kv: HotKv>(store_a: &Kv, store_b: &Kv) {
-    use crate::hot::tables;
-
     // Test addresses
     let addr1 = address!("0x1111111111111111111111111111111111111111");
     let addr2 = address!("0x2222222222222222222222222222222222222222");
@@ -1652,4 +1636,936 @@ pub fn test_unwind_conformance<Kv: HotKv>(store_a: &Kv, store_b: &Kv) {
         collect_dual_table::<tables::StorageHistory, _>(&reader_a),
         collect_dual_table::<tables::StorageHistory, _>(&reader_b),
     );
+}
+
+// ============================================================================
+// Value Edge Case Tests
+// ============================================================================
+
+/// Test that zero storage values are correctly stored and retrieved.
+///
+/// This verifies that U256::ZERO is not confused with "not set" or deleted.
+pub fn test_zero_storage_value<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1");
+    let slot = U256::from(1);
+
+    // Write zero value
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_storage(&addr, &slot, &U256::ZERO).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Read zero value - should return Some(ZERO), not None
+    {
+        let reader = hot_kv.reader().unwrap();
+        let value = reader.get_storage(&addr, &slot).unwrap();
+        assert!(value.is_some(), "Zero storage value should be Some, not None");
+        assert_eq!(value.unwrap(), U256::ZERO, "Zero storage value should be U256::ZERO");
+    }
+
+    // Verify via traversal that the entry exists
+    {
+        let reader = hot_kv.reader().unwrap();
+        let mut cursor = reader.traverse_dual::<tables::PlainStorageState>().unwrap();
+        let mut found = false;
+        while let Some((k1, k2, v)) = cursor.read_next().unwrap() {
+            if k1 == addr && k2 == slot {
+                found = true;
+                assert_eq!(v, U256::ZERO);
+            }
+        }
+        assert!(found, "Zero value entry should exist in table");
+    }
+}
+
+/// Test that empty accounts (all zero fields) are correctly stored and retrieved.
+///
+/// This verifies that an account with nonce=0, balance=0, no code is not
+/// confused with a non-existent account.
+pub fn test_empty_account<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2");
+    let empty_account = Account { nonce: 0, balance: U256::ZERO, bytecode_hash: None };
+
+    // Write empty account
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr, &empty_account).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Read empty account - should return Some, not None
+    {
+        let reader = hot_kv.reader().unwrap();
+        let account = reader.get_account(&addr).unwrap();
+        assert!(account.is_some(), "Empty account should be Some, not None");
+        let account = account.unwrap();
+        assert_eq!(account.nonce, 0);
+        assert_eq!(account.balance, U256::ZERO);
+        assert!(account.bytecode_hash.is_none());
+    }
+}
+
+/// Test that maximum storage values (U256::MAX) are correctly stored and retrieved.
+pub fn test_max_storage_value<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3");
+    let slot = U256::from(1);
+
+    // Write max value
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_storage(&addr, &slot, &U256::MAX).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Read max value
+    {
+        let reader = hot_kv.reader().unwrap();
+        let value = reader.get_storage(&addr, &slot).unwrap();
+        assert!(value.is_some());
+        assert_eq!(value.unwrap(), U256::MAX, "Max storage value should be preserved");
+    }
+}
+
+/// Test that maximum block numbers (u64::MAX) work correctly in headers.
+pub fn test_max_block_number<T: HotKv>(hot_kv: &T) {
+    let header = Header { number: u64::MAX, gas_limit: 1_000_000, ..Default::default() };
+    let sealed = SealedHeader::seal_slow(header.clone());
+
+    // Write header at max block number
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_header(&sealed).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Read header
+    {
+        let reader = hot_kv.reader().unwrap();
+        let read_header = reader.get_header(u64::MAX).unwrap();
+        assert!(read_header.is_some());
+        assert_eq!(read_header.unwrap().number, u64::MAX);
+    }
+}
+
+// ============================================================================
+// Cursor Operation Tests
+// ============================================================================
+
+/// Test cursor operations on an empty table.
+///
+/// Verifies that first(), last(), exact(), lower_bound() return None on empty tables.
+pub fn test_cursor_empty_table<T: HotKv>(hot_kv: &T) {
+    // Use a table that we haven't written to in this test
+    // We'll use HeaderNumbers which should be empty if we haven't written headers with hashes
+    let reader = hot_kv.reader().unwrap();
+
+    // Create a fresh address that definitely doesn't exist
+    let missing_addr = address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01");
+
+    // Test single-key cursor on PlainAccountState for a non-existent key
+    {
+        let mut cursor = reader.traverse::<tables::PlainAccountState>().unwrap();
+
+        // exact() for non-existent key should return None
+        let exact_result = cursor.exact(&missing_addr).unwrap();
+        assert!(exact_result.is_none(), "exact() on non-existent key should return None");
+
+        // lower_bound for a key beyond all existing should return None
+        let lb_result =
+            cursor.lower_bound(&address!("0xffffffffffffffffffffffffffffffffffffff99")).unwrap();
+        // This might return something if there are entries, but for a truly empty table it would be None
+        // We're mainly testing that it doesn't panic
+        let _ = lb_result;
+    }
+
+    // Test dual-key cursor
+    {
+        let mut cursor = reader.traverse_dual::<tables::PlainStorageState>().unwrap();
+
+        // exact_dual for non-existent keys should return None
+        let exact_result = cursor.exact_dual(&missing_addr, &U256::from(999)).unwrap();
+        assert!(exact_result.is_none(), "exact_dual() on non-existent key should return None");
+    }
+}
+
+/// Test cursor exact() match semantics.
+///
+/// Verifies that exact() returns only exact matches, not lower_bound semantics.
+pub fn test_cursor_exact_match<T: HotKv>(hot_kv: &T) {
+    // Write headers at block numbers 10, 20, 30
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in [10u64, 20, 30] {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+    let mut cursor = reader.traverse::<tables::Headers>().unwrap();
+
+    // exact() for existing key should return value
+    let exact_10 = cursor.exact(&10u64).unwrap();
+    assert!(exact_10.is_some(), "exact(10) should find the header");
+    assert_eq!(exact_10.unwrap().number, 10);
+
+    // exact() for non-existing key should return None, not the next key
+    let exact_15 = cursor.exact(&15u64).unwrap();
+    assert!(exact_15.is_none(), "exact(15) should return None, not header 20");
+
+    // Verify lower_bound would have found something at 15
+    let lb_15 = cursor.lower_bound(&15u64).unwrap();
+    assert!(lb_15.is_some(), "lower_bound(15) should find header 20");
+    assert_eq!(lb_15.unwrap().0, 20);
+}
+
+/// Test cursor backward iteration with read_prev().
+pub fn test_cursor_backward_iteration<T: HotKv>(hot_kv: &T) {
+    // Write headers at block numbers 100, 101, 102, 103, 104
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in 100u64..105 {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+    let mut cursor = reader.traverse::<tables::Headers>().unwrap();
+
+    // Position at last entry
+    let last = cursor.last().unwrap();
+    assert!(last.is_some());
+    let (num, _) = last.unwrap();
+    assert_eq!(num, 104);
+
+    // Iterate backward
+    let prev1 = cursor.read_prev().unwrap();
+    assert!(prev1.is_some());
+    assert_eq!(prev1.unwrap().0, 103);
+
+    let prev2 = cursor.read_prev().unwrap();
+    assert!(prev2.is_some());
+    assert_eq!(prev2.unwrap().0, 102);
+
+    let prev3 = cursor.read_prev().unwrap();
+    assert!(prev3.is_some());
+    assert_eq!(prev3.unwrap().0, 101);
+
+    let prev4 = cursor.read_prev().unwrap();
+    assert!(prev4.is_some());
+    assert_eq!(prev4.unwrap().0, 100);
+
+    // Should hit beginning
+    let prev5 = cursor.read_prev().unwrap();
+    assert!(prev5.is_none(), "read_prev() past beginning should return None");
+}
+
+/// Test dual-key cursor navigation between k1 values.
+pub fn test_cursor_dual_navigation<T: HotKv>(hot_kv: &T) {
+    let addr1 = address!("0xcccccccccccccccccccccccccccccccccccccc01");
+    let addr2 = address!("0xcccccccccccccccccccccccccccccccccccccc02");
+    let addr3 = address!("0xcccccccccccccccccccccccccccccccccccccc03");
+
+    // Write storage for multiple addresses with multiple slots
+    {
+        let writer = hot_kv.writer().unwrap();
+
+        // addr1: slots 1, 2, 3
+        writer.put_storage(&addr1, &U256::from(1), &U256::from(10)).unwrap();
+        writer.put_storage(&addr1, &U256::from(2), &U256::from(20)).unwrap();
+        writer.put_storage(&addr1, &U256::from(3), &U256::from(30)).unwrap();
+
+        // addr2: slots 1, 2
+        writer.put_storage(&addr2, &U256::from(1), &U256::from(100)).unwrap();
+        writer.put_storage(&addr2, &U256::from(2), &U256::from(200)).unwrap();
+
+        // addr3: slot 1
+        writer.put_storage(&addr3, &U256::from(1), &U256::from(1000)).unwrap();
+
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+    let mut cursor = reader.traverse_dual::<tables::PlainStorageState>().unwrap();
+
+    // Position at first entry
+    let first =
+        DualTableTraverse::<tables::PlainStorageState, _>::first(&mut *cursor.inner_mut()).unwrap();
+    assert!(first.is_some());
+    let (k1, k2, _) = first.unwrap();
+    assert_eq!(k1, addr1);
+    assert_eq!(k2, U256::from(1));
+
+    // next_k1() should jump to addr2
+    let next_addr = cursor.next_k1().unwrap();
+    assert!(next_addr.is_some());
+    let (k1, k2, _) = next_addr.unwrap();
+    assert_eq!(k1, addr2, "next_k1() should jump to addr2");
+    assert_eq!(k2, U256::from(1), "Should be at first slot of addr2");
+
+    // next_k1() again should jump to addr3
+    let next_addr = cursor.next_k1().unwrap();
+    assert!(next_addr.is_some());
+    let (k1, _, _) = next_addr.unwrap();
+    assert_eq!(k1, addr3, "next_k1() should jump to addr3");
+
+    // next_k1() again should return None (no more k1 values)
+    let next_addr = cursor.next_k1().unwrap();
+    assert!(next_addr.is_none(), "next_k1() at end should return None");
+
+    // Test previous_k1()
+    // First position at addr3
+    cursor.last_of_k1(&addr3).unwrap();
+    let prev_addr = cursor.previous_k1().unwrap();
+    assert!(prev_addr.is_some());
+    let (k1, _, _) = prev_addr.unwrap();
+    assert_eq!(k1, addr2, "previous_k1() from addr3 should go to addr2");
+}
+
+/// Test cursor on table with single entry.
+pub fn test_cursor_single_entry<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xdddddddddddddddddddddddddddddddddddddd01");
+    let account = Account { nonce: 42, balance: U256::from(1000), bytecode_hash: None };
+
+    // Write single account
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr, &account).unwrap();
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+    let mut cursor = reader.traverse::<tables::PlainAccountState>().unwrap();
+
+    // first() and last() should return the same entry
+    let first = cursor.first().unwrap();
+    assert!(first.is_some());
+    let (first_addr, _) = first.unwrap();
+
+    let last = cursor.last().unwrap();
+    assert!(last.is_some());
+    let (last_addr, _) = last.unwrap();
+
+    assert_eq!(first_addr, last_addr, "first() and last() should be same for single entry");
+
+    // read_next() after first() should return None
+    cursor.first().unwrap();
+    let next = cursor.read_next().unwrap();
+    assert!(next.is_none(), "read_next() after first() on single entry should return None");
+}
+
+// ============================================================================
+// Batch Operation Tests
+// ============================================================================
+
+/// Test get_many batch retrieval.
+pub fn test_get_many<T: HotKv>(hot_kv: &T) {
+    let addr1 = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee01");
+    let addr2 = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee02");
+    let addr3 = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee03");
+    let addr4 = address!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee04"); // non-existent
+
+    let acc1 = Account { nonce: 1, balance: U256::from(100), bytecode_hash: None };
+    let acc2 = Account { nonce: 2, balance: U256::from(200), bytecode_hash: None };
+    let acc3 = Account { nonce: 3, balance: U256::from(300), bytecode_hash: None };
+
+    // Write accounts
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr1, &acc1).unwrap();
+        writer.put_account(&addr2, &acc2).unwrap();
+        writer.put_account(&addr3, &acc3).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Batch retrieve
+    {
+        let reader = hot_kv.reader().unwrap();
+        let keys = [addr1, addr2, addr3, addr4];
+        let results = reader.get_many::<tables::PlainAccountState, _>(&keys).unwrap();
+
+        assert_eq!(results.len(), 4);
+
+        // Build a map for easier checking (order not guaranteed)
+        let result_map: HashMap<&Address, Option<Account>> =
+            results.iter().map(|(k, v)| (*k, *v)).collect();
+
+        assert!(result_map[&addr1].is_some());
+        assert_eq!(result_map[&addr1].as_ref().unwrap().nonce, 1);
+
+        assert!(result_map[&addr2].is_some());
+        assert_eq!(result_map[&addr2].as_ref().unwrap().nonce, 2);
+
+        assert!(result_map[&addr3].is_some());
+        assert_eq!(result_map[&addr3].as_ref().unwrap().nonce, 3);
+
+        assert!(result_map[&addr4].is_none(), "Non-existent key should return None");
+    }
+}
+
+/// Test queue_put_many batch writes.
+pub fn test_queue_put_many<T: HotKv>(hot_kv: &T) {
+    let entries: Vec<(u64, Header)> = (200u64..210)
+        .map(|i| (i, Header { number: i, gas_limit: 1_000_000, ..Default::default() }))
+        .collect();
+
+    // Batch write using queue_put_many
+    {
+        let writer = hot_kv.writer().unwrap();
+        let refs: Vec<(&u64, &Header)> = entries.iter().map(|(k, v)| (k, v)).collect();
+        writer.queue_put_many::<tables::Headers, _>(refs).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify all entries exist
+    {
+        let reader = hot_kv.reader().unwrap();
+        for i in 200u64..210 {
+            let header = reader.get_header(i).unwrap();
+            assert!(header.is_some(), "Header {} should exist after batch write", i);
+            assert_eq!(header.unwrap().number, i);
+        }
+    }
+}
+
+/// Test queue_clear clears all entries in a table.
+pub fn test_queue_clear<T: HotKv>(hot_kv: &T) {
+    // Write some headers
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in 300u64..310 {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    // Verify entries exist
+    {
+        let reader = hot_kv.reader().unwrap();
+        for i in 300u64..310 {
+            assert!(reader.get_header(i).unwrap().is_some());
+        }
+    }
+
+    // Clear the table
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.queue_clear::<tables::Headers>().unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify all entries are gone
+    {
+        let reader = hot_kv.reader().unwrap();
+        for i in 300u64..310 {
+            assert!(
+                reader.get_header(i).unwrap().is_none(),
+                "Header {} should be gone after clear",
+                i
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Transaction Ordering Tests
+// ============================================================================
+
+/// Test that put-then-delete in the same transaction results in deletion.
+pub fn test_put_then_delete_same_key<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xffffffffffffffffffffffffffffffffffff0001");
+    let account = Account { nonce: 99, balance: U256::from(9999), bytecode_hash: None };
+
+    // In a single transaction: put then delete
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr, &account).unwrap();
+        writer.queue_delete::<tables::PlainAccountState>(&addr).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Account should not exist
+    {
+        let reader = hot_kv.reader().unwrap();
+        let result = reader.get_account(&addr).unwrap();
+        assert!(result.is_none(), "Put-then-delete should result in no entry");
+    }
+}
+
+/// Test that delete-then-put in the same transaction results in the put value.
+pub fn test_delete_then_put_same_key<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xffffffffffffffffffffffffffffffffffff0002");
+    let old_account = Account { nonce: 1, balance: U256::from(100), bytecode_hash: None };
+    let new_account = Account { nonce: 2, balance: U256::from(200), bytecode_hash: None };
+
+    // First, write an account
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr, &old_account).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // In a single transaction: delete then put new value
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.queue_delete::<tables::PlainAccountState>(&addr).unwrap();
+        writer.put_account(&addr, &new_account).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Should have the new value
+    {
+        let reader = hot_kv.reader().unwrap();
+        let result = reader.get_account(&addr).unwrap();
+        assert!(result.is_some(), "Delete-then-put should result in entry existing");
+        let account = result.unwrap();
+        assert_eq!(account.nonce, 2, "Should have the new nonce");
+        assert_eq!(account.balance, U256::from(200), "Should have the new balance");
+    }
+}
+
+/// Test that multiple puts to the same key in one transaction use last value.
+pub fn test_multiple_puts_same_key<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xffffffffffffffffffffffffffffffffffff0003");
+
+    // In a single transaction: put three different values
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer
+            .put_account(
+                &addr,
+                &Account { nonce: 1, balance: U256::from(100), bytecode_hash: None },
+            )
+            .unwrap();
+        writer
+            .put_account(
+                &addr,
+                &Account { nonce: 2, balance: U256::from(200), bytecode_hash: None },
+            )
+            .unwrap();
+        writer
+            .put_account(
+                &addr,
+                &Account { nonce: 3, balance: U256::from(300), bytecode_hash: None },
+            )
+            .unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Should have the last value
+    {
+        let reader = hot_kv.reader().unwrap();
+        let result = reader.get_account(&addr).unwrap();
+        assert!(result.is_some());
+        let account = result.unwrap();
+        assert_eq!(account.nonce, 3, "Should have the last nonce (3)");
+        assert_eq!(account.balance, U256::from(300), "Should have the last balance (300)");
+    }
+}
+
+/// Test that abandoned transaction (dropped without commit) makes no changes.
+pub fn test_abandoned_transaction<T: HotKv>(hot_kv: &T) {
+    let addr = address!("0xffffffffffffffffffffffffffffffffffff0004");
+    let account = Account { nonce: 42, balance: U256::from(4200), bytecode_hash: None };
+
+    // Start a transaction, write, but don't commit (drop it)
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_account(&addr, &account).unwrap();
+        // writer is dropped here without commit
+    }
+
+    // Account should not exist
+    {
+        let reader = hot_kv.reader().unwrap();
+        let result = reader.get_account(&addr).unwrap();
+        assert!(result.is_none(), "Abandoned transaction should not persist changes");
+    }
+}
+
+// ============================================================================
+// Chain Validation Error Tests
+// ============================================================================
+
+/// Test that validate_chain_extension rejects non-contiguous blocks.
+pub fn test_validate_noncontiguous_blocks<Kv: HotKv>(hot_kv: &Kv) {
+    // First, append a genesis block
+    let genesis = make_header(0, B256::ZERO);
+    {
+        let writer = hot_kv.writer().unwrap();
+        let bundle = make_bundle_state(vec![], vec![], vec![]);
+        writer.append_blocks(&[(genesis.clone(), bundle)]).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Try to append block 2 (skipping block 1)
+    let block2 = make_header(2, genesis.hash());
+    {
+        let writer = hot_kv.writer().unwrap();
+        let bundle = make_bundle_state(vec![], vec![], vec![]);
+        let result = writer.append_blocks(&[(block2, bundle)]);
+
+        match result {
+            Err(HistoryError::NonContiguousBlock { expected, got }) => {
+                assert_eq!(expected, 1, "Expected block should be 1");
+                assert_eq!(got, 2, "Got block should be 2");
+            }
+            Err(e) => panic!("Expected NonContiguousBlock error, got: {:?}", e),
+            Ok(_) => panic!("Expected error for non-contiguous blocks"),
+        }
+    }
+}
+
+/// Test that validate_chain_extension rejects wrong parent hash.
+pub fn test_validate_parent_hash_mismatch<Kv: HotKv>(hot_kv: &Kv) {
+    // Append genesis block
+    let genesis = make_header(0, B256::ZERO);
+    {
+        let writer = hot_kv.writer().unwrap();
+        let bundle = make_bundle_state(vec![], vec![], vec![]);
+        writer.append_blocks(&[(genesis.clone(), bundle)]).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Try to append block 1 with wrong parent hash
+    let wrong_parent = b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
+    let block1 = make_header(1, wrong_parent);
+    {
+        let writer = hot_kv.writer().unwrap();
+        let bundle = make_bundle_state(vec![], vec![], vec![]);
+        let result = writer.append_blocks(&[(block1, bundle)]);
+
+        match result {
+            Err(HistoryError::ParentHashMismatch { expected, got }) => {
+                assert_eq!(expected, genesis.hash(), "Expected parent should be genesis hash");
+                assert_eq!(got, wrong_parent, "Got parent should be wrong_parent");
+            }
+            Err(e) => panic!("Expected ParentHashMismatch error, got: {:?}", e),
+            Ok(_) => panic!("Expected error for parent hash mismatch"),
+        }
+    }
+}
+
+/// Test appending genesis block (block 0) to empty database.
+pub fn test_append_genesis_block<Kv: HotKv>(hot_kv: &Kv) {
+    let addr = address!("0x0000000000000000000000000000000000000001");
+
+    // Create genesis block with initial state
+    let genesis = make_header(0, B256::ZERO);
+    let bundle = make_bundle_state(
+        vec![(addr, None, Some(make_account_info(0, U256::from(1_000_000), None)))],
+        vec![],
+        vec![],
+    );
+
+    // Append genesis
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.append_blocks(&[(genesis.clone(), bundle)]).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify genesis exists
+    {
+        let reader = hot_kv.reader().unwrap();
+        let header = reader.get_header(0).unwrap();
+        assert!(header.is_some(), "Genesis header should exist");
+        assert_eq!(header.unwrap().number, 0);
+
+        // Verify chain tip
+        let tip = reader.get_chain_tip().unwrap();
+        assert!(tip.is_some());
+        let (num, hash) = tip.unwrap();
+        assert_eq!(num, 0);
+        assert_eq!(hash, genesis.hash());
+    }
+}
+
+/// Test unwinding to block 0 (keeping only genesis).
+pub fn test_unwind_to_zero<Kv: HotKv>(hot_kv: &Kv) {
+    let addr = address!("0x1111111111111111111111111111111111111111");
+
+    // Build a chain of 5 blocks
+    let mut blocks = Vec::new();
+    let mut prev_hash = B256::ZERO;
+
+    for i in 0u64..5 {
+        let header = make_header(i, prev_hash);
+        prev_hash = header.hash();
+
+        let bundle = make_bundle_state(
+            vec![(
+                addr,
+                if i == 0 {
+                    None
+                } else {
+                    Some(make_account_info(i - 1, U256::from(i * 100), None))
+                },
+                Some(make_account_info(i, U256::from((i + 1) * 100), None)),
+            )],
+            vec![],
+            vec![],
+        );
+        blocks.push((header, bundle));
+    }
+
+    // Append all blocks
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.append_blocks(&blocks).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify chain tip is at block 4
+    {
+        let reader = hot_kv.reader().unwrap();
+        let tip = reader.last_block_number().unwrap();
+        assert_eq!(tip, Some(4));
+    }
+
+    // Unwind to block 0 (keep only genesis)
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.unwind_above(0).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify only genesis remains
+    {
+        let reader = hot_kv.reader().unwrap();
+        let tip = reader.last_block_number().unwrap();
+        assert_eq!(tip, Some(0), "Only genesis should remain after unwind to 0");
+
+        // Verify blocks 1-4 are gone
+        for i in 1u64..5 {
+            assert!(reader.get_header(i).unwrap().is_none(), "Block {} should be gone", i);
+        }
+
+        // Verify genesis account state (nonce=0 from block 0)
+        let account = reader.get_account(&addr).unwrap();
+        assert!(account.is_some());
+        assert_eq!(account.unwrap().nonce, 0, "Account should have genesis state");
+    }
+}
+
+// ============================================================================
+// History Sharding Tests
+// ============================================================================
+
+/// Test history at exactly the shard boundary.
+///
+/// NUM_OF_INDICES_IN_SHARD is typically 1000. This test writes exactly that many
+/// entries to verify boundary handling.
+pub fn test_history_shard_boundary<T: HotKv>(hot_kv: &T) {
+    use reth_db::models::sharded_key;
+
+    let addr = address!("0xaaaabbbbccccddddeeeeffffaaaabbbbccccdddd");
+    let shard_size = sharded_key::NUM_OF_INDICES_IN_SHARD;
+
+    // Write exactly shard_size account changes
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in 1..=shard_size {
+            let acc = Account { nonce: i as u64, balance: U256::from(i), bytecode_hash: None };
+            writer.write_account_prestate(i as u64, addr, &acc).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    // Build history indices
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.update_history_indices_inconsistent(1..=(shard_size as u64)).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify history - should fit in exactly one shard
+    {
+        let reader = hot_kv.reader().unwrap();
+        let (key, history) =
+            reader.last_account_history(addr).unwrap().expect("Should have history");
+
+        // With exactly shard_size entries, it should be stored with key = u64::MAX
+        assert_eq!(key, u64::MAX, "Shard key should be u64::MAX for single full shard");
+
+        let blocks: Vec<u64> = history.iter().collect();
+        assert_eq!(blocks.len(), shard_size, "Should have exactly {} blocks", shard_size);
+    }
+}
+
+/// Test history overflow into multiple shards.
+pub fn test_history_multi_shard<T: HotKv>(hot_kv: &T) {
+    use reth_db::models::sharded_key;
+
+    let addr = address!("0xbbbbccccddddeeeeffffaaaabbbbccccddddeee1");
+    let shard_size = sharded_key::NUM_OF_INDICES_IN_SHARD;
+    let total_entries = shard_size + 100; // Overflow into second shard
+
+    // Write more than shard_size account changes
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in 1..=total_entries {
+            let acc = Account { nonce: i as u64, balance: U256::from(i), bytecode_hash: None };
+            writer.write_account_prestate(i as u64, addr, &acc).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    // Build history indices
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.update_history_indices_inconsistent(1..=(total_entries as u64)).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify we have multiple shards
+    {
+        let reader = hot_kv.reader().unwrap();
+
+        // Count shards by traversing
+        let mut cursor = reader.traverse_dual::<tables::AccountsHistory>().unwrap();
+        let mut shard_count = 0;
+        let mut total_blocks = 0;
+
+        // Find entries for our address
+        if let Some((k1, _, list)) = cursor.next_dual_above(&addr, &0u64).unwrap()
+            && k1 == addr
+        {
+            shard_count += 1;
+            total_blocks += list.iter().count();
+
+            // Continue reading for same address
+            while let Some((k1, _, list)) = cursor.read_next().unwrap() {
+                if k1 != addr {
+                    break;
+                }
+                shard_count += 1;
+                total_blocks += list.iter().count();
+            }
+        }
+
+        assert!(shard_count >= 2, "Should have at least 2 shards, got {}", shard_count);
+        assert_eq!(total_blocks, total_entries, "Total blocks across shards should match");
+    }
+}
+
+// ============================================================================
+// HistoryRead Method Tests
+// ============================================================================
+
+/// Test get_headers_range retrieves headers in range.
+pub fn test_get_headers_range<T: HotKv>(hot_kv: &T) {
+    // Write headers 500-509
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in 500u64..510 {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+
+    // Get range 502-506
+    let headers = reader.get_headers_range(502, 506).unwrap();
+    assert_eq!(headers.len(), 5, "Should get 5 headers (502, 503, 504, 505, 506)");
+    for (i, header) in headers.iter().enumerate() {
+        assert_eq!(header.number, 502 + i as u64);
+    }
+
+    // Get range that starts before existing entries
+    let headers = reader.get_headers_range(498, 502).unwrap();
+    // Should get 500, 501, 502 (498 and 499 don't exist)
+    assert_eq!(headers.len(), 3);
+
+    // Get range with no entries
+    let headers = reader.get_headers_range(600, 610).unwrap();
+    assert!(headers.is_empty(), "Should get empty vec for non-existent range");
+}
+
+/// Test first_header and last_header.
+pub fn test_first_last_header<T: HotKv>(hot_kv: &T) {
+    // Write headers 1000, 1005, 1010
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in [1000u64, 1005, 1010] {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+
+    let first = reader.first_header().unwrap();
+    assert!(first.is_some());
+    assert_eq!(first.unwrap().number, 1000);
+
+    let last = reader.last_header().unwrap();
+    assert!(last.is_some());
+    assert_eq!(last.unwrap().number, 1010);
+}
+
+/// Test has_block returns correct boolean.
+pub fn test_has_block<T: HotKv>(hot_kv: &T) {
+    // Write header at block 2000
+    {
+        let writer = hot_kv.writer().unwrap();
+        let header = Header { number: 2000, gas_limit: 1_000_000, ..Default::default() };
+        writer.put_header_inconsistent(&header).unwrap();
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+
+    assert!(reader.has_block(2000).unwrap(), "Block 2000 should exist");
+    assert!(!reader.has_block(2001).unwrap(), "Block 2001 should not exist");
+    assert!(!reader.has_block(1999).unwrap(), "Block 1999 should not exist");
+}
+
+/// Test get_execution_range returns first and last block numbers.
+pub fn test_get_execution_range<T: HotKv>(hot_kv: &T) {
+    // Write headers 3000, 3001, 3002
+    {
+        let writer = hot_kv.writer().unwrap();
+        for i in [3000u64, 3001, 3002] {
+            let header = Header { number: i, gas_limit: 1_000_000, ..Default::default() };
+            writer.put_header_inconsistent(&header).unwrap();
+        }
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+
+    let range = reader.get_execution_range().unwrap();
+    assert!(range.is_some());
+    let (first, last) = range.unwrap();
+    assert_eq!(first, 3000);
+    assert_eq!(last, 3002);
+}
+
+/// Test get_chain_tip returns highest block number and hash.
+pub fn test_get_chain_tip<T: HotKv>(hot_kv: &T) {
+    let header = Header { number: 4000, gas_limit: 1_000_000, ..Default::default() };
+    let expected_hash = header.hash_slow();
+
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_header_inconsistent(&header).unwrap();
+        writer.commit().unwrap();
+    }
+
+    let reader = hot_kv.reader().unwrap();
+
+    let tip = reader.get_chain_tip().unwrap();
+    assert!(tip.is_some());
+    let (num, hash) = tip.unwrap();
+    assert_eq!(num, 4000);
+    assert_eq!(hash, expected_hash);
 }

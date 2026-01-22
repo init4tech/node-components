@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::hot::{
-    db::{HistoryError, HotHistoryRead},
+    db::{HistoryError, HistoryRead},
     model::{DualKeyTraverse, DualTableCursor, HotKvWrite, KvTraverse, TableCursor},
     tables,
 };
@@ -100,7 +100,7 @@ impl<T> UnsafeDbWrite for T where T: HotKvWrite {}
 /// These tables maintain historical information about accounts and storage
 /// changes, and their contents can be used to reconstruct past states or
 /// roll back changes.
-pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
+pub trait UnsafeHistoryWrite: UnsafeDbWrite + HistoryRead {
     /// Maintain a list of block numbers where an account was touched.
     ///
     /// Accounts are keyed

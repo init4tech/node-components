@@ -54,8 +54,10 @@
 pub mod conformance;
 
 pub mod db;
+pub use db::{HistoryError, HistoryRead, HistoryWrite};
 
 pub mod model;
+pub use model::HotKv;
 
 /// Implementations of hot storage backends.
 #[cfg(feature = "impls")]
