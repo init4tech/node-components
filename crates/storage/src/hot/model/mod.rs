@@ -3,9 +3,7 @@
 //! The core trait for the hot storage module is [`HotKv`], which provides
 //! a transaction factory for creating read and write transactions. The
 //! [`HotKvRead`] and [`HotKvWrite`] traits provide transactional read-only and
-//! read-write access to hot storage, respectively. The [`HotDbRead`] and
-//! [`HotDbWrite`] traits provide higher-level abstractions for working with
-//! predefined tables and their associated key and value types.
+//! read-write access to hot storage, respectively.
 //!
 //! ## Dual-Keyed Tables
 //!

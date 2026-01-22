@@ -1,3 +1,8 @@
+//! In-memory key-value store implementation.
+//!
+//! This is not a good implementation for production use, but is useful for
+//! testing.
+
 use crate::hot::{
     model::{
         DualKeyTraverse, HotKv, HotKvError, HotKvRead, HotKvReadError, HotKvWrite, KvTraverse,

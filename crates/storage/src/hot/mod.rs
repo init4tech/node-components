@@ -23,9 +23,9 @@
 //! These traits provide methods for common operations such as getting,
 //! setting, and deleting key-value pairs in hot storage tables. The raw
 //! key-value operations use byte slices for maximum flexibility. The
-//! [`HotDbRead`] and [`HotDbWrite`] traits provide higher-level abstractions
-//! that work with the predefined tables and their associated key and value
-//! types.
+//! [`HistoryRead`] and [`HistoryWrite`] traits provide higher-level
+//! abstractions that work with the predefined tables and their associated key
+//! and value types.
 //!
 //! See the [`model`] module documentation for more details on the traits and
 //! their usage.
@@ -40,14 +40,14 @@
 //! See the [`Table`] trait documentation for more information on defining and
 //! using tables.
 //!
-//! [`HotDbRead`]: crate::hot::model::HotDbRead
-//! [`HotDbWrite`]: crate::hot::model::HotDbWrite
-//! [`HotKvRead`]: crate::hot::model::HotKvRead
-//! [`HotKvWrite`]: crate::hot::model::HotKvWrite
-//! [`HotKv`]: crate::hot::model::HotKv
-//! [`DualKey`]: crate::hot::tables::DualKey
-//! [`SingleKey`]: crate::hot::tables::SingleKey
-//! [`Table`]: crate::hot::tables::Table
+//! [`HistoryRead`]: db::HistoryRead
+//! [`HistoryWrite`]: db::HistoryWrite
+//! [`HotKvRead`]: model::HotKvRead
+//! [`HotKvWrite`]: model::HotKvWrite
+//! [`HotKv`]: model::HotKv
+//! [`DualKey`]: tables::DualKey
+//! [`SingleKey`]: tables::SingleKey
+//! [`Table`]: tables::Table
 
 /// Conformance tests for hot storage backends.
 #[cfg(any(test, feature = "test-utils"))]

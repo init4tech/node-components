@@ -7,7 +7,7 @@ mod errors;
 pub use errors::{HistoryError, HistoryResult};
 
 mod inconsistent;
-pub use inconsistent::{UnsafeDbWrite, UnsafeHistoryWrite};
+pub use inconsistent::{BundleInit, UnsafeDbWrite, UnsafeHistoryWrite};
 
 mod read;
 pub use read::{HistoryRead, HotDbRead};

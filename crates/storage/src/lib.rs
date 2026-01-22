@@ -72,7 +72,6 @@ pub use cold::{ColdStorage, ColdStorageError, ColdStorageHandle, ColdStorageTask
 #[cfg(feature = "impls")]
 pub use cold::impls as cold_impls;
 
-/// Hot storage module.
 pub mod hot;
 pub use hot::{HistoryError, HistoryRead, HistoryWrite, HotKv};
 

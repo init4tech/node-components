@@ -13,6 +13,16 @@ use std::{borrow::Cow, ops::RangeInclusive};
 ///
 /// This is the top-level trait for hot storage backends, providing
 /// transactional access through read-only and read-write transactions.
+///
+/// We recommend using [`HistoryRead`] and [`HistoryWrite`] for most use cases,
+/// as they provide higher-level abstractions over predefined tables.
+///
+/// When implementing this trait, consult the [`model`] module documentation for
+/// details on the associated types and their requirements.
+///
+/// [`HistoryRead`]: crate::hot::db::HistoryRead
+/// [`HistoryWrite`]: crate::hot::db::HistoryWrite
+/// [`model`]: crate::hot::model
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait HotKv {
     /// The read-only transaction type.
@@ -27,6 +37,7 @@ pub trait HotKv {
     /// revm [`DatabaseRef`] trait. The resulting reader can be used directly
     /// with [`trevm`] and [`revm`].
     ///
+    /// [`revm`]: trevm::revm
     /// [`DatabaseRef`]: trevm::revm::database::DatabaseRef
     fn revm_reader(&self) -> Result<RevmRead<Self::RoTx>, HotKvError> {
         self.reader().map(RevmRead::new)

@@ -31,13 +31,16 @@ use trevm::revm::{
 /// Bundle state initialization type.
 /// Maps address -> (old_account, new_account, storage_changes)
 /// where storage_changes maps slot (B256) -> (old_value, new_value)
-type BundleInit = HashMap<Address, (Option<Account>, Option<Account>, HashMap<B256, (U256, U256)>)>;
+pub type BundleInit =
+    HashMap<Address, (Option<Account>, Option<Account>, HashMap<B256, (U256, U256)>)>;
 
 /// Trait for database write operations on standard hot tables.
 ///
 /// This trait is low-level, and usage may leave the database in an
 /// inconsistent state if not used carefully. Users should prefer
 /// [`HotHistoryWrite`] or higher-level abstractions when possible.
+///
+/// [`HotHistoryWrite`]: crate::hot::db::HistoryWrite
 pub trait UnsafeDbWrite: HotKvWrite + super::sealed::Sealed {
     /// Write a block header. This will leave the DB in an inconsistent state
     /// until the corresponding header number is also written. Users should

@@ -262,8 +262,7 @@ pub struct DatabaseEnv {
 
 impl DatabaseEnv {
     /// Opens the database at the specified path with the given `EnvKind`.
-    ///
-    /// It does not create the tables, for that call [`DatabaseEnv::create_tables`].
+    /// Acquires a lock file if opening in read-write mode.
     pub fn open(
         path: &Path,
         kind: DatabaseEnvKind,
