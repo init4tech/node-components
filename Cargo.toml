@@ -60,7 +60,7 @@ signet-journal = "0.16.0-rc.5"
 ajj = { version = "0.3.4" }
 
 # trevm
-trevm = { version = "0.33.0", features = ["full_env_cfg"] }
+trevm = { version = "0.33.1", features = ["full_env_cfg"] }
 revm-inspectors = "0.33.0" # should be 1 more than trevm version, usually
 
 # Alloy periphery crates
