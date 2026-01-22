@@ -464,7 +464,8 @@ pub trait HotKvWrite: HotKvRead {
         cursor.delete_current()?;
 
         // Iterate through all entries (both k1 and k2 changes)
-        while let Some((k1, k2, value)) = cursor.next_k2()? {
+        // Use read_next() instead of next_k2() to navigate across different k1 values
+        while let Some((k1, k2, value)) = cursor.read_next()? {
             // inline range contains to avoid moving k1,k2
             let (range_1, range_2) = range.start();
             if range_1 > &k1 || (range_1 == &k1 && range_2 > &k2) {

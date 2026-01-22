@@ -207,19 +207,32 @@ impl HotKvWrite for Tx<RW> {
         let dbi = db_info.dbi();
         drop(db_info);
 
-        if let FixedSizeInfo::Size { key2_size, value_size } = fsi {
-            debug_assert_eq!(
-                key2.len(),
-                key2_size,
-                "Key2 length does not match fixed size for table {}",
-                table
-            );
-            debug_assert_eq!(
-                value.len(),
-                value_size,
-                "Value length does not match fixed size for table {}",
-                table
-            );
+        // For DUPSORT tables, we must delete any existing entry with the same
+        // (key1, key2) before inserting, because MDBX stores key2 as part of
+        // the value (key2||actual_value). Without deletion, putting a new value
+        // for the same key2 creates a duplicate entry instead of replacing.
+        if fsi.is_dupsort() {
+            // Prepare search value (key2, optionally padded for DUP_FIXED)
+            let mut search_buf = [0u8; TX_BUFFER_SIZE];
+            let search_val = if let Some(ts) = fsi.total_size() {
+                search_buf[..key2.len()].copy_from_slice(key2);
+                search_buf[key2.len()..ts].fill(0);
+                &search_buf[..ts]
+            } else {
+                key2
+            };
+
+            // get_both_range finds entry where key=key1 and value >= search_val
+            // If found and the key2 portion matches, delete it
+            let mut cursor = self.inner.cursor_with_dbi(dbi).map_err(MdbxError::Mdbx)?;
+            if let Some(found_val) =
+                cursor.get_both_range::<Cow<'_, [u8]>>(key1, search_val).map_err(MdbxError::Mdbx)?
+            {
+                // Check if found value starts with our key2
+                if found_val.starts_with(key2) {
+                    cursor.del(Default::default()).map_err(MdbxError::Mdbx)?;
+                }
+            }
         }
 
         // For DUPSORT tables, the "value" is key2 concatenated with the actual
@@ -235,7 +248,7 @@ impl HotKvWrite for Tx<RW> {
             combined.extend_from_slice(value);
             return self
                 .inner
-                .put(dbi, key1, &combined, WriteFlags::UPSERT)
+                .put(dbi, key1, &combined, WriteFlags::default())
                 .map(|_| ())
                 .map_err(MdbxError::Mdbx);
         } else {
@@ -298,11 +311,14 @@ impl HotKvWrite for Tx<RW> {
 
         let mut fsi = FixedSizeInfo::None;
 
-        if let Some(ks) = dual_key {
+        if let Some(key2_size) = dual_key {
             flags.set(reth_libmdbx::DatabaseFlags::DUP_SORT, true);
-            if let Some(vs) = fixed_val {
+            if let Some(value_size) = fixed_val {
                 flags.set(reth_libmdbx::DatabaseFlags::DUP_FIXED, true);
-                fsi = FixedSizeInfo::Size { key2_size: ks, value_size: vs };
+                fsi = FixedSizeInfo::DupFixed { key2_size, total_size: key2_size + value_size };
+            } else {
+                // DUPSORT without DUP_FIXED - variable value size
+                fsi = FixedSizeInfo::DupSort { key2_size };
             }
         }
 

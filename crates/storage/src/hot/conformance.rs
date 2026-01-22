@@ -1,24 +1,37 @@
 #![allow(dead_code)]
 
 use crate::hot::{
-    db::{HotDbRead, HotHistoryRead, UnsafeDbWrite, UnsafeHistoryWrite},
-    model::{HotKv, HotKvWrite},
+    db::{HistoryWrite, HotDbRead, HotHistoryRead, UnsafeDbWrite, UnsafeHistoryWrite},
+    model::{
+        DualKeyValue, DualTableTraverse, HotKv, HotKvRead, HotKvWrite, KeyValue, TableTraverse,
+    },
+    tables::{DualKey, SingleKey},
 };
-use alloy::primitives::{B256, Bytes, U256, address, b256};
+use alloy::primitives::{Address, B256, Bytes, U256, address, b256};
 use reth::primitives::{Account, Bytecode, Header, SealedHeader};
 use reth_db::BlockNumberList;
+use std::collections::HashMap;
+use std::fmt::Debug;
+use trevm::revm::{
+    bytecode::Bytecode as RevmBytecode,
+    database::{
+        AccountStatus, BundleAccount, BundleState,
+        states::{
+            StorageSlot,
+            reverts::{AccountInfoRevert, AccountRevert, RevertToSlot, Reverts},
+        },
+    },
+    primitives::map::DefaultHashBuilder,
+    state::AccountInfo,
+};
 
 /// Run all conformance tests against a [`HotKv`] implementation.
 pub fn conformance<T: HotKv>(hot_kv: &T) {
-    dbg!("Running HotKv conformance tests...");
     test_header_roundtrip(hot_kv);
-    dbg!("Header roundtrip test passed.");
     test_account_roundtrip(hot_kv);
-    dbg!("Account roundtrip test passed.");
     test_storage_roundtrip(hot_kv);
-    dbg!("Storage roundtrip test passed.");
+    test_storage_update_replaces(hot_kv);
     test_bytecode_roundtrip(hot_kv);
-    dbg!("Bytecode roundtrip test passed.");
     // test_account_history(hot_kv);
     // test_storage_history(hot_kv);
     // test_account_changes(hot_kv);
@@ -125,6 +138,47 @@ fn test_storage_roundtrip<T: HotKv>(hot_kv: &T) {
         assert_eq!(entry.key, B256::new(slot.to_be_bytes()));
         assert_eq!(entry.value, U256::from(999));
     }
+}
+
+/// Test that updating a storage slot replaces the value (no duplicates).
+///
+/// This test verifies that DUPSORT tables properly handle updates by deleting
+/// existing entries before inserting new ones.
+fn test_storage_update_replaces<T: HotKv>(hot_kv: &T) {
+    use crate::hot::tables;
+
+    let addr = address!("0x2222222222222222222222222222222222222222");
+    let slot = U256::from(1);
+
+    // Write initial value
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_storage(&addr, &slot, &U256::from(10)).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Update to new value
+    {
+        let writer = hot_kv.writer().unwrap();
+        writer.put_storage(&addr, &slot, &U256::from(20)).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Verify: only ONE entry exists with the NEW value
+    let reader = hot_kv.reader().unwrap();
+    let mut cursor = reader.traverse_dual::<tables::PlainStorageState>().unwrap();
+
+    let mut count = 0;
+    let mut found_value = None;
+    while let Some((k, k2, v)) = cursor.read_next().unwrap() {
+        if k == addr && k2 == slot {
+            count += 1;
+            found_value = Some(v);
+        }
+    }
+
+    assert_eq!(count, 1, "Should have exactly one entry, not duplicates");
+    assert_eq!(found_value, Some(U256::from(20)), "Value should be 20");
 }
 
 /// Test writing and reading bytecode via HotDbWrite/HotDbRead
@@ -743,203 +797,6 @@ pub fn test_delete_and_rewrite_dual<T: HotKv>(hot_kv: &T) {
     }
 }
 
-// /// Test appending blocks with BundleState, unwinding, and re-appending.
-// ///
-// /// This test:
-// /// 1. Appends 5 blocks with account and storage changes
-// /// 2. Verifies state after append
-// /// 3. Unwinds 2 blocks back to block 3
-// /// 4. Verifies state after unwind
-// /// 5. Appends 2 more blocks (different content)
-// /// 6. Verifies final state
-// fn test_append_and_unwind_blocks<T: HotKv>(hot_kv: &T) {
-//     let addr1 = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-//     let slot1 = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
-
-//     // Helper to create a simple BundleState with account changes
-//     // Since BundleState is complex to construct, we'll use the lower-level methods directly
-//     // for this test rather than going through append_executed_block
-
-//     // ========== Phase 1: Append 5 blocks using low-level methods ==========
-//     let mut headers = Vec::new();
-//     let mut prev_hash = B256::ZERO;
-
-//     // Create 5 headers
-//     for i in 1..=5 {
-//         let header = make_header(i, prev_hash);
-//         prev_hash = header.hash();
-//         headers.push(header);
-//     }
-
-//     // Write blocks with state changes
-//     // Use u64::MAX as the shard key for history to simplify lookups
-//     let shard_key = u64::MAX;
-
-//     {
-//         let writer = hot_kv.writer().unwrap();
-
-//         // Block 1: Create addr1 with nonce=1, balance=100
-//         writer.put_header(&headers[0]).unwrap();
-//         let acc1 = Account { nonce: 1, balance: U256::from(100), bytecode_hash: None };
-//         writer.put_account(&addr1, &acc1).unwrap();
-//         // Write change set (pre-state was empty)
-//         let pre_acc1 = Account::default();
-//         writer.write_account_prestate(1, addr1, &pre_acc1).unwrap();
-//         // Write history
-//         let history1 = BlockNumberList::new([1]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &history1).unwrap();
-
-//         // Block 2: Update addr1 nonce=2, balance=200
-//         writer.put_header(&headers[1]).unwrap();
-//         let acc2 = Account { nonce: 2, balance: U256::from(200), bytecode_hash: None };
-//         // Write pre-state (was acc1)
-//         writer.write_account_prestate(2, addr1, &acc1).unwrap();
-//         writer.put_account(&addr1, &acc2).unwrap();
-//         let history2 = BlockNumberList::new([1, 2]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &history2).unwrap();
-
-//         // Block 3: Update storage
-//         writer.put_header(&headers[2]).unwrap();
-//         let acc3 = Account { nonce: 2, balance: U256::from(200), bytecode_hash: None };
-//         writer.put_account(&addr1, &acc3).unwrap();
-//         writer.write_account_prestate(3, addr1, &acc2).unwrap();
-//         // Add storage slot
-//         writer.put_storage(&addr1, &slot1, &U256::from(999)).unwrap();
-//         writer.write_storage_prestate(3, addr1, &slot1, &U256::ZERO).unwrap();
-//         let acc_history3 = BlockNumberList::new([1, 2, 3]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &acc_history3).unwrap();
-//         let storage_history3 = BlockNumberList::new([3]).unwrap();
-//         writer.write_storage_history(&addr1, slot1, shard_key, &storage_history3).unwrap();
-
-//         // Block 4: Update both
-//         writer.put_header(&headers[3]).unwrap();
-//         let acc4 = Account { nonce: 3, balance: U256::from(300), bytecode_hash: None };
-//         writer.write_account_prestate(4, addr1, &acc3).unwrap();
-//         writer.put_account(&addr1, &acc4).unwrap();
-//         writer.write_storage_prestate(4, addr1, &slot1, &U256::from(999)).unwrap();
-//         writer.put_storage(&addr1, &slot1, &U256::from(1000)).unwrap();
-//         let acc_history4 = BlockNumberList::new([1, 2, 3, 4]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &acc_history4).unwrap();
-//         let storage_history4 = BlockNumberList::new([3, 4]).unwrap();
-//         writer.write_storage_history(&addr1, slot1, shard_key, &storage_history4).unwrap();
-
-//         // Block 5: Final changes
-//         writer.put_header(&headers[4]).unwrap();
-//         let acc5 = Account { nonce: 4, balance: U256::from(400), bytecode_hash: None };
-//         writer.write_account_prestate(5, addr1, &acc4).unwrap();
-//         writer.put_account(&addr1, &acc5).unwrap();
-//         let acc_history5 = BlockNumberList::new([1, 2, 3, 4, 5]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &acc_history5).unwrap();
-
-//         writer.commit().unwrap();
-//     }
-
-//     // Verify state after append
-//     {
-//         let reader = hot_kv.reader().unwrap();
-
-//         // Check chain tip
-//         let (tip_num, tip_hash) = reader.get_chain_tip().unwrap().unwrap();
-//         assert_eq!(tip_num, 5);
-//         assert_eq!(tip_hash, headers[4].hash());
-
-//         // Check plain state
-//         let acc = reader.get_account(&addr1).unwrap().unwrap();
-//         assert_eq!(acc.nonce, 4);
-//         assert_eq!(acc.balance, U256::from(400));
-
-//         // Check storage
-//         let val = reader.get_storage(&addr1, &slot1).unwrap().unwrap();
-//         assert_eq!(val, U256::from(1000));
-
-//         // Check account history contains block 5
-//         let history = reader.get_account_history(&addr1, u64::MAX).unwrap().unwrap();
-//         let history_blocks: Vec<u64> = history.iter().collect();
-//         assert!(history_blocks.contains(&5));
-//     }
-
-//     // ========== Phase 2: Unwind 2 blocks (to block 3) ==========
-//     {
-//         let writer = hot_kv.writer().unwrap();
-//         let unwound = writer.unwind_to(3).unwrap();
-//         assert_eq!(unwound, 2);
-//         writer.commit().unwrap();
-//     }
-
-//     // Verify state after unwind
-//     {
-//         let reader = hot_kv.reader().unwrap();
-
-//         // Check chain tip
-//         let (tip_num, _) = reader.get_chain_tip().unwrap().unwrap();
-//         assert_eq!(tip_num, 3);
-
-//         // Check plain state restored to block 3 values
-//         let acc = reader.get_account(&addr1).unwrap().unwrap();
-//         assert_eq!(acc.nonce, 2); // Restored to block 3 state
-//         assert_eq!(acc.balance, U256::from(200));
-
-//         // Check storage restored
-//         let val = reader.get_storage(&addr1, &slot1).unwrap().unwrap();
-//         assert_eq!(val, U256::from(999)); // Restored to block 3 value
-
-//         // Check change sets for blocks 4,5 are gone
-//         assert!(reader.get_account_change(4, &addr1).unwrap().is_none());
-//         assert!(reader.get_account_change(5, &addr1).unwrap().is_none());
-//     }
-
-//     // ========== Phase 3: Append 2 more blocks ==========
-//     let header4_new = make_header(4, headers[2].hash());
-//     let header5_new = make_header(5, header4_new.hash());
-
-//     {
-//         let writer = hot_kv.writer().unwrap();
-
-//         // Block 4 (new): Different state changes
-//         writer.put_header(&header4_new).unwrap();
-//         let acc4_new = Account { nonce: 3, balance: U256::from(350), bytecode_hash: None };
-//         let acc3 = Account { nonce: 2, balance: U256::from(200), bytecode_hash: None };
-//         writer.write_account_prestate(4, addr1, &acc3).unwrap();
-//         writer.put_account(&addr1, &acc4_new).unwrap();
-//         writer.write_storage_prestate(4, addr1, &slot1, &U256::from(999)).unwrap();
-//         writer.put_storage(&addr1, &slot1, &U256::from(888)).unwrap();
-//         let acc_history4_new = BlockNumberList::new([1, 2, 3, 4]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &acc_history4_new).unwrap();
-//         let storage_history4_new = BlockNumberList::new([3, 4]).unwrap();
-//         writer.write_storage_history(&addr1, slot1, shard_key, &storage_history4_new).unwrap();
-
-//         // Block 5 (new): More changes
-//         writer.put_header(&header5_new).unwrap();
-//         let acc5_new = Account { nonce: 4, balance: U256::from(450), bytecode_hash: None };
-//         writer.write_account_prestate(5, addr1, &acc4_new).unwrap();
-//         writer.put_account(&addr1, &acc5_new).unwrap();
-//         let acc_history5_new = BlockNumberList::new([1, 2, 3, 4, 5]).unwrap();
-//         writer.write_account_history(&addr1, shard_key, &acc_history5_new).unwrap();
-
-//         writer.commit().unwrap();
-//     }
-
-//     // Verify final state
-//     {
-//         let reader = hot_kv.reader().unwrap();
-
-//         // Check chain tip
-//         let (tip_num, tip_hash) = reader.get_chain_tip().unwrap().unwrap();
-//         assert_eq!(tip_num, 5);
-//         assert_eq!(tip_hash, header5_new.hash());
-//         assert_ne!(tip_hash, headers[4].hash()); // Different from original block 5
-
-//         // Check plain state
-//         let acc = reader.get_account(&addr1).unwrap().unwrap();
-//         assert_eq!(acc.nonce, 4);
-//         assert_eq!(acc.balance, U256::from(450)); // Different from original
-
-//         // Check storage
-//         let val = reader.get_storage(&addr1, &slot1).unwrap().unwrap();
-//         assert_eq!(val, U256::from(888)); // Different from original
-//     }
-// }
-
 /// Test clear_range on a single-keyed table.
 ///
 /// This test verifies that:
@@ -1331,4 +1188,467 @@ pub fn test_take_range_dual<T: HotKv>(hot_kv: &T) {
 
         assert!(removed.is_empty(), "should return empty vec for non-existent range");
     }
+}
+
+// ============================================================================
+// Unwind Conformance Test
+// ============================================================================
+
+/// Collect all entries from a single-keyed table.
+fn collect_single_table<T, R>(reader: &R) -> Vec<KeyValue<T>>
+where
+    T: SingleKey,
+    T::Key: Ord,
+    R: HotKvRead,
+{
+    let mut cursor = reader.traverse::<T>().unwrap();
+    let mut entries = Vec::new();
+    if let Some(first) = TableTraverse::<T, _>::first(&mut *cursor.inner_mut()).unwrap() {
+        entries.push(first);
+        while let Some(next) = TableTraverse::<T, _>::read_next(&mut *cursor.inner_mut()).unwrap() {
+            entries.push(next);
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+}
+
+/// Collect all entries from a dual-keyed table.
+fn collect_dual_table<T, R>(reader: &R) -> Vec<DualKeyValue<T>>
+where
+    T: DualKey,
+    T::Key: Ord,
+    T::Key2: Ord,
+    R: HotKvRead,
+{
+    let mut cursor = reader.traverse_dual::<T>().unwrap();
+    let mut entries = Vec::new();
+    if let Some(first) = DualTableTraverse::<T, _>::first(&mut *cursor.inner_mut()).unwrap() {
+        entries.push(first);
+        while let Some(next) =
+            DualTableTraverse::<T, _>::read_next(&mut *cursor.inner_mut()).unwrap()
+        {
+            entries.push(next);
+        }
+    }
+    entries.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    entries
+}
+
+/// Assert two single-keyed table contents are equal.
+fn assert_single_tables_equal<T>(table_name: &str, a: Vec<KeyValue<T>>, b: Vec<KeyValue<T>>)
+where
+    T: SingleKey,
+    T::Key: Debug + PartialEq,
+    T::Value: Debug + PartialEq,
+{
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{} table entry count mismatch: {} vs {}",
+        table_name,
+        a.len(),
+        b.len()
+    );
+    for (i, (entry_a, entry_b)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(
+            entry_a, entry_b,
+            "{} table entry {} mismatch:\n  A: {:?}\n  B: {:?}",
+            table_name, i, entry_a, entry_b
+        );
+    }
+}
+
+/// Assert two dual-keyed table contents are equal.
+fn assert_dual_tables_equal<T>(table_name: &str, a: Vec<DualKeyValue<T>>, b: Vec<DualKeyValue<T>>)
+where
+    T: DualKey,
+    T::Key: Debug + PartialEq,
+    T::Key2: Debug + PartialEq,
+    T::Value: Debug + PartialEq,
+{
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{} table entry count mismatch: {} vs {}",
+        table_name,
+        a.len(),
+        b.len()
+    );
+    for (i, (entry_a, entry_b)) in a.iter().zip(b.iter()).enumerate() {
+        assert_eq!(
+            entry_a, entry_b,
+            "{} table entry {} mismatch:\n  A: {:?}\n  B: {:?}",
+            table_name, i, entry_a, entry_b
+        );
+    }
+}
+
+/// Create a BundleState with account and storage changes.
+///
+/// This function creates a proper BundleState with reverts populated so that
+/// `to_plain_state_and_reverts` will produce the expected output.
+fn make_bundle_state(
+    accounts: Vec<(Address, Option<AccountInfo>, Option<AccountInfo>)>,
+    storage: Vec<(Address, Vec<(U256, U256, U256)>)>, // (addr, [(slot, old, new)])
+    _contracts: Vec<(B256, RevmBytecode)>,
+) -> BundleState {
+    let mut state: HashMap<Address, BundleAccount, DefaultHashBuilder> = Default::default();
+
+    // Build account reverts for this block
+    let mut block_reverts: Vec<(Address, AccountRevert)> = Vec::new();
+
+    for (addr, original, info) in &accounts {
+        let account_storage: HashMap<U256, StorageSlot, DefaultHashBuilder> = Default::default();
+        state.insert(
+            *addr,
+            BundleAccount {
+                info: info.clone(),
+                original_info: original.clone(),
+                storage: account_storage,
+                status: AccountStatus::Changed,
+            },
+        );
+
+        // Create account revert - this stores what to restore to when unwinding
+        let account_info_revert = match original {
+            Some(orig) => AccountInfoRevert::RevertTo(orig.clone()),
+            None => AccountInfoRevert::DeleteIt,
+        };
+
+        block_reverts.push((
+            *addr,
+            AccountRevert {
+                account: account_info_revert,
+                storage: Default::default(), // Storage reverts added below
+                previous_status: AccountStatus::Changed,
+                wipe_storage: false,
+            },
+        ));
+    }
+
+    // Process storage changes
+    for (addr, slots) in &storage {
+        let account = state.entry(*addr).or_insert_with(|| BundleAccount {
+            info: None,
+            original_info: None,
+            storage: Default::default(),
+            status: AccountStatus::Changed,
+        });
+
+        // Find or create the account revert entry
+        let revert_entry = block_reverts.iter_mut().find(|(a, _)| a == addr);
+        let account_revert = if let Some((_, revert)) = revert_entry {
+            revert
+        } else {
+            block_reverts.push((
+                *addr,
+                AccountRevert {
+                    account: AccountInfoRevert::DoNothing,
+                    storage: Default::default(),
+                    previous_status: AccountStatus::Changed,
+                    wipe_storage: false,
+                },
+            ));
+            &mut block_reverts.last_mut().unwrap().1
+        };
+
+        for (slot, old_value, new_value) in slots {
+            account.storage.insert(
+                *slot,
+                StorageSlot { previous_or_original_value: *old_value, present_value: *new_value },
+            );
+
+            // Add storage revert entry
+            account_revert.storage.insert(*slot, RevertToSlot::Some(*old_value));
+        }
+    }
+
+    // Create Reverts with one block's worth of reverts
+    let reverts = Reverts::new(vec![block_reverts]);
+
+    BundleState { state, contracts: Default::default(), reverts, state_size: 0, reverts_size: 0 }
+}
+
+/// Create a simple AccountInfo for testing.
+fn make_account_info(nonce: u64, balance: U256, code_hash: Option<B256>) -> AccountInfo {
+    AccountInfo { nonce, balance, code_hash: code_hash.unwrap_or(B256::ZERO), code: None }
+}
+
+/// Test that unwinding produces the exact same state as never having appended.
+///
+/// This test:
+/// 1. Creates 5 blocks with complex state changes
+/// 2. Appends all 5 blocks to store_a, then unwinds to block 1 (keeping blocks 0, 1)
+/// 3. Appends only blocks 0, 1 to store_b
+/// 4. Compares ALL tables between the two stores - they must be exactly equal
+///
+/// This proves that `unwind_above` correctly reverses all state changes including:
+/// - Plain account state
+/// - Plain storage state
+/// - Headers and header number mappings
+/// - Account and storage change sets
+/// - Account and storage history indices
+pub fn test_unwind_conformance<Kv: HotKv>(store_a: &Kv, store_b: &Kv) {
+    use crate::hot::tables;
+
+    // Test addresses
+    let addr1 = address!("0x1111111111111111111111111111111111111111");
+    let addr2 = address!("0x2222222222222222222222222222222222222222");
+    let addr3 = address!("0x3333333333333333333333333333333333333333");
+    let addr4 = address!("0x4444444444444444444444444444444444444444");
+
+    // Storage slots
+    let slot1 = U256::from(1);
+    let slot2 = U256::from(2);
+    let slot3 = U256::from(3);
+
+    // Create bytecode
+    let code = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
+    let bytecode = RevmBytecode::new_raw(code);
+    let code_hash = bytecode.hash_slow();
+
+    // Create 5 blocks with complex state
+    let mut blocks: Vec<(SealedHeader, BundleState)> = Vec::new();
+    let mut prev_hash = B256::ZERO;
+
+    // Block 0: Create addr1, addr2, addr3 with different states
+    {
+        let header = Header {
+            number: 0,
+            parent_hash: prev_hash,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        prev_hash = sealed.hash();
+
+        let bundle = make_bundle_state(
+            vec![
+                (addr1, None, Some(make_account_info(1, U256::from(100), None))),
+                (addr2, None, Some(make_account_info(1, U256::from(200), None))),
+                (addr3, None, Some(make_account_info(1, U256::from(300), None))),
+            ],
+            vec![(addr1, vec![(slot1, U256::ZERO, U256::from(10))])],
+            vec![],
+        );
+        blocks.push((sealed, bundle));
+    }
+
+    // Block 1: Update addr1, addr2; add storage to addr2
+    {
+        let header = Header {
+            number: 1,
+            parent_hash: prev_hash,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        prev_hash = sealed.hash();
+
+        let bundle = make_bundle_state(
+            vec![
+                (
+                    addr1,
+                    Some(make_account_info(1, U256::from(100), None)),
+                    Some(make_account_info(2, U256::from(150), None)),
+                ),
+                (
+                    addr2,
+                    Some(make_account_info(1, U256::from(200), None)),
+                    Some(make_account_info(2, U256::from(250), None)),
+                ),
+            ],
+            vec![
+                (addr1, vec![(slot1, U256::from(10), U256::from(20))]),
+                (addr2, vec![(slot1, U256::ZERO, U256::from(100))]),
+            ],
+            vec![],
+        );
+        blocks.push((sealed, bundle));
+    }
+
+    // Block 2: Update addr3, add bytecode (this is the boundary - will be unwound)
+    {
+        let header = Header {
+            number: 2,
+            parent_hash: prev_hash,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        prev_hash = sealed.hash();
+
+        let bundle = make_bundle_state(
+            vec![(
+                addr3,
+                Some(make_account_info(1, U256::from(300), None)),
+                Some(make_account_info(2, U256::from(350), Some(code_hash))),
+            )],
+            vec![(addr3, vec![(slot1, U256::ZERO, U256::from(1000))])],
+            vec![(code_hash, bytecode.clone())],
+        );
+        blocks.push((sealed, bundle));
+    }
+
+    // Block 3: Create addr4, update existing storage
+    {
+        let header = Header {
+            number: 3,
+            parent_hash: prev_hash,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+        prev_hash = sealed.hash();
+
+        let bundle = make_bundle_state(
+            vec![
+                (addr4, None, Some(make_account_info(1, U256::from(400), None))),
+                (
+                    addr1,
+                    Some(make_account_info(2, U256::from(150), None)),
+                    Some(make_account_info(3, U256::from(175), None)),
+                ),
+            ],
+            vec![
+                (
+                    addr1,
+                    vec![
+                        (slot1, U256::from(20), U256::from(30)),
+                        (slot2, U256::ZERO, U256::from(50)),
+                    ],
+                ),
+                (addr4, vec![(slot1, U256::ZERO, U256::from(500))]),
+            ],
+            vec![],
+        );
+        blocks.push((sealed, bundle));
+    }
+
+    // Block 4: Update multiple addresses and storage
+    {
+        let header = Header {
+            number: 4,
+            parent_hash: prev_hash,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        };
+        let sealed = SealedHeader::seal_slow(header);
+
+        let bundle = make_bundle_state(
+            vec![
+                (
+                    addr1,
+                    Some(make_account_info(3, U256::from(175), None)),
+                    Some(make_account_info(4, U256::from(200), None)),
+                ),
+                (
+                    addr2,
+                    Some(make_account_info(2, U256::from(250), None)),
+                    Some(make_account_info(3, U256::from(275), None)),
+                ),
+                (
+                    addr4,
+                    Some(make_account_info(1, U256::from(400), None)),
+                    Some(make_account_info(2, U256::from(450), None)),
+                ),
+            ],
+            vec![
+                (
+                    addr1,
+                    vec![
+                        (slot1, U256::from(30), U256::from(40)),
+                        (slot3, U256::ZERO, U256::from(60)),
+                    ],
+                ),
+                (
+                    addr2,
+                    vec![
+                        (slot1, U256::from(100), U256::from(150)),
+                        (slot2, U256::ZERO, U256::from(200)),
+                    ],
+                ),
+            ],
+            vec![],
+        );
+        blocks.push((sealed, bundle));
+    }
+
+    // Store A: Append all 5 blocks, then unwind to block 1
+    {
+        let writer = store_a.writer().unwrap();
+        writer.append_blocks(&blocks).unwrap();
+        writer.commit().unwrap();
+    }
+    {
+        let writer = store_a.writer().unwrap();
+        writer.unwind_above(1).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Store B: Append only blocks 0, 1
+    {
+        let writer = store_b.writer().unwrap();
+        writer.append_blocks(&blocks[0..2]).unwrap();
+        writer.commit().unwrap();
+    }
+
+    // Compare all tables
+    let reader_a = store_a.reader().unwrap();
+    let reader_b = store_b.reader().unwrap();
+
+    // Single-keyed tables
+    assert_single_tables_equal::<tables::Headers>(
+        "Headers",
+        collect_single_table::<tables::Headers, _>(&reader_a),
+        collect_single_table::<tables::Headers, _>(&reader_b),
+    );
+
+    assert_single_tables_equal::<tables::HeaderNumbers>(
+        "HeaderNumbers",
+        collect_single_table::<tables::HeaderNumbers, _>(&reader_a),
+        collect_single_table::<tables::HeaderNumbers, _>(&reader_b),
+    );
+
+    assert_single_tables_equal::<tables::PlainAccountState>(
+        "PlainAccountState",
+        collect_single_table::<tables::PlainAccountState, _>(&reader_a),
+        collect_single_table::<tables::PlainAccountState, _>(&reader_b),
+    );
+
+    // Note: Bytecodes are not removed on unwind (they're content-addressed),
+    // so store_a may have more bytecodes than store_b. We skip this comparison.
+    // assert_single_tables_equal::<tables::Bytecodes>(...)
+
+    // Dual-keyed tables
+    assert_dual_tables_equal::<tables::PlainStorageState>(
+        "PlainStorageState",
+        collect_dual_table::<tables::PlainStorageState, _>(&reader_a),
+        collect_dual_table::<tables::PlainStorageState, _>(&reader_b),
+    );
+
+    assert_dual_tables_equal::<tables::AccountChangeSets>(
+        "AccountChangeSets",
+        collect_dual_table::<tables::AccountChangeSets, _>(&reader_a),
+        collect_dual_table::<tables::AccountChangeSets, _>(&reader_b),
+    );
+
+    assert_dual_tables_equal::<tables::StorageChangeSets>(
+        "StorageChangeSets",
+        collect_dual_table::<tables::StorageChangeSets, _>(&reader_a),
+        collect_dual_table::<tables::StorageChangeSets, _>(&reader_b),
+    );
+
+    assert_dual_tables_equal::<tables::AccountsHistory>(
+        "AccountsHistory",
+        collect_dual_table::<tables::AccountsHistory, _>(&reader_a),
+        collect_dual_table::<tables::AccountsHistory, _>(&reader_b),
+    );
+
+    assert_dual_tables_equal::<tables::StorageHistory>(
+        "StorageHistory",
+        collect_dual_table::<tables::StorageHistory, _>(&reader_a),
+        collect_dual_table::<tables::StorageHistory, _>(&reader_b),
+    );
 }

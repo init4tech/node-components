@@ -67,15 +67,15 @@ impl MemKv {
         buf
     }
 
-    /// SAFETY:
-    /// Caller must ensure that `key` lives long enough.
+    /// Split a dual key into its two component keys.
+    /// Returns owned copies of the key parts to avoid lifetime issues.
     #[track_caller]
-    fn split_dual_key<'a>(key: &[u8]) -> (Cow<'a, [u8]>, Cow<'a, [u8]>) {
+    fn split_dual_key(key: &[u8]) -> (Cow<'static, [u8]>, Cow<'static, [u8]>) {
         assert_eq!(key.len(), MAX_KEY_SIZE * 2, "Key length does not match expected dual key size");
-        let k1 = &key[..MAX_KEY_SIZE];
-        let k2 = &key[MAX_KEY_SIZE..];
+        let k1 = key[..MAX_KEY_SIZE].to_vec();
+        let k2 = key[MAX_KEY_SIZE..].to_vec();
 
-        unsafe { std::mem::transmute((Cow::Borrowed(k1), Cow::Borrowed(k2))) }
+        (Cow::Owned(k1), Cow::Owned(k2))
     }
 }
 
@@ -960,8 +960,8 @@ impl<'a> DualKeyTraverse<MemKvError> for MemKvCursorMut<'a> {
             return Ok(None);
         };
 
-        let (key1, key2) = MemKv::split_dual_key(found_key.as_ref());
-        Ok(Some((key1, key2, value)))
+        let (split_k1, split_k2) = MemKv::split_dual_key(found_key.as_ref());
+        Ok(Some((split_k1, split_k2, value)))
     }
 
     fn next_k1<'b>(&'b mut self) -> Result<Option<RawDualKeyValue<'b>>, MemKvError> {
@@ -1294,7 +1294,7 @@ impl HotKvWrite for MemKvRwTx {
 mod tests {
     use super::*;
     use crate::hot::{
-        conformance::conformance,
+        conformance::{conformance, test_unwind_conformance},
         model::{DualTableTraverse, TableTraverse, TableTraverseMut},
         tables::{DualKey, SingleKey, Table},
     };
@@ -2168,11 +2168,12 @@ mod tests {
         conformance(&hot_kv);
     }
 
-    // #[test]
-    // fn mem_append_unwind_conformance() {
-    //     let hot_kv = MemKv::new();
-    //     conformance_append_unwind(&hot_kv);
-    // }
+    #[test]
+    fn mem_unwind_conformance() {
+        let store_a = MemKv::new();
+        let store_b = MemKv::new();
+        test_unwind_conformance(&store_a, &store_b);
+    }
 
     #[test]
     fn test_dual_key_last_of_k1() {

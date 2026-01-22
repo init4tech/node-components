@@ -7,50 +7,51 @@ pub type DbCache = std::sync::Arc<dashmap::DashMap<&'static str, DbInfo>>;
 /// Information about fixed size values in a database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixedSizeInfo {
-    /// No fixed size (not a DUP_FIXED table).
+    /// Not a DUPSORT table.
     None,
-    /// Fixed size value with known key2 and value sizes.
-    /// First element is key2 size, second is value size.
-    /// Total stored size is key2_size + value_size.
-    Size {
+    /// DUPSORT table without DUP_FIXED (variable value size).
+    DupSort {
         /// Size of key2 in bytes.
         key2_size: usize,
-        /// Size of value in bytes.
-        value_size: usize,
+    },
+    /// DUP_FIXED table with known key2 and total size.
+    DupFixed {
+        /// Size of key2 in bytes.
+        key2_size: usize,
+        /// Total fixed size (key2 + value).
+        total_size: usize,
     },
 }
 
 impl FixedSizeInfo {
-    /// Returns true if the size info is known.
-    pub const fn is_size(&self) -> bool {
-        matches!(self, Self::Size { .. })
+    /// Returns true if this is a DUP_FIXED table with known total size.
+    pub const fn is_dup_fixed(&self) -> bool {
+        matches!(self, Self::DupFixed { .. })
     }
 
-    /// Returns true if there is no fixed size (not a DUP_FIXED table).
+    /// Returns true if there is no fixed size (not a DUPSORT table).
     pub const fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
 
-    /// Returns the total stored size (key2 + value) if known.
-    pub const fn total_size(&self) -> Option<usize> {
-        match self {
-            Self::Size { key2_size, value_size } => Some(*key2_size + *value_size),
-            _ => None,
-        }
+    /// Returns true if this is a DUPSORT table (with or without DUP_FIXED).
+    pub const fn is_dupsort(&self) -> bool {
+        matches!(self, Self::DupSort { .. } | Self::DupFixed { .. })
     }
 
-    /// Returns the key2 size if known.
+    /// Returns the key2 size if known (for DUPSORT tables).
     pub const fn key2_size(&self) -> Option<usize> {
         match self {
-            Self::Size { key2_size, .. } => Some(*key2_size),
-            _ => None,
+            Self::DupSort { key2_size } => Some(*key2_size),
+            Self::DupFixed { key2_size, .. } => Some(*key2_size),
+            Self::None => None,
         }
     }
 
-    /// Returns the value size if known.
-    pub const fn value_size(&self) -> Option<usize> {
+    /// Returns the total stored size (key2 + value) if known (only for DUP_FIXED tables).
+    pub const fn total_size(&self) -> Option<usize> {
         match self {
-            Self::Size { value_size, .. } => Some(*value_size),
+            Self::DupFixed { total_size, .. } => Some(*total_size),
             _ => None,
         }
     }
@@ -132,7 +133,7 @@ impl DbInfo {
 
 impl ValSer for FixedSizeInfo {
     fn encoded_size(&self) -> usize {
-        2 * 4 // two u32 values
+        8 // two u32s: key2_size and total_size
     }
 
     fn encode_value_to<B>(&self, buf: &mut B)
@@ -144,9 +145,13 @@ impl ValSer for FixedSizeInfo {
                 buf.put_u32(0);
                 buf.put_u32(0);
             }
-            FixedSizeInfo::Size { key2_size, value_size } => {
+            FixedSizeInfo::DupSort { key2_size } => {
                 buf.put_u32(*key2_size as u32);
-                buf.put_u32(*value_size as u32);
+                buf.put_u32(0); // total_size = 0 means variable value
+            }
+            FixedSizeInfo::DupFixed { key2_size, total_size } => {
+                buf.put_u32(*key2_size as u32);
+                buf.put_u32(*total_size as u32);
             }
         }
     }
@@ -156,18 +161,20 @@ impl ValSer for FixedSizeInfo {
         Self: Sized,
     {
         let key2_size = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-        let value_size = u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize;
-        if key2_size == 0 || value_size == 0 {
+        let total_size = u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize;
+        if key2_size == 0 {
             Ok(FixedSizeInfo::None)
+        } else if total_size == 0 {
+            Ok(FixedSizeInfo::DupSort { key2_size })
         } else {
-            Ok(FixedSizeInfo::Size { key2_size, value_size })
+            Ok(FixedSizeInfo::DupFixed { key2_size, total_size })
         }
     }
 }
 
 impl ValSer for DbInfo {
     fn encoded_size(&self) -> usize {
-        // 4 u32s
+        // 4 u32s: dbi + flags + key2_size + total_size
         4 + 4 + 8
     }
 

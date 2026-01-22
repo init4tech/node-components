@@ -1,8 +1,11 @@
-use std::{collections::BTreeMap, ops::RangeInclusive};
+use std::{
+    collections::{BTreeMap, HashMap, hash_map},
+    ops::RangeInclusive,
+};
 
 use crate::hot::{
     db::{HistoryError, HotHistoryRead},
-    model::HotKvWrite,
+    model::{DualKeyTraverse, DualTableCursor, HotKvWrite, KvTraverse, TableCursor},
     tables,
 };
 use alloy::primitives::{Address, B256, BlockNumber, U256};
@@ -24,6 +27,11 @@ use trevm::revm::{
     },
     state::AccountInfo,
 };
+
+/// Bundle state initialization type.
+/// Maps address -> (old_account, new_account, storage_changes)
+/// where storage_changes maps slot (B256) -> (old_value, new_value)
+type BundleInit = HashMap<Address, (Option<Account>, Option<Account>, HashMap<B256, (U256, U256)>)>;
 
 /// Trait for database write operations on standard hot tables.
 ///
@@ -499,6 +507,76 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
         blocks: &[(SealedHeader, BundleState)],
     ) -> Result<(), Self::Error> {
         blocks.iter().try_for_each(|(header, state)| self.append_block_inconsistent(header, state))
+    }
+
+    /// Populate a [`BundleInit`] using cursors over the
+    /// [`tables::PlainAccountState`] and [`tables::PlainStorageState`] tables,
+    /// based on the given storage and account changesets.
+    ///
+    /// Returns a map of address -> (old_account, new_account, storage_changes)
+    /// where storage_changes maps slot -> (old_value, new_value).
+    fn populate_bundle_state<C, D>(
+        &self,
+        account_changeset: Vec<(u64, Address, Account)>,
+        storage_changeset: Vec<(BlockNumberAddress, U256, U256)>,
+        plain_accounts_cursor: &mut TableCursor<C, tables::PlainAccountState, Self::Error>,
+        plain_storage_cursor: &mut DualTableCursor<D, tables::PlainStorageState, Self::Error>,
+    ) -> Result<BundleInit, Self::Error>
+    where
+        C: KvTraverse<Self::Error>,
+        D: DualKeyTraverse<Self::Error>,
+    {
+        // iterate previous value and get plain state value to create changeset
+        // Double option around Account represent if Account state is known (first option) and
+        // account is removed (second option)
+        let mut state: BundleInit = Default::default();
+
+        // add account changeset changes in reverse order
+        for (_block_number, address, old_account) in account_changeset.into_iter().rev() {
+            match state.entry(address) {
+                hash_map::Entry::Vacant(entry) => {
+                    let new_account = plain_accounts_cursor.exact(&address)?;
+                    entry.insert((Some(old_account), new_account, HashMap::default()));
+                }
+                hash_map::Entry::Occupied(mut entry) => {
+                    // overwrite old account state.
+                    entry.get_mut().0 = Some(old_account);
+                }
+            }
+        }
+
+        // add storage changeset changes
+        for (block_and_address, storage_key, old_value) in storage_changeset.into_iter().rev() {
+            let BlockNumberAddress((_block_number, address)) = block_and_address;
+            // get account state or insert from plain state.
+            let account_state = match state.entry(address) {
+                hash_map::Entry::Vacant(entry) => {
+                    let present_account = plain_accounts_cursor.exact(&address)?;
+                    entry.insert((present_account, present_account, HashMap::default()))
+                }
+                hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            };
+
+            // Convert U256 storage key to B256 for the BundleInit map
+            let storage_key_b256 = B256::from(storage_key);
+
+            // match storage.
+            match account_state.2.entry(storage_key_b256) {
+                hash_map::Entry::Vacant(entry) => {
+                    let new_value = plain_storage_cursor
+                        .next_dual_above(&address, &storage_key)?
+                        .filter(|(k, k2, _)| *k == address && *k2 == storage_key)
+                        .map(|(_, _, v)| v)
+                        .unwrap_or_default();
+                    entry.insert((old_value, new_value));
+                }
+                hash_map::Entry::Occupied(mut entry) => {
+                    entry.get_mut().0 = old_value;
+                }
+            };
+        }
+
+        Ok(state)
     }
 }
 

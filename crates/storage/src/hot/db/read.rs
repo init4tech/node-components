@@ -184,6 +184,13 @@ pub trait HotHistoryRead: HotDbRead {
         Ok(cursor.last()?.map(|(_, header)| header))
     }
 
+    /// Get the last (highest) block number in the database.
+    /// Returns None if the database is empty.
+    fn last_block_number(&self) -> Result<Option<u64>, Self::Error> {
+        let mut cursor = self.traverse::<tables::Headers>()?;
+        Ok(cursor.last()?.map(|(number, _)| number))
+    }
+
     /// Get the first (lowest) header in the database.
     /// Returns None if the database is empty.
     fn first_header(&self) -> Result<Option<Header>, Self::Error> {

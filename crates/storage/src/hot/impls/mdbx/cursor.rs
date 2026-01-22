@@ -218,14 +218,25 @@ where
             return Err(MdbxError::NotDupSort);
         }
 
-        // For DUPSORT tables, get_both_range finds entry where key1 matches
-        // and value >= key2. The "value" returned is key2 || actual_value.
         let fsi = self.db_info.dup_fixed_val_size();
-
-        // Get the key2 size - use FixedSizeInfo if available, otherwise use input length
         let key2_size = fsi.key2_size().unwrap_or(key2.len());
 
-        // Prepare key2 (may need padding for DUP_FIXED)
+        // Use set_range to find the first entry with key1 >= search_key1
+        let Some((found_k1, v)) =
+            self.inner.set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key1)?
+        else {
+            return Ok(None);
+        };
+
+        // If found_k1 > search_key1, we have our answer (first entry in next key1)
+        if found_k1.as_ref() > key1 {
+            let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+            let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+            return Ok(Some((found_k1, k2, val)));
+        }
+
+        // found_k1 == search_key1, so we need to filter by key2 >= search_key2
+        // Use get_both_range to find entry with exact key1 and value >= key2
         let key2_prepared = if let Some(total_size) = fsi.total_size() {
             // Copy key2 to scratch buffer and zero-pad to total fixed size
             self.buf[..key2.len()].copy_from_slice(key2);
@@ -235,16 +246,23 @@ where
             key2
         };
 
-        // get_both_range returns the value (which is key2||value in DUPSORT)
         match self.inner.get_both_range::<RawValue<'_>>(key1, key2_prepared)? {
             Some(v) => {
-                // For DUPSORT, the value contains key2 prepended to the actual value.
-                // We need to split it using the known key2 size.
                 let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
                 let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
                 Ok(Some((Cow::Owned(key1.to_vec()), k2, val)))
             }
-            None => Ok(None),
+            None => {
+                // No entry with key2 >= search_key2 in this key1, try next key1
+                match self.inner.next_nodup::<Cow<'_, [u8]>, Cow<'_, [u8]>>()? {
+                    Some((k1, v)) => {
+                        let k2: Cow<'_, [u8]> = Cow::Owned(v[..key2_size].to_vec());
+                        let val: Cow<'_, [u8]> = Cow::Owned(v[key2_size..].to_vec());
+                        Ok(Some((k1, k2, val)))
+                    }
+                    None => Ok(None),
+                }
+            }
         }
     }
 

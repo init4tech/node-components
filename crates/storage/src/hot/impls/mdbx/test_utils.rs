@@ -56,7 +56,7 @@ pub fn create_test_rw_db() -> (TempDir, DatabaseEnv) {
 mod tests {
     use super::*;
     use crate::hot::{
-        conformance::conformance,
+        conformance::{conformance, test_unwind_conformance},
         db::UnsafeDbWrite,
         impls::mdbx::Tx,
         model::{DualTableTraverse, HotKv, HotKvRead, HotKvWrite, TableTraverse, TableTraverseMut},
@@ -1096,9 +1096,11 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn mdbx_append_unwind_conformance() {
-    //     let (dir, db) = create_test_rw_db();
-    //     conformance_append_unwind(&db);
-    // }
+    #[test]
+    #[serial]
+    fn mdbx_unwind_conformance() {
+        let (_dir_a, db_a) = create_test_rw_db();
+        let (_dir_b, db_b) = create_test_rw_db();
+        test_unwind_conformance(&db_a, &db_b);
+    }
 }
