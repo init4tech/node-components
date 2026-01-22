@@ -1288,6 +1288,7 @@ where
 ///
 /// This function creates a proper BundleState with reverts populated so that
 /// `to_plain_state_and_reverts` will produce the expected output.
+#[allow(clippy::type_complexity)]
 fn make_bundle_state(
     accounts: Vec<(Address, Option<AccountInfo>, Option<AccountInfo>)>,
     storage: Vec<(Address, Vec<(U256, U256, U256)>)>, // (addr, [(slot, old, new)])

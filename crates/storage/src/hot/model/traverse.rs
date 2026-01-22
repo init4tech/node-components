@@ -174,6 +174,53 @@ pub trait TableTraverse<T: SingleKey, E: HotKvReadError>: KvTraverse<E> {
     fn read_prev(&mut self) -> Result<Option<KeyValue<T>>, E> {
         KvTraverse::read_prev(self)?.map(T::decode_kv_tuple).transpose().map_err(Into::into)
     }
+
+    /// Iterate entries starting from a key while a predicate holds.
+    ///
+    /// Positions the cursor at `start_key` and calls `f` for each entry
+    /// while `predicate` returns true.
+    ///
+    /// Returns `Ok(())` on successful completion, or the first error encountered.
+    fn for_each_while<P, F>(&mut self, start_key: &T::Key, predicate: P, mut f: F) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Value) -> Result<(), E>,
+    {
+        let Some((k, v)) = TableTraverse::lower_bound(self, start_key)? else {
+            return Ok(());
+        };
+
+        if !predicate(&k, &v) {
+            return Ok(());
+        }
+
+        f(k, v)?;
+
+        while let Some((k, v)) = TableTraverse::read_next(self)? {
+            if !predicate(&k, &v) {
+                break;
+            }
+            f(k, v)?;
+        }
+
+        Ok(())
+    }
+
+    /// Collect entries from start_key while predicate holds.
+    ///
+    /// This is useful when you need to process entries after iteration completes
+    /// or when the closure would need to borrow mutably from multiple sources.
+    fn collect_while<P>(&mut self, start_key: &T::Key, predicate: P) -> Result<Vec<KeyValue<T>>, E>
+    where
+        P: Fn(&T::Key, &T::Value) -> bool,
+    {
+        let mut result = Vec::new();
+        self.for_each_while(start_key, predicate, |k, v| {
+            result.push((k, v));
+            Ok(())
+        })?;
+        Ok(result)
+    }
 }
 
 /// Blanket implementation of `TableTraverse` for any cursor that implements `KvTraverse`.
@@ -268,6 +315,94 @@ pub trait DualTableTraverse<T: DualKey, E: HotKvReadError>: DualKeyTraverse<E> {
 
     /// Move to the PREVIOUS key2 entry for the CURRENT key1.
     fn previous_k2(&mut self) -> Result<Option<DualKeyValue<T>>, E>;
+
+    /// Iterate entries (crossing k1 boundaries) while a predicate holds.
+    ///
+    /// Positions the cursor at `(key1, start_k2)` and calls `f` for each entry
+    /// while `predicate` returns true. Uses `read_next()` to cross k1 boundaries.
+    ///
+    /// Returns `Ok(())` on successful completion, or the first error encountered.
+    fn for_each_while<P, F>(
+        &mut self,
+        key1: &T::Key,
+        start_k2: &T::Key2,
+        predicate: P,
+        mut f: F,
+    ) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Key2, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        let Some((k1, k2, v)) = DualTableTraverse::next_dual_above(self, key1, start_k2)? else {
+            return Ok(());
+        };
+
+        if !predicate(&k1, &k2, &v) {
+            return Ok(());
+        }
+
+        f(k1, k2, v)?;
+
+        while let Some((k1, k2, v)) = DualTableTraverse::read_next(self)? {
+            if !predicate(&k1, &k2, &v) {
+                break;
+            }
+            f(k1, k2, v)?;
+        }
+
+        Ok(())
+    }
+
+    /// Iterate entries within the same k1 while a predicate holds.
+    ///
+    /// Positions the cursor at `(key1, start_k2)` and calls `f` for each entry
+    /// while `predicate` returns true. Uses `next_k2()` which stays within
+    /// the same k1 value.
+    ///
+    /// Returns `Ok(())` on successful completion, or the first error encountered.
+    fn for_each_while_k2<P, F>(
+        &mut self,
+        key1: &T::Key,
+        start_k2: &T::Key2,
+        predicate: P,
+        f: F,
+    ) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Key2, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        self.for_each_while(key1, start_k2, |k, k2, v| key1 == k && predicate(k, k2, v), f)
+    }
+
+    /// Iterate all k2 entries for a given k1, starting from `start_k2`.
+    ///
+    /// Calls `f` for each (k1, k2, v) tuple where k1 matches the provided key1
+    /// and k2 >= start_k2. Stops when k1 changes or the table is exhausted.
+    ///
+    /// Returns `Ok(())` on successful completion, or the first error encountered.
+    fn for_each_k2<F>(&mut self, key1: &T::Key, start_k2: &T::Key2, f: F) -> Result<(), E>
+    where
+        T::Key: PartialEq,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        self.for_each_while_k2(key1, start_k2, |_, _, _| true, f)
+    }
+
+    /// Collect all k2 entries for a given k1 into a Vec.
+    ///
+    /// This is useful when you need to process entries after iteration completes
+    /// or when the closure would need to borrow mutably from multiple sources.
+    fn collect_k2(&mut self, key1: &T::Key, start_k2: &T::Key2) -> Result<Vec<DualKeyValue<T>>, E>
+    where
+        T::Key: PartialEq,
+    {
+        let mut result = Vec::new();
+        self.for_each_k2(key1, start_k2, |k1, k2, v| {
+            result.push((k1, k2, v));
+            Ok(())
+        })?;
+        Ok(result)
+    }
 }
 
 impl<C, T, E> DualTableTraverse<T, E> for C
@@ -393,6 +528,30 @@ where
     pub fn read_prev(&mut self) -> Result<Option<KeyValue<T>>, E> {
         TableTraverse::<T, E>::read_prev(&mut self.inner)
     }
+
+    /// Iterate entries starting from a key while a predicate holds.
+    ///
+    /// Positions the cursor at `start_key` and calls `f` for each entry
+    /// while `predicate` returns true.
+    pub fn for_each_while<P, F>(&mut self, start_key: &T::Key, predicate: P, f: F) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Value) -> Result<(), E>,
+    {
+        TableTraverse::<T, E>::for_each_while(&mut self.inner, start_key, predicate, f)
+    }
+
+    /// Collect entries from start_key while predicate holds.
+    pub fn collect_while<P>(
+        &mut self,
+        start_key: &T::Key,
+        predicate: P,
+    ) -> Result<Vec<KeyValue<T>>, E>
+    where
+        P: Fn(&T::Key, &T::Value) -> bool,
+    {
+        TableTraverse::<T, E>::collect_while(&mut self.inner, start_key, predicate)
+    }
 }
 
 impl<C, T, E> TableCursor<C, T, E>
@@ -516,6 +675,67 @@ where
     /// Get the previous key-value pair and move the cursor backward.
     pub fn read_prev(&mut self) -> Result<Option<DualKeyValue<T>>, E> {
         DualTableTraverse::<T, E>::read_prev(&mut self.inner)
+    }
+
+    /// Iterate all k2 entries for a given k1, starting from `start_k2`.
+    ///
+    /// Calls `f` for each (k1, k2, v) tuple where k1 matches the provided key1
+    /// and k2 >= start_k2. Stops when k1 changes or the table is exhausted.
+    pub fn for_each_k2<F>(&mut self, key1: &T::Key, start_k2: &T::Key2, f: F) -> Result<(), E>
+    where
+        T::Key: PartialEq,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        DualTableTraverse::<T, E>::for_each_k2(&mut self.inner, key1, start_k2, f)
+    }
+
+    /// Iterate entries within the same k1 while a predicate holds.
+    ///
+    /// Positions the cursor at `(key1, start_k2)` and calls `f` for each entry
+    /// while `predicate` returns true. Uses `next_k2()` which stays within
+    /// the same k1 value.
+    pub fn for_each_while_k2<P, F>(
+        &mut self,
+        key1: &T::Key,
+        start_k2: &T::Key2,
+        predicate: P,
+        f: F,
+    ) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Key2, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        DualTableTraverse::<T, E>::for_each_while_k2(&mut self.inner, key1, start_k2, predicate, f)
+    }
+
+    /// Iterate entries (crossing k1 boundaries) while a predicate holds.
+    ///
+    /// Positions the cursor at `(key1, start_k2)` and calls `f` for each entry
+    /// while `predicate` returns true. Uses `read_next()` to cross k1 boundaries.
+    pub fn for_each_while<P, F>(
+        &mut self,
+        key1: &T::Key,
+        start_k2: &T::Key2,
+        predicate: P,
+        f: F,
+    ) -> Result<(), E>
+    where
+        P: Fn(&T::Key, &T::Key2, &T::Value) -> bool,
+        F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
+    {
+        DualTableTraverse::<T, E>::for_each_while(&mut self.inner, key1, start_k2, predicate, f)
+    }
+
+    /// Collect all k2 entries for a given k1 into a Vec.
+    pub fn collect_k2(
+        &mut self,
+        key1: &T::Key,
+        start_k2: &T::Key2,
+    ) -> Result<Vec<DualKeyValue<T>>, E>
+    where
+        T::Key: PartialEq,
+    {
+        DualTableTraverse::<T, E>::collect_k2(&mut self.inner, key1, start_k2)
     }
 }
 

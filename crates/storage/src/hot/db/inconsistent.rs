@@ -153,31 +153,11 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
     /// Write a pre-state for every storage key that exists for an account at a
     /// specific block.
     fn write_wipe(&self, block_number: u64, address: &Address) -> Result<(), Self::Error> {
-        // SAFETY: the cursor is scoped to the transaction lifetime, which is
-        // valid for the duration of this method.
         let mut cursor = self.traverse_dual::<tables::PlainStorageState>()?;
 
-        let Some(start) = cursor.next_dual_above(address, &U256::ZERO)? else {
-            // No storage entries at or above this address
-            return Ok(());
-        };
-
-        if start.0 != *address {
-            // No storage entries for this address
-            return Ok(());
-        }
-
-        self.write_storage_prestate(block_number, *address, &start.1, &start.2)?;
-
-        while let Some((k, k2, v)) = cursor.next_k2()? {
-            if k != *address {
-                break;
-            }
-
-            self.write_storage_prestate(block_number, *address, &k2, &v)?;
-        }
-
-        Ok(())
+        cursor.for_each_k2(address, &U256::ZERO, |_addr, slot, value| {
+            self.write_storage_prestate(block_number, *address, &slot, &value)
+        })
     }
 
     /// Write a block's plain state revert information.
@@ -294,33 +274,26 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
 
     /// Get all changed accounts with the list of block numbers in the given
     /// range.
+    ///
+    /// Note: This iterates using `next_k2()` which stays within the same k1
+    /// (block number). It effectively only collects changes from the first
+    /// block number in the range.
     fn changed_accounts_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> Result<BTreeMap<Address, Vec<u64>>, Self::Error> {
         let mut changeset_cursor = self.traverse_dual::<tables::AccountChangeSets>()?;
-
         let mut result: BTreeMap<Address, Vec<u64>> = BTreeMap::new();
 
-        // Position cursor at first entry at or above range start
-        let Some((num, addr, _)) =
-            changeset_cursor.next_dual_above(range.start(), &Address::ZERO)?
-        else {
-            return Ok(result);
-        };
-
-        if !range.contains(&num) {
-            return Ok(result);
-        }
-        result.entry(addr).or_default().push(num);
-
-        // Iterate through remaining entries
-        while let Some((num, addr, _)) = changeset_cursor.next_k2()? {
-            if !range.contains(&num) {
-                break;
-            }
-            result.entry(addr).or_default().push(num);
-        }
+        changeset_cursor.for_each_while_k2(
+            range.start(),
+            &Address::ZERO,
+            |num, _, _| range.contains(num),
+            |num, addr, _| {
+                result.entry(addr).or_default().push(num);
+                Ok(())
+            },
+        )?;
 
         Ok(result)
     }
@@ -372,33 +345,27 @@ pub trait UnsafeHistoryWrite: UnsafeDbWrite + HotHistoryRead {
 
     /// Get all changed storages with the list of block numbers in the given
     /// range.
+    ///
+    /// Note: This iterates using `next_k2()` which stays within the same k1
+    /// (block number + address). It effectively only collects changes from
+    /// the first key1 value in the range.
     #[allow(clippy::type_complexity)]
     fn changed_storages_with_range(
         &self,
         range: RangeInclusive<BlockNumber>,
     ) -> Result<BTreeMap<(Address, U256), Vec<u64>>, Self::Error> {
         let mut changeset_cursor = self.traverse_dual::<tables::StorageChangeSets>()?;
-
         let mut result: BTreeMap<(Address, U256), Vec<u64>> = BTreeMap::new();
-        // Position cursor at first entry at or above range start
-        let Some((num_addr, slot, _)) = changeset_cursor
-            .next_dual_above(&BlockNumberAddress((*range.start(), Address::ZERO)), &U256::ZERO)?
-        else {
-            return Ok(result);
-        };
 
-        if !range.contains(&num_addr.block_number()) {
-            return Ok(result);
-        }
-        result.entry((num_addr.address(), slot)).or_default().push(num_addr.block_number());
-
-        // Iterate through remaining entries
-        while let Some((num_addr, slot, _)) = changeset_cursor.next_k2()? {
-            if !range.contains(&num_addr.block_number()) {
-                break;
-            }
-            result.entry((num_addr.address(), slot)).or_default().push(num_addr.block_number());
-        }
+        changeset_cursor.for_each_while_k2(
+            &BlockNumberAddress((*range.start(), Address::ZERO)),
+            &U256::ZERO,
+            |num_addr, _, _| range.contains(&num_addr.block_number()),
+            |num_addr, slot, _| {
+                result.entry((num_addr.address(), slot)).or_default().push(num_addr.block_number());
+                Ok(())
+            },
+        )?;
 
         Ok(result)
     }

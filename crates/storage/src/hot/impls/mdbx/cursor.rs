@@ -222,8 +222,7 @@ where
         let key2_size = fsi.key2_size().unwrap_or(key2.len());
 
         // Use set_range to find the first entry with key1 >= search_key1
-        let Some((found_k1, v)) =
-            self.inner.set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key1)?
+        let Some((found_k1, v)) = self.inner.set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(key1)?
         else {
             return Ok(None);
         };
