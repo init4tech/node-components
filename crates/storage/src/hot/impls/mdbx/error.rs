@@ -26,6 +26,10 @@ pub enum MdbxError {
     #[error("tried to invoke a DUPSORT operation on a table that is not flagged DUPSORT")]
     NotDupSort,
 
+    /// Tried to invoke a DUP_FIXED operation on a table that is not DUP_FIXED
+    #[error("tried to invoke a DUP_FIXED operation on a table that is not DUP_FIXED")]
+    NotDupFixed,
+
     /// Key2 size is unknown, cannot split DUPSORT value.
     /// This error occurs when using raw cursor methods on a DUP_FIXED table
     /// without first setting the key2/value sizes via typed methods.

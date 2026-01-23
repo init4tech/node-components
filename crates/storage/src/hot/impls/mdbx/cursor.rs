@@ -1,10 +1,5 @@
 //! Cursor wrapper for libmdbx-sys.
 
-use std::{
-    borrow::Cow,
-    ops::{Deref, DerefMut},
-};
-
 use crate::hot::{
     MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE,
     impls::mdbx::{DbInfo, MdbxError},
@@ -12,6 +7,10 @@ use crate::hot::{
 };
 use dashmap::mapref::one::Ref;
 use reth_libmdbx::{RO, RW, TransactionKind};
+use std::{
+    borrow::Cow,
+    ops::{Deref, DerefMut},
+};
 
 /// Read only Cursor.
 pub type CursorRO<'a> = Cursor<'a, RO>;
@@ -102,6 +101,125 @@ where
 impl KvTraverseMut<MdbxError> for Cursor<'_, RW> {
     fn delete_current(&mut self) -> Result<(), MdbxError> {
         self.inner.del(Default::default()).map_err(MdbxError::Mdbx)
+    }
+}
+
+impl Cursor<'_, RW> {
+    /// Stores multiple contiguous fixed-size data elements in a single request.
+    ///
+    /// This directly calls MDBX FFI, bypassing the transaction execution wrapper
+    /// in `reth_libmdbx`. The cursor must be in a valid state with an active
+    /// transaction.
+    ///
+    /// # Safety
+    ///
+    /// - The table MUST have been opened with `DUP_FIXED` flag.
+    /// - The `data` slice MUST contain exactly `count` contiguous elements of
+    ///   `data_size` bytes each.
+    /// - The caller MUST ensure `data.len() == data_size * count`.
+    /// - The cursor's transaction MUST be active and valid.
+    /// - No concurrent operations may be performed on the same transaction.
+    ///
+    /// # Arguments
+    ///
+    /// - `key`: The key under which to store the duplicates.
+    /// - `data`: Contiguous buffer containing all elements.
+    /// - `data_size`: Size of each individual element in bytes.
+    /// - `count`: Number of elements to store.
+    /// - `all_dups`: If true, replaces all existing duplicates for this key.
+    ///
+    /// # Returns
+    ///
+    /// The number of elements actually written.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data.len() != data_size * count`.
+    pub unsafe fn put_multiple(
+        &mut self,
+        key: &[u8],
+        data: &[u8],
+        data_size: usize,
+        count: usize,
+        all_dups: bool,
+    ) -> Result<usize, MdbxError> {
+        assert_eq!(
+            data.len(),
+            data_size * count,
+            "data length {} must equal data_size {} * count {}",
+            data.len(),
+            data_size,
+            count
+        );
+
+        use reth_libmdbx::{WriteFlags, ffi};
+        use std::ffi::c_void;
+
+        let key_val = ffi::MDBX_val { iov_len: key.len(), iov_base: key.as_ptr() as *mut c_void };
+
+        // First MDBX_val: size of one element, pointer to data array
+        let data_val = ffi::MDBX_val { iov_len: data_size, iov_base: data.as_ptr() as *mut c_void };
+
+        // Second MDBX_val: count of elements (will be updated with actual count written)
+        let count_val = ffi::MDBX_val { iov_len: count, iov_base: std::ptr::null_mut() };
+
+        let mut flags = WriteFlags::MULTIPLE;
+        if all_dups {
+            flags |= WriteFlags::ALLDUPS;
+        }
+
+        // Create a 2-element array as required by MDBX_MULTIPLE
+        let mut vals = [data_val, count_val];
+
+        // SAFETY: The caller guarantees that:
+        // - The cursor is valid and belongs to an active transaction
+        // - The data buffer contains exactly `count` contiguous elements of `data_size` bytes
+        // - The table was opened with DUP_FIXED flag
+        // - No concurrent operations are being performed on this transaction
+        let result = unsafe {
+            ffi::mdbx_cursor_put(self.inner.cursor(), &key_val, vals.as_mut_ptr(), flags.bits())
+        };
+
+        if result == ffi::MDBX_SUCCESS {
+            // The second val's iov_len now contains the count of items written
+            Ok(vals[1].iov_len)
+        } else {
+            Err(MdbxError::Mdbx(reth_libmdbx::Error::from_err_code(result)))
+        }
+    }
+
+    /// Stores multiple fixed-size entries for a single key (safe wrapper).
+    ///
+    /// Validates that the table is DUP_FIXED before calling the unsafe FFI.
+    ///
+    /// # Arguments
+    ///
+    /// - `key`: The key under which to store the duplicates.
+    /// - `entries`: Contiguous buffer containing all elements.
+    /// - `entry_count`: Number of elements to store.
+    /// - `replace_all`: If true, replaces all existing duplicates for this key.
+    ///
+    /// # Returns
+    ///
+    /// The number of elements actually written.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MdbxError::NotDupFixed`] if the table is not DUP_FIXED.
+    pub fn put_multiple_fixed(
+        &mut self,
+        key: &[u8],
+        entries: &[u8],
+        entry_count: usize,
+        replace_all: bool,
+    ) -> Result<usize, MdbxError> {
+        let fsi = self.db_info().dup_fixed_val_size();
+        let Some(total_size) = fsi.total_size() else {
+            return Err(MdbxError::NotDupFixed);
+        };
+
+        // SAFETY: We verified the table is DUP_FIXED via db_info
+        unsafe { self.put_multiple(key, entries, total_size, entry_count, replace_all) }
     }
 }
 

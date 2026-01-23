@@ -6,7 +6,7 @@ use trevm::revm::bytecode::Bytecode;
 
 table! {
     /// Records recent block Headers, by their number.
-    Headers<BlockNumber => Header>
+    Headers<BlockNumber => Header> int_key
 }
 
 table! {
@@ -30,21 +30,21 @@ table! {
 }
 
 table! {
-    /// Records account state change history, keyed by address.
+    /// Records account state change history, keyed by address. The subkey is the HIGHEST block included in the block number list. This table is used to determine in which blocks an account was modified.
     AccountsHistory<Address => u64 => BlockNumberList>
 }
 
 table! {
-    /// Records account states before transactions, keyed by (block_number, address).
-    AccountChangeSets<BlockNumber => Address => Account> is 8 + 32 + 32
+    /// Records account states before transactions, keyed by (block_number, address). This table is used to rollback account states. As such, appends and unwinds are always full replacements, never merges.
+    AccountChangeSets<BlockNumber => Address => Account> is 8 + 32 + 32, FullReplacements, int_key
 }
 
 table! {
-    /// Records storage state change history, keyed by address and storage key.
+    /// Records storage state change history, keyed by address and storage key. The subkey is the storage index and HIGHEST block included in the block number list. This table is used to determine in which blocks a storage key was modified.
     StorageHistory<Address => ShardedKey<U256> => BlockNumberList>
 }
 
 table! {
-    /// Records account states before transactions, keyed by (address, block number).
-    StorageChangeSets<BlockNumberAddress => U256 => U256> is 32
+    /// Records storage states before transactions, keyed by (address, block number). This table is used to rollback storage states. As such, appends and unwinds are always full replacements, never merges.
+    StorageChangeSets<BlockNumberAddress => U256 => U256> is 32, FullReplacements
 }

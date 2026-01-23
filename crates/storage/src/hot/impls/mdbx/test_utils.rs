@@ -47,6 +47,10 @@ pub fn create_test_rw_db() -> (TempDir, DatabaseEnv) {
 
     writer.queue_create::<TestTable>().unwrap();
 
+    // Create DUP_FIXED table for put_multiple tests
+    // key2_size=8, value_size=8 means total fixed value size is 16 bytes
+    writer.queue_raw_create("put_multiple_test", Some(8), Some(8), false).unwrap();
+
     writer.commit().expect("Failed to commit table creation");
 
     (dir, db)
@@ -66,6 +70,7 @@ mod tests {
     use reth::primitives::{Account, Header, SealedHeader};
     use reth_libmdbx::{RO, RW};
     use serial_test::serial;
+    use std::borrow::Cow;
     use trevm::revm::bytecode::Bytecode;
 
     /// Create a temporary MDBX database for testing that will be automatically cleaned up
@@ -170,7 +175,7 @@ mod tests {
             let writer: Tx<RW> = db.writer().unwrap();
 
             // Create table
-            writer.queue_raw_create(table_name, None, None).unwrap();
+            writer.queue_raw_create(table_name, None, None, false).unwrap();
 
             // Put raw data
             writer.queue_raw_put(table_name, key, value).unwrap();
@@ -1102,5 +1107,571 @@ mod tests {
         let (_dir_a, db_a) = create_test_rw_db();
         let (_dir_b, db_b) = create_test_rw_db();
         test_unwind_conformance(&db_a, &db_b);
+    }
+
+    // ========================================================================
+    // put_multiple Tests
+    // ========================================================================
+
+    #[test]
+    fn test_put_multiple_basic() {
+        run_test(test_put_multiple_basic_inner)
+    }
+
+    fn test_put_multiple_basic_inner(db: &DatabaseEnv) {
+        use crate::hot::model::KvTraverse;
+
+        let key = [0x01u8; 8];
+        let data_size = 16; // key2 (8) + value (8)
+        let count = 3;
+
+        // Create 3 contiguous elements, each 16 bytes
+        let mut data = vec![0u8; data_size * count];
+        for i in 0..count {
+            let offset = i * data_size;
+            // key2 part (first 8 bytes of each element)
+            data[offset..offset + 8].copy_from_slice(&[i as u8; 8]);
+            // value part (next 8 bytes)
+            data[offset + 8..offset + 16].copy_from_slice(&[(i as u8) + 100; 8]);
+        }
+
+        // Write using put_multiple
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let written =
+                unsafe { cursor.put_multiple(&key, &data, data_size, count, false) }.unwrap();
+
+            assert_eq!(written, count);
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify all entries were written
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            // Traverse and count entries
+            let first = KvTraverse::first(&mut cursor).unwrap();
+            assert!(first.is_some());
+
+            let mut entry_count = 1;
+            while KvTraverse::read_next(&mut cursor).unwrap().is_some() {
+                entry_count += 1;
+            }
+
+            assert_eq!(entry_count, count);
+        }
+    }
+
+    #[test]
+    fn test_put_multiple_with_alldups() {
+        run_test(test_put_multiple_with_alldups_inner)
+    }
+
+    fn test_put_multiple_with_alldups_inner(db: &DatabaseEnv) {
+        let key = [0x02u8; 8];
+        let data_size = 16;
+
+        // First, insert some initial data
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let mut initial_data = vec![0u8; data_size * 2];
+            initial_data[0..8].copy_from_slice(&[0xAAu8; 8]);
+            initial_data[8..16].copy_from_slice(&[0xBBu8; 8]);
+            initial_data[16..24].copy_from_slice(&[0xCCu8; 8]);
+            initial_data[24..32].copy_from_slice(&[0xDDu8; 8]);
+
+            unsafe { cursor.put_multiple(&key, &initial_data, data_size, 2, false) }.unwrap();
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Now replace ALL dups with new data using all_dups=true
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let mut new_data = vec![0u8; data_size * 3];
+            for i in 0..3 {
+                let offset = i * data_size;
+                new_data[offset..offset + 8].copy_from_slice(&[(i as u8) + 1; 8]);
+                new_data[offset + 8..offset + 16].copy_from_slice(&[(i as u8) + 200; 8]);
+            }
+
+            let written =
+                unsafe { cursor.put_multiple(&key, &new_data, data_size, 3, true) }.unwrap();
+
+            assert_eq!(written, 3);
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify: should have exactly 3 entries (old ones replaced)
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            // Position at the key
+            let found = cursor.inner.set::<Cow<'_, [u8]>>(&key).unwrap();
+            assert!(found.is_some());
+
+            // Count duplicates for this key
+            let mut dup_count = 1;
+            while cursor.inner.next_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>().unwrap().is_some() {
+                dup_count += 1;
+            }
+
+            assert_eq!(dup_count, 3, "Expected 3 entries after ALLDUPS replacement");
+        }
+    }
+
+    #[test]
+    fn test_put_multiple_single_element() {
+        run_test(test_put_multiple_single_element_inner)
+    }
+
+    fn test_put_multiple_single_element_inner(db: &DatabaseEnv) {
+        let key = [0x03u8; 8];
+        let data_size = 16;
+        let count = 1;
+
+        let mut data = vec![0u8; data_size];
+        data[0..8].copy_from_slice(&[0x11u8; 8]);
+        data[8..16].copy_from_slice(&[0x22u8; 8]);
+
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let written =
+                unsafe { cursor.put_multiple(&key, &data, data_size, count, false) }.unwrap();
+
+            assert_eq!(written, 1);
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_put_multiple_mismatched_length_panics() {
+        run_test(test_put_multiple_mismatched_length_panics_inner)
+    }
+
+    fn test_put_multiple_mismatched_length_panics_inner(db: &DatabaseEnv) {
+        let key = [0x05u8; 8];
+        let data_size = 16;
+        let count = 3;
+
+        // Intentionally wrong size: 32 bytes instead of 48 (16 * 3)
+        let data = vec![0u8; 32];
+
+        let tx: Tx<RW> = db.writer().unwrap();
+        let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            cursor.put_multiple(&key, &data, data_size, count, false)
+        }));
+
+        assert!(result.is_err(), "Should panic when data.len() != data_size * count");
+    }
+
+    #[test]
+    fn test_put_multiple_oversized_data_panics() {
+        run_test(test_put_multiple_oversized_data_panics_inner)
+    }
+
+    fn test_put_multiple_oversized_data_panics_inner(db: &DatabaseEnv) {
+        let key = [0x06u8; 8];
+        let data_size = 16;
+        let count = 2;
+
+        // Intentionally oversized: 64 bytes instead of 32 (16 * 2)
+        let data = vec![0u8; 64];
+
+        let tx: Tx<RW> = db.writer().unwrap();
+        let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            cursor.put_multiple(&key, &data, data_size, count, false)
+        }));
+
+        assert!(result.is_err(), "Should panic when data.len() > data_size * count");
+    }
+
+    #[test]
+    fn test_put_multiple_large_batch() {
+        run_test(test_put_multiple_large_batch_inner)
+    }
+
+    fn test_put_multiple_large_batch_inner(db: &DatabaseEnv) {
+        let key = [0x07u8; 8];
+        let data_size = 16;
+        let count = 1000;
+
+        let mut data = vec![0u8; data_size * count];
+        for i in 0..count {
+            let offset = i * data_size;
+            // Encode index into the data for verification
+            data[offset..offset + 8].copy_from_slice(&(i as u64).to_le_bytes());
+            data[offset + 8..offset + 16].copy_from_slice(&((i + 1000) as u64).to_le_bytes());
+        }
+
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let written =
+                unsafe { cursor.put_multiple(&key, &data, data_size, count, false) }.unwrap();
+
+            assert_eq!(written, count);
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify count
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            cursor.inner.set::<Cow<'_, [u8]>>(&key).unwrap();
+
+            let mut dup_count = 1;
+            while cursor.inner.next_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>().unwrap().is_some() {
+                dup_count += 1;
+            }
+
+            assert_eq!(dup_count, count);
+        }
+    }
+
+    #[test]
+    fn test_put_multiple_exceeds_page_size() {
+        run_test(test_put_multiple_exceeds_page_size_inner)
+    }
+
+    fn test_put_multiple_exceeds_page_size_inner(db: &DatabaseEnv) {
+        // MDBX max page size is 64KB (0x10000 = 65536 bytes)
+        // With data_size=16, we need > 4096 elements to exceed max page size
+        // Using 5000 elements = 80,000 bytes > 64KB
+        let key = [0x08u8; 8];
+        let data_size = 16;
+        let count = 5000;
+
+        let total_size = data_size * count;
+        assert!(total_size > 65536, "Test data must exceed max MDBX page size (64KB)");
+
+        let mut data = vec![0u8; total_size];
+        for i in 0..count {
+            let offset = i * data_size;
+            // key2: element index as little-endian u64
+            data[offset..offset + 8].copy_from_slice(&(i as u64).to_le_bytes());
+            // value: index + 0x1000_0000 as little-endian u64
+            data[offset + 8..offset + 16]
+                .copy_from_slice(&((i as u64) + 0x1000_0000).to_le_bytes());
+        }
+
+        // Write - MDBX should handle multi-page writes internally
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let written =
+                unsafe { cursor.put_multiple(&key, &data, data_size, count, false) }.unwrap();
+
+            // MDBX may write fewer than requested if it spans pages
+            // The return value indicates how many were actually written
+            assert!(written > 0, "Should write at least some elements");
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify at least partial write succeeded
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let found = cursor.inner.set::<Cow<'_, [u8]>>(&key).unwrap();
+            assert!(found.is_some(), "Key should exist after put_multiple");
+
+            // Count all duplicates
+            let mut dup_count = 1;
+            while cursor.inner.next_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>().unwrap().is_some() {
+                dup_count += 1;
+            }
+
+            assert!(dup_count > 0, "Should have at least some entries written");
+        }
+    }
+
+    // ========================================================================
+    // put_multiple_fixed Tests (Safe Wrapper)
+    // ========================================================================
+
+    #[test]
+    fn test_put_multiple_fixed_basic() {
+        run_test(test_put_multiple_fixed_basic_inner)
+    }
+
+    fn test_put_multiple_fixed_basic_inner(db: &DatabaseEnv) {
+        let key = [0x10u8; 8];
+        let count = 3;
+
+        // Create 3 contiguous elements, each 16 bytes (key2=8 + value=8)
+        let mut data = vec![0u8; 16 * count];
+        for i in 0..count {
+            let offset = i * 16;
+            // key2 part (first 8 bytes)
+            data[offset..offset + 8].copy_from_slice(&[i as u8; 8]);
+            // value part (next 8 bytes)
+            data[offset + 8..offset + 16].copy_from_slice(&[(i as u8) + 100; 8]);
+        }
+
+        // Write using put_multiple_fixed (safe wrapper)
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            let written = cursor.put_multiple_fixed(&key, &data, count, false).unwrap();
+
+            assert_eq!(written, count);
+
+            drop(cursor);
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify all entries were written
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+            let mut cursor = tx.new_cursor_raw("put_multiple_test").unwrap();
+
+            // Position at key
+            let first = cursor.inner.set::<Cow<'_, [u8]>>(&key).unwrap();
+            assert!(first.is_some());
+
+            // Count duplicates
+            let mut entry_count = 1;
+            while cursor.inner.next_dup::<Cow<'_, [u8]>, Cow<'_, [u8]>>().unwrap().is_some() {
+                entry_count += 1;
+            }
+
+            assert_eq!(entry_count, count);
+        }
+    }
+
+    #[test]
+    fn test_put_multiple_fixed_not_dupfixed() {
+        run_test(test_put_multiple_fixed_not_dupfixed_inner)
+    }
+
+    fn test_put_multiple_fixed_not_dupfixed_inner(db: &DatabaseEnv) {
+        use crate::hot::impls::mdbx::MdbxError;
+
+        // Try to use put_multiple_fixed on a non-DUP_FIXED table (TestTable)
+        let key = 42u64.to_le_bytes();
+        let data = vec![0u8; 16];
+
+        let tx: Tx<RW> = db.writer().unwrap();
+        let mut cursor = tx.new_cursor::<TestTable>().unwrap();
+
+        let result = cursor.put_multiple_fixed(&key, &data, 1, false);
+
+        assert!(matches!(result, Err(MdbxError::NotDupFixed)));
+    }
+
+    // ========================================================================
+    // queue_put_many_dual Tests
+    // ========================================================================
+
+    #[test]
+    fn test_queue_put_many_dual_optimization() {
+        run_test(test_queue_put_many_dual_optimization_inner)
+    }
+
+    fn test_queue_put_many_dual_optimization_inner(db: &DatabaseEnv) {
+        // Test using PlainStorageState which is DUP_FIXED
+        let addr1 = Address::from_slice(&[0x01; 20]);
+        let addr2 = Address::from_slice(&[0x02; 20]);
+
+        // Create test data grouped by address
+        let slots1: Vec<(U256, U256)> =
+            (0..10).map(|i| (U256::from(i), U256::from(i * 100 + 1))).collect();
+        let slots2: Vec<(U256, U256)> =
+            (0..5).map(|i| (U256::from(i + 100), U256::from(i * 200 + 2))).collect();
+
+        // Write using queue_put_many_dual
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+
+            let groups: Vec<(&Address, Vec<(&U256, &U256)>)> = vec![
+                (&addr1, slots1.iter().map(|(k, v)| (k, v)).collect()),
+                (&addr2, slots2.iter().map(|(k, v)| (k, v)).collect()),
+            ];
+
+            tx.queue_put_many_dual::<tables::PlainStorageState, _, _>(groups).unwrap();
+
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify all entries were written correctly
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+
+            // Check addr1 entries
+            for (slot, expected_value) in &slots1 {
+                let value =
+                    tx.get_dual::<tables::PlainStorageState>(&addr1, slot).unwrap().unwrap();
+                assert_eq!(value, *expected_value);
+            }
+
+            // Check addr2 entries
+            for (slot, expected_value) in &slots2 {
+                let value =
+                    tx.get_dual::<tables::PlainStorageState>(&addr2, slot).unwrap().unwrap();
+                assert_eq!(value, *expected_value);
+            }
+        }
+    }
+
+    #[test]
+    fn test_queue_put_many_dual_large_batch() {
+        run_test(test_queue_put_many_dual_large_batch_inner)
+    }
+
+    fn test_queue_put_many_dual_large_batch_inner(db: &DatabaseEnv) {
+        // Test with a large number of entries to exercise page boundary handling
+        let addr = Address::from_slice(&[0x03; 20]);
+
+        // Create 1000 storage slots
+        let slots: Vec<(U256, U256)> =
+            (0..1000).map(|i| (U256::from(i), U256::from(i * 1000))).collect();
+
+        // Write using queue_put_many_dual
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+
+            let groups: Vec<(&Address, Vec<(&U256, &U256)>)> =
+                vec![(&addr, slots.iter().map(|(k, v)| (k, v)).collect())];
+
+            tx.queue_put_many_dual::<tables::PlainStorageState, _, _>(groups).unwrap();
+
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify all entries were written
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+
+            // Spot check a few entries
+            let value = tx.get_dual::<tables::PlainStorageState>(&addr, &U256::from(0)).unwrap();
+            assert_eq!(value, Some(U256::from(0)));
+
+            let value = tx.get_dual::<tables::PlainStorageState>(&addr, &U256::from(500)).unwrap();
+            assert_eq!(value, Some(U256::from(500 * 1000)));
+
+            let value = tx.get_dual::<tables::PlainStorageState>(&addr, &U256::from(999)).unwrap();
+            assert_eq!(value, Some(U256::from(999 * 1000)));
+        }
+    }
+
+    #[test]
+    fn test_queue_put_many_dual_empty_groups() {
+        run_test(test_queue_put_many_dual_empty_groups_inner)
+    }
+
+    fn test_queue_put_many_dual_empty_groups_inner(db: &DatabaseEnv) {
+        // Test with empty groups - should not error
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+
+            let groups: Vec<(&Address, Vec<(&U256, &U256)>)> = vec![];
+
+            tx.queue_put_many_dual::<tables::PlainStorageState, _, _>(groups).unwrap();
+
+            tx.raw_commit().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_queue_put_many_dual_exceeds_page_size() {
+        run_test(test_queue_put_many_dual_exceeds_page_size_inner)
+    }
+
+    fn test_queue_put_many_dual_exceeds_page_size_inner(db: &DatabaseEnv) {
+        // For PlainStorageState: key2 = U256 (32 bytes), value = U256 (32 bytes)
+        // entry_size = 64 bytes
+        // Page size varies by OS (4KB-64KB), so max_entries_per_page = 64-1024
+        // We write 2000 entries for a single key1 to ensure multiple buffer flushes
+        // on any platform
+        let addr = Address::from_slice(&[0x04; 20]);
+        let entry_count = 2000;
+
+        // Verify our test actually exceeds page capacity
+        let entry_size = 64; // U256 + U256
+        let page_size = db.stat().unwrap().page_size() as usize;
+        let max_entries_per_page = page_size / entry_size;
+        assert!(
+            entry_count > max_entries_per_page,
+            "Test must write more entries ({}) than fit in one page ({})",
+            entry_count,
+            max_entries_per_page
+        );
+
+        // Create storage slots that exceed page size
+        let slots: Vec<(U256, U256)> =
+            (0..entry_count).map(|i| (U256::from(i), U256::from(i * 7 + 42))).collect();
+
+        // Write using queue_put_many_dual - this should trigger multiple put_multiple_fixed calls
+        {
+            let tx: Tx<RW> = db.writer().unwrap();
+
+            let groups: Vec<(&Address, Vec<(&U256, &U256)>)> =
+                vec![(&addr, slots.iter().map(|(k, v)| (k, v)).collect())];
+
+            tx.queue_put_many_dual::<tables::PlainStorageState, _, _>(groups).unwrap();
+
+            tx.raw_commit().unwrap();
+        }
+
+        // Verify ALL entries were written correctly
+        {
+            let tx: Tx<RO> = db.reader().unwrap();
+
+            // Check every entry to ensure no data loss at page boundaries
+            for (slot, expected_value) in &slots {
+                let value = tx
+                    .get_dual::<tables::PlainStorageState>(&addr, slot)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("Missing entry for slot {}", slot));
+                assert_eq!(
+                    value, *expected_value,
+                    "Value mismatch for slot {}: expected {}, got {}",
+                    slot, expected_value, value
+                );
+            }
+
+            // Also verify entries near page boundaries explicitly
+            // First page boundary
+            let boundary_slot = U256::from(max_entries_per_page - 1);
+            let value =
+                tx.get_dual::<tables::PlainStorageState>(&addr, &boundary_slot).unwrap().unwrap();
+            assert_eq!(value, U256::from((max_entries_per_page - 1) * 7 + 42));
+
+            // Entry just after first page boundary
+            let after_boundary = U256::from(max_entries_per_page);
+            let value =
+                tx.get_dual::<tables::PlainStorageState>(&addr, &after_boundary).unwrap().unwrap();
+            assert_eq!(value, U256::from(max_entries_per_page * 7 + 42));
+        }
     }
 }

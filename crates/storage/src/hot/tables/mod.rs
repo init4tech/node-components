@@ -6,7 +6,7 @@ mod definitions;
 pub use definitions::*;
 
 use crate::hot::{
-    DeserError, KeySer, MAX_FIXED_VAL_SIZE, ValSer,
+    DeserError, KeySer, MAX_FIXED_VAL_SIZE, MAX_KEY_SIZE, ValSer,
     model::{DualKeyValue, KeyValue},
 };
 
@@ -30,6 +30,12 @@ pub trait Table: Sized + Send + Sync + 'static {
     /// A short, human-readable name for the table.
     const NAME: &'static str;
 
+    /// The key type.
+    type Key: KeySer;
+
+    /// The value type.
+    type Value: ValSer;
+
     /// Indicates that this table uses dual keys.
     const DUAL_KEY: bool = Self::DUAL_KEY_SIZE.is_some();
 
@@ -46,6 +52,9 @@ pub trait Table: Sized + Send + Sync + 'static {
     /// Otherwise, it is `None`.
     const DUAL_KEY_SIZE: Option<usize> = None;
 
+    /// Indicates that this table uses an integer key (u32 or u64).
+    const INT_KEY: bool = false;
+
     /// Indicates that this table has fixed-size values.
     const IS_FIXED_VAL: bool = Self::FIXED_VAL_SIZE.is_some();
 
@@ -60,6 +69,7 @@ pub trait Table: Sized + Send + Sync + 'static {
         if let Some(dual_key_size) = Self::DUAL_KEY_SIZE {
             assert!(Self::DUAL_KEY, "DUAL_KEY_SIZE is set but DUAL_KEY is false");
             assert!(dual_key_size > 0, "DUAL_KEY_SIZE must be greater than zero");
+            assert!(dual_key_size <= MAX_KEY_SIZE, "DUAL_KEY_SIZE exceeds maximum key size");
         } else {
             assert!(!Self::DUAL_KEY, "DUAL_KEY is true but DUAL_KEY_SIZE is None");
         }
@@ -68,11 +78,6 @@ pub trait Table: Sized + Send + Sync + 'static {
 
         sealed::Seal
     };
-
-    /// The key type.
-    type Key: KeySer;
-    /// The value type.
-    type Value: ValSer;
 
     /// Shortcut to decode a key.
     fn decode_key(data: impl AsRef<[u8]>) -> Result<Self::Key, DeserError> {
@@ -112,6 +117,22 @@ pub trait SingleKey: Table {
     };
 }
 
+/// Describes the semantics of a dual-keyed table.
+///
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DualTableMode {
+    /// The table is updated via random access to subkeys.
+    ///
+    /// This means that there will be random reads/writes to individual
+    /// subkeys within a parent key.
+    SubkeyAccess,
+    /// The table is updated via full key-value replacements. This means that
+    /// subkeys within a parent key are not accessed individually, but rather
+    /// the entire value is read or replaced at once.
+    FullReplacements,
+}
+
 /// Trait for tables with two keys.
 ///
 /// This trait aims to capture tables that use a composite key made up of two
@@ -120,6 +141,9 @@ pub trait SingleKey: Table {
 pub trait DualKey: Table {
     /// The second key type.
     type Key2: KeySer;
+
+    /// The mode of the dual-keyed table.
+    const TABLE_MODE: DualTableMode = DualTableMode::SubkeyAccess;
 
     /// Compile-time assertions for the dual-keyed table.
     #[doc(hidden)]

@@ -46,8 +46,15 @@ pub trait KvTraverseMut<E: HotKvReadError>: KvTraverse<E> {
 
     /// Delete a range of key-value pairs in the database, from `start_key`
     fn delete_range(&mut self, range: Range<&[u8]>) -> Result<(), E> {
-        let _ = self.exact(range.start)?;
-        while let Some((key, _value)) = self.read_next()? {
+        let Some((key, _)) = self.lower_bound(range.start)? else {
+            return Ok(());
+        };
+        if key.as_ref() >= range.end {
+            return Ok(());
+        }
+        self.delete_current()?;
+
+        while let Some((key, _)) = self.read_next()? {
             if key.as_ref() >= range.end {
                 break;
             }
@@ -387,22 +394,6 @@ pub trait DualTableTraverse<T: DualKey, E: HotKvReadError>: DualKeyTraverse<E> {
     {
         self.for_each_while_k2(key1, start_k2, |_, _, _| true, f)
     }
-
-    /// Collect all k2 entries for a given k1 into a Vec.
-    ///
-    /// This is useful when you need to process entries after iteration completes
-    /// or when the closure would need to borrow mutably from multiple sources.
-    fn collect_k2(&mut self, key1: &T::Key, start_k2: &T::Key2) -> Result<Vec<DualKeyValue<T>>, E>
-    where
-        T::Key: PartialEq,
-    {
-        let mut result = Vec::new();
-        self.for_each_k2(key1, start_k2, |k1, k2, v| {
-            result.push((k1, k2, v));
-            Ok(())
-        })?;
-        Ok(result)
-    }
 }
 
 impl<C, T, E> DualTableTraverse<T, E> for C
@@ -724,18 +715,6 @@ where
         F: FnMut(T::Key, T::Key2, T::Value) -> Result<(), E>,
     {
         DualTableTraverse::<T, E>::for_each_while(&mut self.inner, key1, start_k2, predicate, f)
-    }
-
-    /// Collect all k2 entries for a given k1 into a Vec.
-    pub fn collect_k2(
-        &mut self,
-        key1: &T::Key,
-        start_k2: &T::Key2,
-    ) -> Result<Vec<DualKeyValue<T>>, E>
-    where
-        T::Key: PartialEq,
-    {
-        DualTableTraverse::<T, E>::collect_k2(&mut self.inner, key1, start_k2)
     }
 }
 

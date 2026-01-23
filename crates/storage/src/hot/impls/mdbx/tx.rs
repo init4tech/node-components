@@ -106,9 +106,6 @@ impl Tx<RW> {
 
         // reuse the scratch buffer for encoding the DbInfo key
         // The first 32 bytes are for the key, the rest for the value
-
-        // SAFETY: The write buffer cannot be aliased while we have &self
-
         let mut key_buf = [0u8; MAX_KEY_SIZE];
         let mut value_buf: &mut [u8] = &mut [0u8; MAX_FIXED_VAL_SIZE];
 
@@ -248,7 +245,7 @@ impl HotKvWrite for Tx<RW> {
             combined.extend_from_slice(value);
             return self
                 .inner
-                .put(dbi, key1, &combined, WriteFlags::default())
+                .put(dbi, key1, &combined, WriteFlags::UPSERT)
                 .map(|_| ())
                 .map_err(MdbxError::Mdbx);
         } else {
@@ -257,7 +254,7 @@ impl HotKvWrite for Tx<RW> {
             let buf = &mut buffer[..key2.len() + value.len()];
             buf[..key2.len()].copy_from_slice(key2);
             buf[key2.len()..].copy_from_slice(value);
-            self.inner.put(dbi, key1, buf, Default::default())?;
+            self.inner.put(dbi, key1, buf, WriteFlags::UPSERT)?;
         }
 
         Ok(())
@@ -306,6 +303,7 @@ impl HotKvWrite for Tx<RW> {
         table: &'static str,
         dual_key: Option<usize>,
         fixed_val: Option<usize>,
+        int_key: bool,
     ) -> Result<(), Self::Error> {
         let mut flags = DatabaseFlags::default();
 
@@ -320,6 +318,10 @@ impl HotKvWrite for Tx<RW> {
                 // DUPSORT without DUP_FIXED - variable value size
                 fsi = FixedSizeInfo::DupSort { key2_size };
             }
+        }
+
+        if int_key {
+            flags.set(reth_libmdbx::DatabaseFlags::INTEGER_KEY, true);
         }
 
         // no clone. sad.
@@ -344,6 +346,70 @@ impl HotKvWrite for Tx<RW> {
             .reserve(dbi, key_bytes, value.encoded_size(), WriteFlags::UPSERT)
             .map_err(MdbxError::Mdbx)
             .map(|mut reserved| value.encode_value_to(&mut reserved))
+    }
+
+    fn queue_put_many_dual<'a, 'b, 'c, T, I, J>(&self, groups: I) -> Result<(), Self::Error>
+    where
+        T: DualKey,
+        T::Key: 'a,
+        T::Key2: 'b,
+        T::Value: 'c,
+        I: IntoIterator<Item = (&'a T::Key, J)>,
+        J: IntoIterator<Item = (&'b T::Key2, &'c T::Value)>,
+    {
+        // Compile-time check - optimizer eliminates dead branch per table type
+        if !(T::IS_FIXED_VAL && T::DUAL_KEY) {
+            // Not a DUP_FIXED table - use default loop implementation
+            for (key1, entries) in groups {
+                for (key2, value) in entries {
+                    self.queue_put_dual::<T>(key1, key2, value)?;
+                }
+            }
+            return Ok(());
+        }
+
+        // Sizes known at compile time (monomorphizes per table)
+        let dual_key_size = T::DUAL_KEY_SIZE.unwrap();
+        let fixed_val_size = T::FIXED_VAL_SIZE.unwrap();
+        let entry_size = dual_key_size + fixed_val_size;
+
+        let mut cursor = self.new_cursor::<T>()?;
+        let mut key1_buf = [0u8; MAX_KEY_SIZE];
+        let mut key2_buf = [0u8; MAX_KEY_SIZE];
+
+        // Calculate max entries per page to bound buffer size
+        let page_size = self.inner.env().stat()?.page_size() as usize;
+        let max_entries_per_page = page_size / entry_size;
+        let mut buffer = Vec::with_capacity(max_entries_per_page * entry_size);
+
+        // Process each key1 group
+        for (key1, entries) in groups {
+            let key1_bytes = key1.encode_key(&mut key1_buf);
+            buffer.clear();
+            let mut entry_count = 0;
+
+            for (key2, value) in entries {
+                let key2_bytes = key2.encode_key(&mut key2_buf);
+                let value_bytes = value.encoded();
+                buffer.extend_from_slice(key2_bytes);
+                buffer.extend_from_slice(&value_bytes);
+                entry_count += 1;
+
+                // Flush when buffer reaches page capacity
+                if entry_count == max_entries_per_page {
+                    cursor.put_multiple_fixed(key1_bytes, &buffer, entry_count, false)?;
+                    buffer.clear();
+                    entry_count = 0;
+                }
+            }
+
+            // Flush remaining entries for this key1
+            if entry_count > 0 {
+                cursor.put_multiple_fixed(key1_bytes, &buffer, entry_count, false)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn raw_commit(self) -> Result<(), Self::Error> {

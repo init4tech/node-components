@@ -217,8 +217,9 @@ impl<U: HotKvWrite> HotKvWrite for RevmWrite<U> {
         table: &'static str,
         dual_key: Option<usize>,
         dual_fixed: Option<usize>,
+        int_key: bool,
     ) -> Result<(), Self::Error> {
-        self.writer.queue_raw_create(table, dual_key, dual_fixed)
+        self.writer.queue_raw_create(table, dual_key, dual_fixed, int_key)
     }
 
     fn raw_commit(self) -> Result<(), Self::Error> {

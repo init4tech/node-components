@@ -274,13 +274,16 @@ pub trait HotKvWrite: HotKvRead {
 
     /// Queue a raw create operation for a specific table.
     ///
-    /// This abstraction supports two table specializations:
+    /// This abstraction supports table specializations:
     /// 1. `dual_key_size` - whether the table is dual-keyed (i.e.,
     ///    `DUPSORT` in LMDB/MDBX). If so, the argument MUST be the
     ///    encoded size of the second key. If not, it MUST be `None`.
     /// 2. `fixed_val_size`: whether the table has fixed-size values.
     ///    If so, the argument MUST be the size of the fixed value.
     ///    If not, it MUST be `None`.
+    /// 3. `int_key`: whether the table uses an integer key (u32 or u64).
+    ///    If `true`, the backend MAY use optimizations like MDBX's
+    ///    `INTEGER_KEY` flag for native-endian key storage.
     ///
     /// Database implementations can use this information for optimizations.
     fn queue_raw_create(
@@ -288,6 +291,7 @@ pub trait HotKvWrite: HotKvRead {
         table: &'static str,
         dual_key_size: Option<usize>,
         fixed_val_size: Option<usize>,
+        int_key: bool,
     ) -> Result<(), Self::Error>;
 
     /// Traverse a specific table. Returns a mutable typed cursor wrapper.
@@ -332,6 +336,34 @@ pub trait HotKvWrite: HotKvRead {
         let value_bytes = value.encoded();
 
         self.queue_raw_put_dual(T::NAME, key1_bytes, key2_bytes, &value_bytes)
+    }
+
+    /// Queue many put operations for a dual-keyed table.
+    ///
+    /// Takes entries grouped by key1. For each key1, an iterator of (key2, value)
+    /// pairs is provided. This structure enables efficient bulk writes for backends
+    /// that support it (e.g., MDBX's `put_multiple`).
+    ///
+    /// **Recommendation**: For best performance, ensure entries within each key1
+    /// group are sorted by key2.
+    ///
+    /// The default implementation calls `queue_put_dual` in a loop.
+    /// Implementations MAY override this to apply optimizations.
+    fn queue_put_many_dual<'a, 'b, 'c, T, I, J>(&self, groups: I) -> Result<(), Self::Error>
+    where
+        T: DualKey,
+        T::Key: 'a,
+        T::Key2: 'b,
+        T::Value: 'c,
+        I: IntoIterator<Item = (&'a T::Key, J)>,
+        J: IntoIterator<Item = (&'b T::Key2, &'c T::Value)>,
+    {
+        for (key1, entries) in groups {
+            for (key2, value) in entries {
+                self.queue_put_dual::<T>(key1, key2, value)?;
+            }
+        }
+        Ok(())
     }
 
     /// Queue a delete operation for a specific table.
@@ -381,7 +413,7 @@ pub trait HotKvWrite: HotKvRead {
     where
         T: Table,
     {
-        self.queue_raw_create(T::NAME, T::DUAL_KEY_SIZE, T::FIXED_VAL_SIZE)
+        self.queue_raw_create(T::NAME, T::DUAL_KEY_SIZE, T::FIXED_VAL_SIZE, T::INT_KEY)
     }
 
     /// Queue clearing all entries in a specific table.
