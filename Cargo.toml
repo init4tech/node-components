@@ -34,7 +34,7 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.16.0-rc.5", path = "crates/blobber" }
+signet-blobber = { version = "0.16.0-rc.6", path = "crates/blobber" }
 signet-block-processor = { version = "0.16.0-rc.6", path = "crates/block-processor" }
 signet-db = { version = "0.16.0-rc.6", path = "crates/db" }
 signet-genesis = { version = "0.16.0-rc.6", path = "crates/genesis" }
