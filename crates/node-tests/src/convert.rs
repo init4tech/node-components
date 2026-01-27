@@ -71,7 +71,6 @@ impl ToRethPrimitive for signet_test_utils::chain::Chain {
             self.blocks.to_reth(),
             self.execution_outcome.to_reth(),
             Default::default(),
-            Default::default(),
         )
     }
 }

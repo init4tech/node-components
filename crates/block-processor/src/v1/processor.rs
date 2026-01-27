@@ -216,7 +216,6 @@ where
             provider.recovered_block_range(start..=current)?,
             net_outcome,
             Default::default(),
-            Default::default(),
         );
 
         Ok(Some(RuChain { inner, ru_info }))
