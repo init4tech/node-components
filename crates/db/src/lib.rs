@@ -35,6 +35,3 @@ pub use tables::{
 
 mod traits;
 pub use traits::{DbProviderExt, RuWriter};
-
-// TEMP: remove when reth @ 1.10.1 is released
-use vergen as _;

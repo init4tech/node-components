@@ -12,7 +12,7 @@ use reth::{
     providers::{
         BlockBodyIndicesProvider, BlockNumReader, BlockReader, BlockWriter, Chain, DBProvider,
         HistoryWriter, OriginalValuesKnown, ProviderError, ProviderResult, StageCheckpointWriter,
-        StateWriter, StaticFileProviderFactory, StaticFileWriter,
+        StateWriteConfig, StateWriter, StaticFileProviderFactory, StaticFileWriter,
     },
 };
 use reth_db::{
@@ -481,7 +481,7 @@ where
         // Update pipeline stages
         self.update_pipeline_stages(target, true)?;
 
-        let chain = Chain::new(blocks, execution_state, Default::default(), Default::default());
+        let chain = Chain::new(blocks, execution_state, Default::default());
 
         debug!("Succesfully reverted blocks and updated pipeline stages");
 
@@ -560,7 +560,7 @@ where
         let (plain_state, reverts) =
             execution_outcome.bundle().to_plain_state_and_reverts(is_value_known);
 
-        self.write_state_reverts(reverts, first_block)?;
+        self.write_state_reverts(reverts, first_block, StateWriteConfig::default())?;
         self.write_state_changes(plain_state)?;
 
         // Fetch the first transaction number for each block in the range
