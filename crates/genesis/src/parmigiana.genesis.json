@@ -50,7 +50,10 @@
             ],
             "wbtc": "0xfb29f7d7a4ce607d6038d44150315e5f69bea08a",
             "weth": "0xD1278f17e86071f1E658B656084c65b7FD3c90eF"
-          }
+          },
+          "startTimestamp": 1765226348,
+          "slotOffset": 0,
+          "slotDuration": 12
         },
         "rollup": {
           "chainId": 88888,
