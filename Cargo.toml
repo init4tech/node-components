@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.16.0-rc.5"
+version = "0.16.0-rc.6"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -35,14 +35,14 @@ incremental = false
 
 [workspace.dependencies]
 signet-blobber = { version = "0.16.0-rc.5", path = "crates/blobber" }
-signet-block-processor = { version = "0.16.0-rc.5", path = "crates/block-processor" }
-signet-db = { version = "0.16.0-rc.5", path = "crates/db" }
-signet-genesis = { version = "0.16.0-rc.5", path = "crates/genesis" }
-signet-node = { version = "0.16.0-rc.5", path = "crates/node" }
-signet-node-config = { version = "0.16.0-rc.5", path = "crates/node-config" }
-signet-node-tests = { version = "0.16.0-rc.5", path = "crates/node-tests" }
-signet-node-types = { version = "0.16.0-rc.5", path = "crates/node-types" }
-signet-rpc = { version = "0.16.0-rc.5", path = "crates/rpc" }
+signet-block-processor = { version = "0.16.0-rc.6", path = "crates/block-processor" }
+signet-db = { version = "0.16.0-rc.6", path = "crates/db" }
+signet-genesis = { version = "0.16.0-rc.6", path = "crates/genesis" }
+signet-node = { version = "0.16.0-rc.6", path = "crates/node" }
+signet-node-config = { version = "0.16.0-rc.6", path = "crates/node-config" }
+signet-node-tests = { version = "0.16.0-rc.6", path = "crates/node-tests" }
+signet-node-types = { version = "0.16.0-rc.6", path = "crates/node-types" }
+signet-rpc = { version = "0.16.0-rc.6", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.18.0-rc.1", features = ["alloy"] }
 
