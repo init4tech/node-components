@@ -23,7 +23,7 @@ use tracing::Instrument;
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct TraceBlockParams<T>(T, #[serde(default)] Option<GethDebugTracingOptions>);
 
-/// Params type for `debug_traceTransaction`.`
+/// Params type for `debug_traceTransaction`.
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct TraceTransactionParams(B256, #[serde(default)] Option<GethDebugTracingOptions>);
 

@@ -2,7 +2,7 @@ use crate::{DecodeError, FetchError};
 use alloy::{eips::eip2718::Eip2718Error, primitives::B256};
 use reth::transaction_pool::BlobStoreError;
 
-/// Result using [`BlobFetcherError`] as the default error type.
+/// Result using [`BlobberError`] as the default error type.
 pub type BlobberResult<T, E = BlobberError> = std::result::Result<T, E>;
 
 /// Blob fetching errors

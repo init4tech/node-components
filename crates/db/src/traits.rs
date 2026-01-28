@@ -1,6 +1,8 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
 use alloy::primitives::{B256, BlockNumber};
 use itertools::Itertools;
+#[cfg(doc)]
+use reth::providers::DatabaseProviderRW;
 use reth::providers::{OriginalValuesKnown, ProviderResult};
 use reth_db::models::StoredBlockBodyIndices;
 use signet_evm::BlockResult;

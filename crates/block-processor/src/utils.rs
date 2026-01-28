@@ -1,7 +1,7 @@
 use reth_chainspec::EthereumHardforks;
 use trevm::revm::primitives::hardfork::SpecId;
 
-/// Equivalent to [`reth_evm_ethereum::revm_spec`], however, always starts at
+/// Equivalent to `reth_evm_ethereum::revm_spec`, however, always starts at
 /// [`SpecId::PRAGUE`] and transitions to [`SpecId::OSAKA`].
 pub fn revm_spec(chain_spec: &reth::chainspec::ChainSpec, timestamp: u64) -> SpecId {
     if chain_spec.is_amsterdam_active_at_timestamp(timestamp) {
