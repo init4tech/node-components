@@ -77,7 +77,7 @@ pub struct SignetTestContext {
     /// The alias oracle used by the Signet Node instance.
     pub alias_oracle: Arc<Mutex<HashSet<Address>>>,
 
-    /// Test addresses, copied from [`signet_types::test_utils::TEST_USERS`] for
+    /// Test addresses, copied from [`signet_test_utils::users::TEST_USERS`] for
     /// convenience
     pub addresses: [Address; 10],
 }

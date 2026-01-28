@@ -3,6 +3,8 @@ use alloy::{
     primitives::{Address, map::HashSet},
 };
 use eyre::OptionExt;
+#[cfg(doc)]
+use reth::providers::StateProvider;
 use reth::providers::{StateProviderBox, StateProviderFactory};
 use std::sync::{Arc, Mutex};
 

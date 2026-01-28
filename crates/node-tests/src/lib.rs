@@ -16,7 +16,7 @@ pub mod constants;
 
 /// Test context.
 mod context;
-pub use context::SignetTestContext;
+pub use context::{BalanceChecks, NonceChecks, SignetTestContext};
 
 /// Bespoke conversion utilities for converting between alloy and reth types.
 pub mod convert;
