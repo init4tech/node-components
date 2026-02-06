@@ -219,16 +219,12 @@ impl FromStr for GenesisSpec {
 }
 
 impl FromEnvVar for GenesisSpec {
-    type Error = <GenesisSpec as FromStr>::Err;
-
-    fn from_env_var(env_var: &str) -> Result<Self, FromEnvErr<Self::Error>> {
+    fn from_env_var(env_var: &str) -> Result<Self, FromEnvErr> {
         parse_env_if_present(env_var)
     }
 }
 
 impl FromEnv for GenesisSpec {
-    type Error = <GenesisSpec as FromStr>::Err;
-
     fn inventory() -> Vec<&'static init4_bin_base::utils::from_env::EnvItemInfo> {
         vec![
             &EnvItemInfo {
@@ -249,7 +245,7 @@ impl FromEnv for GenesisSpec {
         ]
     }
 
-    fn from_env() -> Result<Self, FromEnvErr<Self::Error>> {
+    fn from_env() -> Result<Self, FromEnvErr> {
         // First try to parse from CHAIN_NAME
         if let Ok(spec) = parse_env_if_present::<KnownChains>("CHAIN_NAME").map(Into::into) {
             return Ok(spec);
