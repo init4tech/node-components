@@ -374,8 +374,8 @@ where
         // Load the safe block hash for both the host and the rollup.
         // The safe block height of the rollup CANNOT be higher than the latest ru height,
         // as we've already processed all the blocks up to the latest ru height.
-        let PairedHeights { host: _, rollup: safe_ru_height } =
-            self.load_safe_block_heights(ru_height)?;
+        let safe_heights = self.load_safe_block_heights(ru_height)?;
+        let safe_ru_height = safe_heights.rollup;
         let safe_ru_block_header = self
             .ru_provider
             .sealed_header(safe_ru_height)?
@@ -417,8 +417,17 @@ where
         //
         // To do this, we grab the finalized host header to get its height and hash,
         // so we can send the corresponding [`ExExEvent`].
+        //
+        // If finalization isn't available, we fall back to the safe height.
+        // This ensures the WAL is cleared even on networks without finality
+        // reporting (e.g., testnets where the beacon client isn't synced).
         if finalized_ru_block_hash != genesis_ru_hash {
             self.update_highest_processed_height(finalized_heights.host)?;
+        } else if safe_ru_block_hash != genesis_ru_hash {
+            // Fallback: use safe height when finalized isn't available.
+            // Safe blocks are unlikely to reorg, so this is a reasonable
+            // threshold for clearing the WAL.
+            self.update_highest_processed_height(safe_heights.host)?;
         }
 
         // Update the RPC's forkchoice timestamp.
