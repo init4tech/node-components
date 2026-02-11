@@ -211,7 +211,7 @@ where
         // duration metrics have been removed, and the implementation has been
         // modified to work with a single signet block.
         //
-        // last reviewed at tag v1.9.0
+        // last reviewed at tag v1.10.1
 
         let from_block = body.0;
         let sf = self.static_file_provider();

@@ -11,12 +11,12 @@ use alloy::{
         Header,
         eth::{Filter, FilterBlockOption, Log},
     },
-    sol_types::SolEvent,
+    sol_types::{SolCall, SolEvent},
 };
 use reth::providers::{BlockNumReader, BlockReader, TransactionsProvider};
 use serial_test::serial;
 use signet_node_tests::{
-    SignetTestContext,
+    HostBlockSpec, SignetTestContext,
     constants::TEST_CONSTANTS,
     rpc_test,
     types::{Counter, TestCounterInstance},
@@ -161,9 +161,11 @@ async fn test_eth_getTransactionReceipt(ctx: &SignetTestContext, contract: &Test
 // - eth_getFilterChanges
 // - eth_newFilter
 // - eth_getLogs
+// - eth_getTransactionByHash (for host Transact system transactions)
 async fn test_stateful_rpc_calls() {
     rpc_test(|ctx, contract| async move {
         let deployer = ctx.addresses[0];
+        let transact_sender = ctx.addresses[1];
 
         let (_, _, nonce, block_filter, event_filter) = tokio::join!(
             withBlock_pre(&ctx, &contract),
@@ -176,8 +178,21 @@ async fn test_stateful_rpc_calls() {
         let latest_block = ctx.alloy_provider.get_block_number().await.unwrap();
         tracing::info!(latest_block, "latest block");
 
+        // Build a block that contains both an alloy tx AND a host Transact event
         let tx = contract.increment().from(deployer).into_transaction_request();
-        let _ = ctx.process_alloy_tx(&tx).await.unwrap();
+        let filled_tx = ctx.fill_alloy_tx(&tx).await.unwrap();
+
+        let ru_block = ctx.start_ru_block().alloy_tx(&filled_tx);
+        let host_block = HostBlockSpec::new(ctx.constants())
+            .simple_transact(
+                transact_sender,
+                *contract.address(),
+                Counter::incrementCall::SELECTOR,
+                0,
+            )
+            .submit_block(ru_block);
+
+        ctx.process_block(host_block).await.unwrap();
 
         tokio::join!(
             withBlock_post(&ctx, &contract),
@@ -186,6 +201,7 @@ async fn test_stateful_rpc_calls() {
             newBlockFilter_post(&ctx, block_filter),
             newFilter_post(&ctx, &contract, event_filter),
             getLogs_post(&ctx, &contract),
+            getTransactionByHash_systemTx_post(&ctx, &contract, transact_sender),
         );
 
         ctx
@@ -207,10 +223,53 @@ async fn getLogs_post(ctx: &SignetTestContext, contract: &TestCounterInstance) {
         .await
         .unwrap();
 
-    assert_eq!(logs.len(), 1);
+    // Two logs: one from the host transact, one from the alloy tx
+    assert_eq!(logs.len(), 2);
     let log_inner = &logs[0].inner;
     assert_eq!(log_inner.address, *contract.address());
+    // First increment is from the host transact (system tx runs first)
     assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(1)]);
+    // Second increment is from the alloy tx
+    let log_inner = &logs[1].inner;
+    assert_eq!(log_inner.address, *contract.address());
+    assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(2)]);
+}
+
+async fn getTransactionByHash_systemTx_post(
+    ctx: &SignetTestContext,
+    contract: &TestCounterInstance,
+    transact_sender: Address,
+) {
+    // Retrieve the block with full transactions
+    let block = ctx
+        .alloy_provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .full()
+        .await
+        .unwrap()
+        .unwrap();
+
+    let txns = block.transactions.as_transactions().unwrap();
+    // Block should have 2 transactions: system tx (from host transact) and alloy tx
+    assert_eq!(txns.len(), 2);
+
+    // The system transaction should be last
+    let system_tx = &txns[1];
+    assert_eq!(system_tx.from(), transact_sender);
+    assert_eq!(system_tx.to(), Some(*contract.address()));
+    assert_eq!(system_tx.value(), U256::ZERO);
+    assert_eq!(system_tx.input(), &Bytes::from(Counter::incrementCall::SELECTOR));
+
+    // Verify getTransactionByHash returns the same transaction
+    let tx_hash = system_tx.tx_hash();
+    let rpc_tx = ctx.alloy_provider.get_transaction_by_hash(tx_hash).await.unwrap().unwrap();
+    assert_eq!(rpc_tx.tx_hash(), tx_hash);
+    assert_eq!(rpc_tx.from(), transact_sender);
+    assert_eq!(rpc_tx.to(), Some(*contract.address()));
+    assert_eq!(rpc_tx.value(), U256::ZERO);
+    assert_eq!(rpc_tx.input(), &Bytes::from(Counter::incrementCall::SELECTOR));
+    assert_eq!(rpc_tx.block_number, Some(block.header.number));
+    assert_eq!(rpc_tx.transaction_index, Some(1));
 }
 
 async fn newFilter_pre(ctx: &SignetTestContext, contract: &TestCounterInstance) -> U256 {
@@ -226,10 +285,15 @@ async fn newFilter_pre(ctx: &SignetTestContext, contract: &TestCounterInstance) 
 
 async fn newFilter_post(ctx: &SignetTestContext, contract: &TestCounterInstance, filter_id: U256) {
     let logs: Vec<Log<LogData>> = ctx.alloy_provider.get_filter_changes(filter_id).await.unwrap();
-    assert_eq!(logs.len(), 1);
+    assert_eq!(logs.len(), 2);
     let log_inner = &logs[0].inner;
     assert_eq!(log_inner.address, *contract.address());
     assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(1)]);
+    assert_eq!(log_inner.data.data, Bytes::new());
+
+    let log_inner = &logs[1].inner;
+    assert_eq!(log_inner.address, *contract.address());
+    assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(2)]);
     assert_eq!(log_inner.data.data, Bytes::new());
 }
 
@@ -241,8 +305,6 @@ async fn newBlockFilter_post(ctx: &SignetTestContext, filter_id: U256) {
     let blocks: Vec<B256> = ctx.alloy_provider.get_filter_changes(filter_id).await.unwrap();
     let latest_block = ctx.factory.last_block_number().unwrap();
     let latest_hash = ctx.factory.block(latest_block.into()).unwrap().unwrap().hash_slow();
-
-    tracing::info!(latest_block, "huh");
 
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0], latest_hash);
@@ -269,10 +331,10 @@ async fn getStorageAt_pre(ctx: &SignetTestContext, contract: &TestCounterInstanc
 }
 
 async fn getStorageAt_post(ctx: &SignetTestContext, contract: &TestCounterInstance) {
-    // storage updated
+    // storage updated 2x
     assert_eq!(
         ctx.alloy_provider.get_storage_at(*contract.address(), U256::ZERO).await.unwrap(),
-        U256::from(1)
+        U256::from(2)
     );
 }
 
@@ -397,10 +459,10 @@ async fn withBlock_post(ctx: &SignetTestContext, contract: &TestCounterInstance)
     assert_eq!(contract.count().call().block(1.into()).await.unwrap(), U256::ZERO);
     assert_eq!(contract.count().call().block(bh_1.into()).await.unwrap(), U256::ZERO);
 
-    // The call at block 2 should return 1
-    assert_eq!(contract.count().call().await.unwrap(), U256::from(1));
-    assert_eq!(contract.count().call().block(2.into()).await.unwrap(), U256::from(1));
-    assert_eq!(contract.count().call().block(bh_2.into()).await.unwrap(), U256::from(1));
+    // The call at block 2 should return 2
+    assert_eq!(contract.count().call().await.unwrap(), U256::from(2));
+    assert_eq!(contract.count().call().block(2.into()).await.unwrap(), U256::from(2));
+    assert_eq!(contract.count().call().block(bh_2.into()).await.unwrap(), U256::from(2));
 }
 
 #[ignore = "This test is slow and should not run by default"]
@@ -556,4 +618,84 @@ async fn test_rpc_filter_edge_cases() {
         ctx
     })
     .await;
+}
+
+// -- SYSTEM TRANSACTION HASH CONSISTENCY TESTS --
+// These tests verify that system transaction hashes are properly indexed
+// and can be looked up via eth_getTransactionByHash
+
+#[serial]
+#[tokio::test]
+async fn test_system_tx_hash_consistency() {
+    rpc_test(|ctx, contract| async move {
+        let transact_sender = ctx.addresses[1];
+
+        // Test: Two consecutive blocks with system transactions
+
+        // Block 2: Single system tx
+        let host_block = HostBlockSpec::new(ctx.constants()).simple_transact(
+            transact_sender,
+            *contract.address(),
+            Counter::incrementCall::SELECTOR,
+            0,
+        );
+        ctx.process_block(host_block).await.unwrap();
+        verify_all_txs_in_block(&ctx, 2).await;
+
+        // Block 3: Another single system tx (consecutive system tx blocks)
+        let host_block = HostBlockSpec::new(ctx.constants()).simple_transact(
+            transact_sender,
+            *contract.address(),
+            Counter::incrementCall::SELECTOR,
+            0,
+        );
+        ctx.process_block(host_block).await.unwrap();
+        verify_all_txs_in_block(&ctx, 3).await;
+
+        ctx
+    })
+    .await;
+}
+
+/// Verify all transactions in a block can be looked up by hash
+async fn verify_all_txs_in_block(ctx: &SignetTestContext, block_number: u64) {
+    // Get block with full transactions via RPC
+    let block =
+        ctx.alloy_provider.get_block_by_number(block_number.into()).full().await.unwrap().unwrap();
+
+    let txs = block.transactions.as_transactions().unwrap();
+
+    // Also get transactions directly from DB
+    let db_txs = ctx.factory.transactions_by_block(block_number.into()).unwrap().unwrap();
+
+    assert_eq!(txs.len(), db_txs.len(), "Transaction count mismatch in block {}", block_number);
+
+    for (idx, (rpc_tx, db_tx)) in txs.iter().zip(db_txs.iter()).enumerate() {
+        let rpc_hash = rpc_tx.tx_hash();
+        let db_hash = *db_tx.hash();
+
+        // Verify RPC and DB hashes match
+        assert_eq!(
+            rpc_hash, db_hash,
+            "Hash mismatch between RPC and DB for block {} tx {}",
+            block_number, idx
+        );
+
+        // Verify hash lookup works via RPC
+        let looked_up = ctx.alloy_provider.get_transaction_by_hash(rpc_hash).await.unwrap();
+        assert!(
+            looked_up.is_some(),
+            "RPC hash lookup failed: block={block_number}, idx={idx}, hash={rpc_hash}",
+        );
+
+        // Verify hash lookup works via DB provider
+        let provider_lookup = ctx.factory.provider().unwrap().transaction_by_hash(db_hash).unwrap();
+        assert!(
+            provider_lookup.is_some(),
+            "DB provider hash lookup failed: block={}, idx={}, hash={}",
+            block_number,
+            idx,
+            db_hash
+        );
+    }
 }
