@@ -43,6 +43,7 @@ signet-node-config = { version = "0.16.0-rc.7", path = "crates/node-config" }
 signet-node-tests = { version = "0.16.0-rc.7", path = "crates/node-tests" }
 signet-node-types = { version = "0.16.0-rc.7", path = "crates/node-types" }
 signet-rpc = { version = "0.16.0-rc.7", path = "crates/rpc" }
+signet-rpc-storage = { version = "0.16.0-rc.7", path = "crates/rpc-storage" }
 
 init4-bin-base = { version = "0.18.0-rc.8", features = ["alloy"] }
 
@@ -55,6 +56,10 @@ signet-tx-cache = "0.16.0-rc.8"
 signet-types = "0.16.0-rc.8"
 signet-zenith = "0.16.0-rc.8"
 signet-journal = "0.16.0-rc.8"
+signet-storage = "0.1.0"
+signet-cold = "0.1.0"
+signet-hot = "0.1.0"
+signet-storage-types = "0.1.0"
 
 # ajj
 ajj = { version = "0.3.4" }

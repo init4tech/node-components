@@ -1,0 +1,29 @@
+[package]
+name = "signet-rpc-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Ethereum JSON-RPC server backed by signet-storage"
+
+[dependencies]
+signet-storage.workspace = true
+signet-cold.workspace = true
+signet-hot.workspace = true
+signet-storage-types.workspace = true
+signet-evm.workspace = true
+trevm = { workspace = true, features = ["call", "estimate_gas"] }
+signet-types.workspace = true
+signet-tx-cache.workspace = true
+alloy.workspace = true
+ajj.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
