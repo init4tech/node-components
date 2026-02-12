@@ -261,7 +261,7 @@ fn build_receipt_inner(
 }
 
 /// Wrap a receipt in the appropriate [`ReceiptEnvelope`] variant.
-fn build_receipt_envelope(
+const fn build_receipt_envelope(
     receipt: ReceiptWithBloom<alloy::consensus::Receipt<Log>>,
     tx_type: alloy::consensus::TxType,
 ) -> ReceiptEnvelope<Log> {
@@ -271,7 +271,5 @@ fn build_receipt_envelope(
         alloy::consensus::TxType::Eip1559 => ReceiptEnvelope::Eip1559(receipt),
         alloy::consensus::TxType::Eip4844 => ReceiptEnvelope::Eip4844(receipt),
         alloy::consensus::TxType::Eip7702 => ReceiptEnvelope::Eip7702(receipt),
-        #[allow(unreachable_patterns)]
-        _ => unreachable!(),
     }
 }
