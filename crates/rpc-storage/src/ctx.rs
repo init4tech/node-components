@@ -1,7 +1,7 @@
 //! RPC context wrapping [`UnifiedStorage`].
 
 use crate::{
-    EthError,
+    EthError, StorageRpcConfig,
     resolve::{BlockTags, ResolveError},
 };
 use alloy::eips::{BlockId, BlockNumberOrTag};
@@ -12,6 +12,7 @@ use signet_storage::UnifiedStorage;
 use signet_tx_cache::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use trevm::revm::database::DBErrorMarker;
 use trevm::revm::database::StateBuilder;
 
@@ -35,7 +36,7 @@ pub(crate) struct EvmBlockContext<Db> {
 /// # Construction
 ///
 /// ```ignore
-/// let ctx = StorageRpcCtx::new(storage, constants, tags, Some(tx_cache), 30_000_000);
+/// let ctx = StorageRpcCtx::new(storage, constants, tags, Some(tx_cache), StorageRpcConfig::default());
 /// ```
 #[derive(Debug)]
 pub struct StorageRpcCtx<H: HotKv> {
@@ -54,7 +55,8 @@ struct StorageRpcCtxInner<H: HotKv> {
     constants: SignetSystemConstants,
     tags: BlockTags,
     tx_cache: Option<TxCache>,
-    rpc_gas_cap: u64,
+    config: StorageRpcConfig,
+    tracing_semaphore: Arc<Semaphore>,
 }
 
 impl<H: HotKv> StorageRpcCtx<H> {
@@ -64,10 +66,18 @@ impl<H: HotKv> StorageRpcCtx<H> {
         constants: SignetSystemConstants,
         tags: BlockTags,
         tx_cache: Option<TxCache>,
-        rpc_gas_cap: u64,
+        config: StorageRpcConfig,
     ) -> Self {
+        let tracing_semaphore = Arc::new(Semaphore::new(config.max_tracing_requests));
         Self {
-            inner: Arc::new(StorageRpcCtxInner { storage, constants, tags, tx_cache, rpc_gas_cap }),
+            inner: Arc::new(StorageRpcCtxInner {
+                storage,
+                constants,
+                tags,
+                tx_cache,
+                config,
+                tracing_semaphore,
+            }),
         }
     }
 
@@ -101,9 +111,20 @@ impl<H: HotKv> StorageRpcCtx<H> {
         self.inner.constants.ru_chain_id()
     }
 
-    /// Get the RPC gas cap.
-    pub fn rpc_gas_cap(&self) -> u64 {
-        self.inner.rpc_gas_cap
+    /// Access the RPC configuration.
+    pub fn config(&self) -> &StorageRpcConfig {
+        &self.inner.config
+    }
+
+    /// Acquire a permit from the tracing semaphore.
+    ///
+    /// Limits concurrent tracing/debug requests. Callers should hold
+    /// the permit for the duration of their tracing operation.
+    pub async fn acquire_tracing_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
+        Arc::clone(&self.inner.tracing_semaphore)
+            .acquire_owned()
+            .await
+            .expect("tracing semaphore closed")
     }
 
     /// Access the optional tx cache.

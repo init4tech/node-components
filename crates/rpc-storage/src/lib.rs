@@ -11,6 +11,9 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod config;
+pub use config::StorageRpcConfig;
+
 mod ctx;
 pub use ctx::StorageRpcCtx;
 
