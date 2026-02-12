@@ -1,7 +1,7 @@
 //! ETH namespace RPC endpoint implementations.
 
 use crate::{
-    ctx::StorageRpcCtx,
+    ctx::{EvmBlockContext, StorageRpcCtx},
     eth::helpers::{
         AddrWithBlock, BlockParams, BlockRangeInclusiveIter, CfgFiller, StorageAtArgs, TxParams,
         await_handler, build_receipt, build_receipt_from_parts, build_rpc_transaction,
@@ -507,18 +507,7 @@ where
     let span = trace_span!("eth_call", block_id = %id);
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = response_tri!(resolve_block_id(id, ctx.tags(), &cold).await);
-
-        let header = response_tri!(cold.get_header_by_number(height).await);
-        let Some(header) = header else {
-            return ResponsePayload::internal_error_with_message_and_obj(
-                "block not found".into(),
-                id.to_string().into(),
-            );
-        };
-
-        let db = response_tri!(ctx.revm_state_at_height(height));
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id).await);
 
         let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))
@@ -576,18 +565,7 @@ where
     let span = trace_span!("eth_estimateGas", block_id = %id);
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = response_tri!(resolve_block_id(id, ctx.tags(), &cold).await);
-
-        let header = response_tri!(cold.get_header_by_number(height).await);
-        let Some(header) = header else {
-            return ResponsePayload::internal_error_with_message_and_obj(
-                "block not found".into(),
-                id.to_string().into(),
-            );
-        };
-
-        let db = response_tri!(ctx.revm_state_at_height(height));
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id).await);
 
         let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))
