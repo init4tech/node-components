@@ -167,6 +167,16 @@ impl SignetTestContext {
         (this, node)
     }
 
+    /// Start a new rollup block spec
+    pub fn start_ru_block(&self) -> RuBlockSpec {
+        RuBlockSpec::new(self.constants.clone())
+    }
+
+    /// Start a new host block spec
+    pub fn start_host_block(&self) -> HostBlockSpec {
+        HostBlockSpec::new(self.constants.clone())
+    }
+
     /// Set whether an address should be aliased. This will be propagated to
     /// the running node.
     pub fn set_should_alias(&self, address: Address, should_alias: bool) {
@@ -345,8 +355,8 @@ impl SignetTestContext {
     ) -> eyre::Result<(TxEnvelope, TransactionReceipt)> {
         let tx = self.fill_alloy_tx(tx).await?;
 
-        let ru_block = RuBlockSpec::new(self.constants.clone()).alloy_tx(&tx);
-        let host_block = HostBlockSpec::new(self.constants.clone()).submit_block(ru_block);
+        let ru_block = self.start_ru_block().alloy_tx(&tx);
+        let host_block = self.start_host_block().submit_block(ru_block);
 
         self.process_block(host_block).await?;
 
