@@ -1,7 +1,12 @@
 //! ETH namespace RPC router backed by storage.
 
 mod endpoints;
-use endpoints::*;
+use endpoints::{
+    addr_tx_count, balance, block, block_number, block_receipts, block_tx_count, call, chain_id,
+    code_at, estimate_gas, get_logs, header_by, not_supported, raw_transaction_by_hash,
+    raw_tx_by_block_and_index, send_raw_transaction, storage_at, transaction_by_hash,
+    transaction_receipt, tx_by_block_and_index,
+};
 
 mod error;
 pub use error::EthError;

@@ -1,6 +1,10 @@
 //! RPC context wrapping [`UnifiedStorage`].
 
-use crate::resolve::BlockTags;
+use crate::{
+    EthError,
+    resolve::{BlockTags, resolve_block_number_or_tag},
+};
+use alloy::eips::BlockId;
 use signet_cold::ColdStorageReadHandle;
 use signet_hot::HotKv;
 use signet_hot::model::{HotKvRead, RevmRead};
@@ -10,6 +14,18 @@ use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
 use trevm::revm::database::DBErrorMarker;
 use trevm::revm::database::StateBuilder;
+
+/// Resolved block context for EVM execution.
+///
+/// Contains the header and a revm-compatible database snapshot at the
+/// resolved block height, ready for use with `signet_evm`.
+#[derive(Debug)]
+pub(crate) struct EvmBlockContext<Db> {
+    /// The resolved block header.
+    pub header: alloy::consensus::Header,
+    /// The revm database at the resolved height.
+    pub db: trevm::revm::database::State<Db>,
+}
 
 /// RPC context backed by [`UnifiedStorage`].
 ///
@@ -111,15 +127,31 @@ impl<H: HotKv> StorageRpcCtx<H> {
         Ok(StateBuilder::new_with_database(revm_read).build())
     }
 
-    /// Create a revm-compatible database at the current tip.
-    pub fn revm_state(
+    /// Resolve a [`BlockId`] to a header and revm database in one pass.
+    ///
+    /// For hash-based IDs, fetches the header directly by hash. For
+    /// tag/number-based IDs, resolves the tag then fetches the header by
+    /// number. This avoids a redundant header lookup that would occur if
+    /// resolving to a block number first.
+    pub(crate) async fn resolve_evm_block(
         &self,
-    ) -> signet_storage::StorageResult<trevm::revm::database::State<RevmRead<H::RoTx>>>
+        id: BlockId,
+    ) -> Result<EvmBlockContext<RevmRead<H::RoTx>>, EthError>
     where
         H::RoTx: Send + Sync,
         <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     {
-        let revm_read = self.inner.storage.revm_reader()?;
-        Ok(StateBuilder::new_with_database(revm_read).build())
+        let cold = self.cold();
+        let header = match id {
+            BlockId::Hash(h) => cold.get_header_by_hash(h.block_hash).await?,
+            BlockId::Number(tag) => {
+                let height = resolve_block_number_or_tag(tag, self.tags())?;
+                cold.get_header_by_number(height).await?
+            }
+        }
+        .ok_or(EthError::BlockNotFound(id))?;
+
+        let db = self.revm_state_at_height(header.number)?;
+        Ok(EvmBlockContext { header, db })
     }
 }
