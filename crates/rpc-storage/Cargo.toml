@@ -27,3 +27,15 @@ serde.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util = "0.7"
+signet-cold = { workspace = true, features = ["test-utils"] }
+signet-hot = { workspace = true, features = ["test-utils"] }
+signet-storage.workspace = true
+signet-storage-types.workspace = true
+signet-constants.workspace = true
+alloy.workspace = true
+serde_json.workspace = true
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http = "1"
+trevm.workspace = true
