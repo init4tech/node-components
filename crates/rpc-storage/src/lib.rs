@@ -24,7 +24,6 @@ pub use eth::EthError;
 pub fn eth<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
     H: signet_hot::HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as signet_hot::model::HotKvRead>::Error: trevm::revm::database::DBErrorMarker,
 {
     eth::eth()

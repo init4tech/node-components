@@ -4,11 +4,7 @@
 //! and Finalized block numbers. The RPC context owner is responsible for
 //! updating these as the chain progresses.
 
-use alloy::{
-    eips::{BlockId, BlockNumberOrTag},
-    primitives::B256,
-};
-use signet_cold::ColdStorageReadHandle;
+use alloy::primitives::B256;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -87,43 +83,4 @@ pub enum ResolveError {
     /// Block hash not found.
     #[error("block hash not found: {0}")]
     HashNotFound(B256),
-}
-
-/// Resolve a [`BlockId`] to a block number.
-///
-/// - `Latest` / `Pending` → `tags.latest()`
-/// - `Safe` → `tags.safe()`
-/// - `Finalized` → `tags.finalized()`
-/// - `Earliest` → `0`
-/// - `Number(n)` → `n`
-/// - `Hash(h)` → cold storage header lookup → `header.number`
-pub(crate) async fn resolve_block_id(
-    id: BlockId,
-    tags: &BlockTags,
-    cold: &ColdStorageReadHandle,
-) -> Result<u64, ResolveError> {
-    match id {
-        BlockId::Number(tag) => resolve_block_number_or_tag(tag, tags),
-        BlockId::Hash(h) => {
-            let header = cold
-                .get_header_by_hash(h.block_hash)
-                .await?
-                .ok_or(ResolveError::HashNotFound(h.block_hash))?;
-            Ok(header.number)
-        }
-    }
-}
-
-/// Resolve a [`BlockNumberOrTag`] to a block number (sync, no cold lookup needed).
-pub(crate) fn resolve_block_number_or_tag(
-    tag: BlockNumberOrTag,
-    tags: &BlockTags,
-) -> Result<u64, ResolveError> {
-    Ok(match tag {
-        BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => tags.latest(),
-        BlockNumberOrTag::Safe => tags.safe(),
-        BlockNumberOrTag::Finalized => tags.finalized(),
-        BlockNumberOrTag::Earliest => 0,
-        BlockNumberOrTag::Number(n) => n,
-    })
 }

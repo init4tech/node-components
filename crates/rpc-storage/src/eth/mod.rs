@@ -23,7 +23,6 @@ use trevm::revm::database::DBErrorMarker;
 pub(crate) fn eth<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     ajj::Router::new()
