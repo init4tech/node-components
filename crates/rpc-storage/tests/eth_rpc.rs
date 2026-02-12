@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use signet_cold::{BlockData, ColdStorageHandle, ColdStorageTask, mem::MemColdBackend};
 use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
-use signet_rpc_storage::{BlockTags, StorageRpcCtx};
+use signet_rpc_storage::{BlockTags, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
 use signet_storage_types::Receipt;
 use tokio_util::sync::CancellationToken;
@@ -44,7 +44,8 @@ impl TestHarness {
         let storage = UnifiedStorage::new(hot.clone(), cold.clone());
         let constants = SignetSystemConstants::test();
         let tags = BlockTags::new(latest, latest.saturating_sub(2), 0);
-        let ctx = StorageRpcCtx::new(storage, constants, tags.clone(), None, 30_000_000);
+        let ctx =
+            StorageRpcCtx::new(storage, constants, tags.clone(), None, StorageRpcConfig::default());
         let app = signet_rpc_storage::eth::<MemKv>().into_axum("/").with_state(ctx);
 
         Self { app, cold, hot, tags, _cancel: cancel }

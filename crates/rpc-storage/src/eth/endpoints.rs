@@ -481,7 +481,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let max_gas = ctx.rpc_gas_cap();
+    let max_gas = ctx.config().rpc_gas_cap;
     normalize_gas_stateless(&mut request, max_gas);
 
     let id = block.unwrap_or(BlockId::latest());
@@ -538,7 +538,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let max_gas = ctx.rpc_gas_cap();
+    let max_gas = ctx.config().rpc_gas_cap;
     normalize_gas_stateless(&mut request, max_gas);
 
     let id = block.unwrap_or(BlockId::pending());
@@ -617,9 +617,6 @@ where
 // Logs
 // ---------------------------------------------------------------------------
 
-/// Maximum number of blocks per `eth_getLogs` range query.
-const MAX_BLOCKS_PER_FILTER: u64 = 10_000;
-
 /// Maximum headers fetched per batch when scanning bloom filters.
 const MAX_HEADERS_RANGE: u64 = 1_000;
 
@@ -672,8 +669,9 @@ where
                 if from > to {
                     return Err("fromBlock must not exceed toBlock".to_string());
                 }
-                if to - from > MAX_BLOCKS_PER_FILTER {
-                    return Err(format!("query exceeds max block range ({MAX_BLOCKS_PER_FILTER})"));
+                let max_blocks = ctx.config().max_blocks_per_filter;
+                if to - from > max_blocks {
+                    return Err(format!("query exceeds max block range ({max_blocks})"));
                 }
 
                 let mut all_logs = Vec::new();
@@ -709,6 +707,13 @@ where
                         let logs =
                             collect_matching_logs(&header, block_hash, &txs, &receipts, &filter);
                         all_logs.extend(logs);
+
+                        let max_logs = ctx.config().max_logs_per_response;
+                        if max_logs > 0 && all_logs.len() > max_logs {
+                            return Err(format!(
+                                "query exceeds max logs per response ({max_logs})"
+                            ));
+                        }
                     }
                 }
 
