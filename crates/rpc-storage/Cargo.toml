@@ -18,12 +18,17 @@ signet-evm.workspace = true
 trevm = { workspace = true, features = ["call", "estimate_gas"] }
 signet-types.workspace = true
 signet-tx-cache.workspace = true
+signet-bundle.workspace = true
 alloy.workspace = true
 ajj.workspace = true
 tokio.workspace = true
+tokio-util = "0.7"
 tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+dashmap = "6.1.0"
+revm-inspectors.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

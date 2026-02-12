@@ -2,6 +2,7 @@
 
 use crate::{
     EthError, StorageRpcConfig,
+    interest::{FilterManager, NewBlockNotification, SubscriptionManager},
     resolve::{BlockTags, ResolveError},
 };
 use alloy::eips::{BlockId, BlockNumberOrTag};
@@ -12,7 +13,7 @@ use signet_storage::UnifiedStorage;
 use signet_tx_cache::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, broadcast};
 use trevm::revm::database::DBErrorMarker;
 use trevm::revm::database::StateBuilder;
 
@@ -57,18 +58,27 @@ struct StorageRpcCtxInner<H: HotKv> {
     tx_cache: Option<TxCache>,
     config: StorageRpcConfig,
     tracing_semaphore: Arc<Semaphore>,
+    filter_manager: FilterManager,
+    sub_manager: SubscriptionManager,
 }
 
 impl<H: HotKv> StorageRpcCtx<H> {
     /// Create a new storage-backed RPC context.
+    ///
+    /// The `notif_sender` is used by the subscription manager to receive
+    /// new block notifications. Callers send [`NewBlockNotification`]s on
+    /// this channel as blocks are appended to storage.
     pub fn new(
         storage: UnifiedStorage<H>,
         constants: SignetSystemConstants,
         tags: BlockTags,
         tx_cache: Option<TxCache>,
         config: StorageRpcConfig,
+        notif_sender: broadcast::Sender<NewBlockNotification>,
     ) -> Self {
         let tracing_semaphore = Arc::new(Semaphore::new(config.max_tracing_requests));
+        let filter_manager = FilterManager::new(config.stale_filter_ttl, config.stale_filter_ttl);
+        let sub_manager = SubscriptionManager::new(notif_sender, config.stale_filter_ttl);
         Self {
             inner: Arc::new(StorageRpcCtxInner {
                 storage,
@@ -77,6 +87,8 @@ impl<H: HotKv> StorageRpcCtx<H> {
                 tx_cache,
                 config,
                 tracing_semaphore,
+                filter_manager,
+                sub_manager,
             }),
         }
     }
@@ -130,6 +142,16 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// Access the optional tx cache.
     pub fn tx_cache(&self) -> Option<&TxCache> {
         self.inner.tx_cache.as_ref()
+    }
+
+    /// Access the filter manager.
+    pub(crate) fn filter_manager(&self) -> &FilterManager {
+        &self.inner.filter_manager
+    }
+
+    /// Access the subscription manager.
+    pub(crate) fn sub_manager(&self) -> &SubscriptionManager {
+        &self.inner.sub_manager
     }
 
     /// Resolve a [`BlockNumberOrTag`] to a block number.

@@ -5,8 +5,7 @@ use std::time::Duration;
 /// Configuration for the storage-backed ETH RPC server.
 ///
 /// Mirrors the subset of reth's `EthConfig` that applies to
-/// storage-backed RPC. Fields for subsystems not yet implemented
-/// (gas oracle, fee history) will be added when those features land.
+/// storage-backed RPC.
 ///
 /// # Example
 ///
@@ -47,6 +46,26 @@ pub struct StorageRpcConfig {
     ///
     /// Default: `5 minutes`.
     pub stale_filter_ttl: Duration,
+
+    /// Number of recent blocks to consider for gas price suggestions.
+    ///
+    /// Default: `20`.
+    pub gas_oracle_block_count: u64,
+
+    /// Percentile of effective tips to use as the gas price suggestion.
+    ///
+    /// Default: `60.0`.
+    pub gas_oracle_percentile: f64,
+
+    /// Maximum header history for `eth_feeHistory` without percentiles.
+    ///
+    /// Default: `1024`.
+    pub max_header_history: u64,
+
+    /// Maximum block history for `eth_feeHistory` with percentiles.
+    ///
+    /// Default: `1024`.
+    pub max_block_history: u64,
 }
 
 impl Default for StorageRpcConfig {
@@ -57,6 +76,10 @@ impl Default for StorageRpcConfig {
             max_logs_per_response: 20_000,
             max_tracing_requests: 25,
             stale_filter_ttl: Duration::from_secs(5 * 60),
+            gas_oracle_block_count: 20,
+            gas_oracle_percentile: 60.0,
+            max_header_history: 1024,
+            max_block_history: 1024,
         }
     }
 }
