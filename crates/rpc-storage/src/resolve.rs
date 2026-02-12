@@ -80,7 +80,7 @@ impl BlockTags {
 
 /// Error resolving a block identifier.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ResolveError {
+pub enum ResolveError {
     /// Cold storage error.
     #[error(transparent)]
     Cold(#[from] signet_cold::ColdStorageError),
