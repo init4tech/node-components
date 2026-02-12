@@ -3,15 +3,16 @@
 mod endpoints;
 use endpoints::{
     addr_tx_count, balance, block, block_number, block_receipts, block_tx_count, call, chain_id,
-    code_at, estimate_gas, get_logs, header_by, not_supported, raw_transaction_by_hash,
-    raw_tx_by_block_and_index, send_raw_transaction, storage_at, transaction_by_hash,
-    transaction_receipt, tx_by_block_and_index,
+    code_at, estimate_gas, fee_history, gas_price, get_filter_changes, get_logs, header_by,
+    max_priority_fee_per_gas, new_block_filter, new_filter, not_supported, raw_transaction_by_hash,
+    raw_tx_by_block_and_index, send_raw_transaction, storage_at, subscribe, transaction_by_hash,
+    transaction_receipt, tx_by_block_and_index, uninstall_filter, unsubscribe,
 };
 
 mod error;
 pub use error::EthError;
 
-mod helpers;
+pub(crate) mod helpers;
 
 use crate::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
@@ -58,9 +59,9 @@ where
         // ---
         .route("protocolVersion", not_supported)
         .route("syncing", not_supported)
-        .route("gasPrice", not_supported)
-        .route("maxPriorityFeePerGas", not_supported)
-        .route("feeHistory", not_supported)
+        .route("gasPrice", gas_price::<H>)
+        .route("maxPriorityFeePerGas", max_priority_fee_per_gas::<H>)
+        .route("feeHistory", fee_history::<H>)
         .route("coinbase", not_supported)
         .route("accounts", not_supported)
         .route("blobBaseFee", not_supported)
@@ -79,12 +80,12 @@ where
         .route("signTypedData", not_supported)
         .route("getProof", not_supported)
         .route("createAccessList", not_supported)
-        .route("newFilter", not_supported)
-        .route("newBlockFilter", not_supported)
+        .route("newFilter", new_filter::<H>)
+        .route("newBlockFilter", new_block_filter::<H>)
         .route("newPendingTransactionFilter", not_supported)
-        .route("uninstallFilter", not_supported)
-        .route("getFilterChanges", not_supported)
-        .route("getFilterLogs", not_supported)
-        .route("subscribe", not_supported)
-        .route("unsubscribe", not_supported)
+        .route("uninstallFilter", uninstall_filter::<H>)
+        .route("getFilterChanges", get_filter_changes::<H>)
+        .route("getFilterLogs", get_filter_changes::<H>)
+        .route("subscribe", subscribe::<H>)
+        .route("unsubscribe", unsubscribe::<H>)
 }

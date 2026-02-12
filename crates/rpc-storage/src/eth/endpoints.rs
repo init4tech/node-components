@@ -3,20 +3,23 @@
 use crate::{
     ctx::{EvmBlockContext, StorageRpcCtx},
     eth::helpers::{
-        AddrWithBlock, BlockParams, BlockRangeInclusiveIter, CfgFiller, StorageAtArgs, TxParams,
-        await_handler, build_receipt, build_receipt_from_parts, build_rpc_transaction,
-        normalize_gas_stateless, response_tri,
+        AddrWithBlock, BlockParams, BlockRangeInclusiveIter, CfgFiller, FeeHistoryArgs,
+        StorageAtArgs, SubscribeArgs, TxParams, await_handler, build_receipt,
+        build_receipt_from_parts, build_rpc_transaction, normalize_gas_stateless, response_tri,
     },
+    gas_oracle,
+    interest::{FilterOutput, InterestKind},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
-    consensus::{BlockHeader, TxReceipt},
+    consensus::{BlockHeader, Transaction, TxReceipt},
     eips::{
-        BlockId,
+        BlockId, BlockNumberOrTag,
+        eip1559::BaseFeeParams,
         eip2718::{Decodable2718, Encodable2718},
     },
     primitives::{B256, U64, U256},
-    rpc::types::{Block, BlockTransactions, Filter, FilteredParams, Log},
+    rpc::types::{Block, BlockTransactions, FeeHistory, Filter, FilteredParams, Log},
 };
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::model::HotKvRead;
@@ -45,6 +48,215 @@ pub(crate) async fn block_number<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64,
 
 pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()> {
     Ok(U64::from(ctx.chain_id()))
+}
+
+// ---------------------------------------------------------------------------
+// Gas & Fee Queries
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn gas_price<H>(hctx: HandlerCtx, ctx: StorageRpcCtx<H>) -> Result<U256, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        let cold = ctx.cold();
+
+        let tip = gas_oracle::suggest_tip_cap(&cold, latest, ctx.config())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let base_fee = cold
+            .get_header_by_number(latest)
+            .await
+            .map_err(|e| e.to_string())?
+            .and_then(|h| h.base_fee_per_gas)
+            .unwrap_or_default();
+
+        Ok(tip + U256::from(base_fee))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn max_priority_fee_per_gas<H>(
+    hctx: HandlerCtx,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U256, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        gas_oracle::suggest_tip_cap(&ctx.cold(), latest, ctx.config())
+            .await
+            .map_err(|e| e.to_string())
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn fee_history<H>(
+    hctx: HandlerCtx,
+    FeeHistoryArgs(block_count, newest, reward_percentiles): FeeHistoryArgs,
+    ctx: StorageRpcCtx<H>,
+) -> Result<FeeHistory, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let mut block_count = block_count.to::<u64>();
+
+        if block_count == 0 {
+            return Ok(FeeHistory::default());
+        }
+
+        let max_fee_history = if reward_percentiles.is_none() {
+            ctx.config().max_header_history
+        } else {
+            ctx.config().max_block_history
+        };
+
+        block_count = block_count.min(max_fee_history);
+
+        let mut newest = newest;
+        if newest.is_pending() {
+            newest = BlockNumberOrTag::Latest;
+            block_count = block_count.saturating_sub(1);
+        }
+
+        let end_block = ctx.resolve_block_tag(newest);
+        let end_block_plus = end_block + 1;
+
+        block_count = block_count.min(end_block_plus);
+
+        // Validate percentiles
+        if let Some(percentiles) = &reward_percentiles
+            && percentiles.windows(2).any(|w| w[0] > w[1] || w[0] > 100.)
+        {
+            return Err("invalid reward percentiles".to_string());
+        }
+
+        let start_block = end_block_plus - block_count;
+        let cold = ctx.cold();
+
+        let specs: Vec<_> = (start_block..=end_block).map(HeaderSpecifier::Number).collect();
+        let headers = cold.get_headers(specs).await.map_err(|e| e.to_string())?;
+
+        let mut base_fee_per_gas: Vec<u128> = Vec::with_capacity(headers.len() + 1);
+        let mut gas_used_ratio: Vec<f64> = Vec::with_capacity(headers.len());
+        let mut rewards: Vec<Vec<u128>> = Vec::new();
+
+        for (offset, maybe_header) in headers.iter().enumerate() {
+            let Some(header) = maybe_header else {
+                return Err(format!("missing header at block {}", start_block + offset as u64));
+            };
+
+            base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default() as u128);
+            gas_used_ratio.push(if header.gas_limit > 0 {
+                header.gas_used as f64 / header.gas_limit as f64
+            } else {
+                0.0
+            });
+
+            if let Some(percentiles) = &reward_percentiles {
+                let block_num = start_block + offset as u64;
+
+                let (txs, receipts) = tokio::try_join!(
+                    cold.get_transactions_in_block(block_num),
+                    cold.get_receipts_in_block(block_num),
+                )
+                .map_err(|e| e.to_string())?;
+
+                let block_rewards = calculate_reward_percentiles(
+                    percentiles,
+                    header.gas_used,
+                    header.base_fee_per_gas.unwrap_or_default(),
+                    &txs,
+                    &receipts,
+                );
+                rewards.push(block_rewards);
+            }
+        }
+
+        // Next block base fee
+        if let Some(last_header) = headers.last().and_then(|h| h.as_ref()) {
+            base_fee_per_gas.push(
+                last_header.next_block_base_fee(BaseFeeParams::ethereum()).unwrap_or_default()
+                    as u128,
+            );
+        }
+
+        let base_fee_per_blob_gas = vec![0; base_fee_per_gas.len()];
+        let blob_gas_used_ratio = vec![0.; gas_used_ratio.len()];
+
+        Ok(FeeHistory {
+            base_fee_per_gas,
+            gas_used_ratio,
+            base_fee_per_blob_gas,
+            blob_gas_used_ratio,
+            oldest_block: start_block,
+            reward: reward_percentiles.map(|_| rewards),
+        })
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+/// Calculate reward percentiles for a single block.
+///
+/// Sorts transactions by effective tip ascending, then walks
+/// cumulative gas used to find the tip value at each percentile.
+fn calculate_reward_percentiles(
+    percentiles: &[f64],
+    gas_used: u64,
+    base_fee: u64,
+    txs: &[signet_storage_types::TransactionSigned],
+    receipts: &[signet_storage_types::Receipt],
+) -> Vec<u128> {
+    if gas_used == 0 || txs.is_empty() {
+        return vec![0; percentiles.len()];
+    }
+
+    // Pair each tx's effective tip with its gas used (from receipt cumulative deltas)
+    let mut tx_gas_and_tip: Vec<(u64, u128)> = txs
+        .iter()
+        .zip(receipts.iter())
+        .enumerate()
+        .map(|(i, (tx, receipt))| {
+            let prev_cumulative =
+                if i > 0 { receipts[i - 1].inner.cumulative_gas_used() } else { 0 };
+            let tx_gas = receipt.inner.cumulative_gas_used() - prev_cumulative;
+            let tip = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
+            (tx_gas, tip)
+        })
+        .collect();
+
+    // Sort by tip ascending
+    tx_gas_and_tip.sort_by_key(|&(_, tip)| tip);
+
+    let mut result = Vec::with_capacity(percentiles.len());
+    let mut cumulative_gas: u64 = 0;
+    let mut tx_idx = 0;
+
+    for &percentile in percentiles {
+        let threshold = (gas_used as f64 * percentile / 100.0) as u64;
+
+        while tx_idx < tx_gas_and_tip.len() {
+            cumulative_gas += tx_gas_and_tip[tx_idx].0;
+            if cumulative_gas >= threshold {
+                break;
+            }
+            tx_idx += 1;
+        }
+
+        result.push(tx_gas_and_tip.get(tx_idx).map(|&(_, tip)| tip).unwrap_or_default());
+    }
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -726,7 +938,7 @@ where
 }
 
 /// Extract logs from a block's receipts that match the filter's address and topic criteria.
-fn collect_matching_logs(
+pub(crate) fn collect_matching_logs(
     header: &alloy::consensus::Header,
     block_hash: B256,
     txs: &[signet_storage_types::TransactionSigned],
@@ -757,4 +969,164 @@ fn collect_matching_logs(
     }
 
     logs
+}
+
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn new_filter<H>(
+    hctx: HandlerCtx,
+    (filter,): (Filter,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        Ok(ctx.filter_manager().install_log_filter(latest, filter))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn new_block_filter<H>(
+    hctx: HandlerCtx,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        Ok(ctx.filter_manager().install_block_filter(latest))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn uninstall_filter<H>(
+    (id,): (U64,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<bool, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    Ok(ctx.filter_manager().uninstall(id).is_some())
+}
+
+pub(crate) async fn get_filter_changes<H>(
+    hctx: HandlerCtx,
+    (id,): (U64,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<FilterOutput, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let fm = ctx.filter_manager();
+        let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
+
+        let latest = ctx.tags().latest();
+        let start = entry.next_start_block();
+
+        if start > latest {
+            entry.mark_polled(latest);
+            return Ok(entry.empty_output());
+        }
+
+        let cold = ctx.cold();
+
+        if entry.is_block() {
+            let specs: Vec<_> = (start..=latest).map(HeaderSpecifier::Number).collect();
+            let headers = cold.get_headers(specs).await.map_err(|e| e.to_string())?;
+            let hashes: Vec<B256> = headers.into_iter().flatten().map(|h| h.hash_slow()).collect();
+            entry.mark_polled(latest);
+            Ok(FilterOutput::from(hashes))
+        } else {
+            let filter = entry.as_filter().cloned().unwrap();
+            let address_filter = FilteredParams::address_filter(&filter.address);
+            let topics_filter = FilteredParams::topics_filter(&filter.topics);
+
+            let mut all_logs = Vec::new();
+
+            for (chunk_start, chunk_end) in
+                BlockRangeInclusiveIter::new(start..=latest, MAX_HEADERS_RANGE)
+            {
+                let specs: Vec<_> =
+                    (chunk_start..=chunk_end).map(HeaderSpecifier::Number).collect();
+                let headers = cold.get_headers(specs).await.map_err(|e| e.to_string())?;
+
+                for (offset, maybe_header) in headers.into_iter().enumerate() {
+                    let Some(header) = maybe_header else { continue };
+
+                    if !FilteredParams::matches_address(header.logs_bloom, &address_filter)
+                        || !FilteredParams::matches_topics(header.logs_bloom, &topics_filter)
+                    {
+                        continue;
+                    }
+
+                    let block_num = chunk_start + offset as u64;
+                    let block_hash = header.hash_slow();
+
+                    let (txs, receipts) = tokio::try_join!(
+                        cold.get_transactions_in_block(block_num),
+                        cold.get_receipts_in_block(block_num),
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    all_logs.extend(collect_matching_logs(
+                        &header, block_hash, &txs, &receipts, &filter,
+                    ));
+                }
+            }
+
+            entry.mark_polled(latest);
+            Ok(FilterOutput::from(all_logs))
+        }
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+pub(crate) async fn subscribe<H>(
+    hctx: HandlerCtx,
+    SubscribeArgs(kind, filter): SubscribeArgs,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let interest = match kind {
+        alloy::rpc::types::pubsub::SubscriptionKind::NewHeads => InterestKind::Block,
+        alloy::rpc::types::pubsub::SubscriptionKind::Logs => {
+            let f = filter.unwrap_or_default();
+            InterestKind::Log(f)
+        }
+        other => {
+            return Err(format!("unsupported subscription kind: {other:?}"));
+        }
+    };
+
+    ctx.sub_manager()
+        .subscribe(&hctx, interest)
+        .ok_or_else(|| "notifications not enabled on this transport".to_string())
+}
+
+pub(crate) async fn unsubscribe<H>((id,): (U64,), ctx: StorageRpcCtx<H>) -> Result<bool, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    Ok(ctx.sub_manager().unsubscribe(id))
 }

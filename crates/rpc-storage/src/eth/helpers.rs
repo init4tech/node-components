@@ -38,6 +38,21 @@ pub(crate) struct StorageAtArgs(pub Address, pub U256, #[serde(default)] pub Opt
 #[derive(Debug, Deserialize)]
 pub(crate) struct AddrWithBlock(pub Address, #[serde(default)] pub Option<BlockId>);
 
+/// Args for `eth_feeHistory`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct FeeHistoryArgs(
+    pub alloy::primitives::U64,
+    pub alloy::eips::BlockNumberOrTag,
+    #[serde(default)] pub Option<Vec<f64>>,
+);
+
+/// Args for `eth_subscribe`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct SubscribeArgs(
+    pub alloy::rpc::types::pubsub::SubscriptionKind,
+    #[serde(default)] pub Option<Box<alloy::rpc::types::Filter>>,
+);
+
 /// Normalize transaction request gas without making DB reads.
 ///
 /// - If the gas is below `MIN_TRANSACTION_GAS`, set it to `None`
