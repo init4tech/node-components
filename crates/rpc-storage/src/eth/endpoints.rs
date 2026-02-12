@@ -645,7 +645,9 @@ where
 
         let hash = *envelope.tx_hash();
         hctx.spawn(async move {
-            tx_cache.forward_raw_transaction(envelope).await.map_err(|e| e.to_string())
+            if let Err(e) = tx_cache.forward_raw_transaction(envelope).await {
+                tracing::warn!(%hash, err = %e, "failed to forward raw transaction");
+            }
         });
 
         Ok(hash)
@@ -717,7 +719,10 @@ where
                     .map_err(|e| e.to_string())?
                     .unwrap_or_else(|| ctx.tags().latest());
 
-                if to.saturating_sub(from) > MAX_BLOCKS_PER_FILTER {
+                if from > to {
+                    return Err("fromBlock must not exceed toBlock".to_string());
+                }
+                if to - from > MAX_BLOCKS_PER_FILTER {
                     return Err(format!("query exceeds max block range ({MAX_BLOCKS_PER_FILTER})"));
                 }
 
