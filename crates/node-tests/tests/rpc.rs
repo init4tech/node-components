@@ -223,13 +223,13 @@ async fn getLogs_post(ctx: &SignetTestContext, contract: &TestCounterInstance) {
         .await
         .unwrap();
 
-    // Two logs: one from the host transact, one from the alloy tx
+    // Two logs: one from the alloy tx, one from the host transact
     assert_eq!(logs.len(), 2);
     let log_inner = &logs[0].inner;
     assert_eq!(log_inner.address, *contract.address());
-    // First increment is from the host transact (system tx runs first)
+    // First increment is from the alloy tx (regular txs execute before system txs)
     assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(1)]);
-    // Second increment is from the alloy tx
+    // Second increment is from the host transact (system tx)
     let log_inner = &logs[1].inner;
     assert_eq!(log_inner.address, *contract.address());
     assert_eq!(log_inner.topics(), &[Counter::Count::SIGNATURE_HASH, B256::with_last_byte(2)]);
