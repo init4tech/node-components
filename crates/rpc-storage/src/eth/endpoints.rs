@@ -7,7 +7,6 @@ use crate::{
         await_handler, build_receipt, build_receipt_from_parts, build_rpc_transaction,
         normalize_gas_stateless, response_tri,
     },
-    resolve::{resolve_block_id, resolve_block_number_or_tag},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
@@ -60,7 +59,6 @@ pub(crate) async fn block<T, H>(
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -68,7 +66,7 @@ where
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         let (header, txs) = tokio::try_join!(
             cold.get_header_by_number(block_num),
@@ -119,14 +117,13 @@ pub(crate) async fn block_tx_count<T, H>(
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         cold.get_transaction_count(block_num)
             .await
@@ -144,12 +141,11 @@ pub(crate) async fn block_receipts<H>(
 ) -> Result<Option<Vec<alloy::rpc::types::TransactionReceipt>>, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         let (header, txs, receipts) = tokio::try_join!(
             cold.get_header_by_number(block_num),
@@ -207,14 +203,13 @@ pub(crate) async fn header_by<T, H>(
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         cold.get_header_by_number(block_num)
             .await
@@ -236,7 +231,6 @@ pub(crate) async fn transaction_by_hash<H>(
 ) -> Result<Option<alloy::rpc::types::Transaction>, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -265,7 +259,6 @@ pub(crate) async fn raw_transaction_by_hash<H>(
 ) -> Result<Option<alloy::primitives::Bytes>, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -287,14 +280,13 @@ pub(crate) async fn tx_by_block_and_index<T, H>(
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         let Some(confirmed) = cold
             .get_tx_by_block_and_index(block_num, index.to::<u64>())
@@ -323,14 +315,13 @@ pub(crate) async fn raw_tx_by_block_and_index<T, H>(
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = resolve_block_id(id, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
 
         cold.get_tx_by_block_and_index(block_num, index.to::<u64>())
             .await
@@ -348,7 +339,6 @@ pub(crate) async fn transaction_receipt<H>(
 ) -> Result<Option<alloy::rpc::types::TransactionReceipt>, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -378,14 +368,12 @@ pub(crate) async fn balance<H>(
 ) -> Result<U256, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = resolve_block_id(block, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -404,14 +392,12 @@ pub(crate) async fn storage_at<H>(
 ) -> Result<B256, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = resolve_block_id(block, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let val = reader
@@ -431,14 +417,12 @@ pub(crate) async fn addr_tx_count<H>(
 ) -> Result<U64, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = resolve_block_id(block, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -457,14 +441,12 @@ pub(crate) async fn code_at<H>(
 ) -> Result<alloy::primitives::Bytes, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let cold = ctx.cold();
-        let height = resolve_block_id(block, ctx.tags(), &cold).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -497,7 +479,6 @@ pub(crate) async fn call<H>(
 ) -> ResponsePayload<alloy::primitives::Bytes, CallErrorData>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let max_gas = ctx.rpc_gas_cap();
@@ -555,7 +536,6 @@ pub(crate) async fn estimate_gas<H>(
 ) -> ResponsePayload<U64, CallErrorData>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let max_gas = ctx.rpc_gas_cap();
@@ -610,7 +590,6 @@ pub(crate) async fn send_raw_transaction<H>(
 ) -> Result<B256, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let Some(tx_cache) = ctx.tx_cache().cloned() else {
@@ -651,7 +630,6 @@ pub(crate) async fn get_logs<H>(
 ) -> Result<Vec<Log>, String>
 where
     H: HotKv + Send + Sync + 'static,
-    H::RoTx: Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -686,15 +664,9 @@ where
             }
 
             alloy::rpc::types::FilterBlockOption::Range { from_block, to_block } => {
-                let from = from_block
-                    .map(|b| resolve_block_number_or_tag(b, ctx.tags()))
-                    .transpose()
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or(0);
+                let from = from_block.map(|b| ctx.resolve_block_tag(b)).unwrap_or(0);
                 let to = to_block
-                    .map(|b| resolve_block_number_or_tag(b, ctx.tags()))
-                    .transpose()
-                    .map_err(|e| e.to_string())?
+                    .map(|b| ctx.resolve_block_tag(b))
                     .unwrap_or_else(|| ctx.tags().latest());
 
                 if from > to {

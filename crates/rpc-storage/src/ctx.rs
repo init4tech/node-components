@@ -2,9 +2,9 @@
 
 use crate::{
     EthError,
-    resolve::{BlockTags, resolve_block_number_or_tag},
+    resolve::{BlockTags, ResolveError},
 };
-use alloy::eips::BlockId;
+use alloy::eips::{BlockId, BlockNumberOrTag};
 use signet_cold::ColdStorageReadHandle;
 use signet_hot::HotKv;
 use signet_hot::model::{HotKvRead, RevmRead};
@@ -111,6 +111,44 @@ impl<H: HotKv> StorageRpcCtx<H> {
         self.inner.tx_cache.as_ref()
     }
 
+    /// Resolve a [`BlockNumberOrTag`] to a block number.
+    ///
+    /// This is synchronous — no cold storage lookup is needed.
+    ///
+    /// - `Latest` / `Pending` → latest tag
+    /// - `Safe` → safe tag
+    /// - `Finalized` → finalized tag
+    /// - `Earliest` → `0`
+    /// - `Number(n)` → `n`
+    pub(crate) fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> u64 {
+        match tag {
+            BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => self.tags().latest(),
+            BlockNumberOrTag::Safe => self.tags().safe(),
+            BlockNumberOrTag::Finalized => self.tags().finalized(),
+            BlockNumberOrTag::Earliest => 0,
+            BlockNumberOrTag::Number(n) => n,
+        }
+    }
+
+    /// Resolve a [`BlockId`] to a block number.
+    ///
+    /// For tag/number-based IDs, resolves synchronously via
+    /// [`resolve_block_tag`](Self::resolve_block_tag). For hash-based IDs,
+    /// fetches the header from cold storage to obtain the block number.
+    pub(crate) async fn resolve_block_id(&self, id: BlockId) -> Result<u64, ResolveError> {
+        match id {
+            BlockId::Number(tag) => Ok(self.resolve_block_tag(tag)),
+            BlockId::Hash(h) => {
+                let header = self
+                    .cold()
+                    .get_header_by_hash(h.block_hash)
+                    .await?
+                    .ok_or(ResolveError::HashNotFound(h.block_hash))?;
+                Ok(header.number)
+            }
+        }
+    }
+
     /// Create a revm-compatible database at a specific block height.
     ///
     /// The returned `State<RevmRead<...>>` implements both `Database` and
@@ -120,7 +158,6 @@ impl<H: HotKv> StorageRpcCtx<H> {
         height: u64,
     ) -> signet_storage::StorageResult<trevm::revm::database::State<RevmRead<H::RoTx>>>
     where
-        H::RoTx: Send + Sync,
         <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     {
         let revm_read = self.inner.storage.revm_reader_at_height(height)?;
@@ -138,14 +175,13 @@ impl<H: HotKv> StorageRpcCtx<H> {
         id: BlockId,
     ) -> Result<EvmBlockContext<RevmRead<H::RoTx>>, EthError>
     where
-        H::RoTx: Send + Sync,
         <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     {
         let cold = self.cold();
         let header = match id {
             BlockId::Hash(h) => cold.get_header_by_hash(h.block_hash).await?,
             BlockId::Number(tag) => {
-                let height = resolve_block_number_or_tag(tag, self.tags())?;
+                let height = self.resolve_block_tag(tag);
                 cold.get_header_by_number(height).await?
             }
         }
