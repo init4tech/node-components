@@ -231,6 +231,6 @@ impl<H: HotKv> StorageRpcCtx<H> {
         .ok_or(EthError::BlockNotFound(id))?;
 
         let db = self.revm_state_at_height(header.number)?;
-        Ok(EvmBlockContext { header, db })
+        Ok(EvmBlockContext { header: header.into_inner(), db })
     }
 }

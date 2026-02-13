@@ -61,15 +61,18 @@ where
         let cold = ctx.cold();
         let block_num = response_tri!(ctx.resolve_block_id(block_id).await);
 
-        let mut header =
+        let sealed_header =
             response_tri!(cold.get_header_by_number(block_num).await.map_err(|e| e.to_string()));
 
-        let header =
-            response_tri!(header.as_mut().ok_or_else(|| format!("block not found: {block_id}")));
+        let sealed_header =
+            response_tri!(sealed_header.ok_or_else(|| format!("block not found: {block_id}")));
+
+        let parent_hash = sealed_header.hash();
+        let mut header = sealed_header.into_inner();
 
         // For pending blocks, synthesize the next-block header.
         if pending {
-            header.parent_hash = header.hash_slow();
+            header.parent_hash = parent_hash;
             header.number += 1;
             header.timestamp += 12;
             header.base_fee_per_gas = header.next_block_base_fee(BaseFeeParams::ethereum());
@@ -83,7 +86,7 @@ where
 
         let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(header);
+            .fill_block(&header);
 
         response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| e.into_error()));
 

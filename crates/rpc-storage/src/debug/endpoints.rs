@@ -68,7 +68,8 @@ where
             );
         };
 
-        let block_hash = header.hash_slow();
+        let block_hash = header.hash();
+        let header = header.into_inner();
 
         tracing::debug!(number = header.number, "Loaded block");
 
@@ -151,7 +152,8 @@ where
         );
 
         let header =
-            response_tri!(header.ok_or(DebugError::BlockNotFound(format!("block {block_num}"))));
+            response_tri!(header.ok_or(DebugError::BlockNotFound(format!("block {block_num}"))))
+                .into_inner();
 
         tracing::debug!(number = block_num, "Loaded containing block");
 
