@@ -56,10 +56,10 @@ signet-tx-cache = "0.16.0-rc.8"
 signet-types = "0.16.0-rc.8"
 signet-zenith = "0.16.0-rc.8"
 signet-journal = "0.16.0-rc.8"
-signet-storage = "0.2.0"
-signet-cold = "0.2.0"
-signet-hot = "0.2.0"
-signet-storage-types = "0.2.0"
+signet-storage = "0.3.0"
+signet-cold = "0.3.0"
+signet-hot = "0.3.0"
+signet-storage-types = "0.3.0"
 
 # ajj
 ajj = { version = "0.3.4" }
@@ -137,6 +137,11 @@ alloy-rlp = "0.3.11"
 tempfile = "3.17.0"
 
 # [patch.crates-io]
+# signet-cold = { path = "../storage/crates/cold" }
+# signet-hot = { path = "../storage/crates/hot" }
+# signet-storage = { path = "../storage/crates/storage" }
+# signet-storage-types = { path = "../storage/crates/types" }
+
 # signet-bundle = { path = "../sdk/crates/bundle"}
 # signet-constants = { path = "../sdk/crates/constants"}
 # signet-evm = { path = "../sdk/crates/evm"}
