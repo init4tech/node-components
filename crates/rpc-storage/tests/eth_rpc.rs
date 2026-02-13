@@ -6,7 +6,7 @@
 use alloy::{
     consensus::{
         EthereumTxEnvelope, Header, Receipt as AlloyReceipt, SignableTransaction, Signed, TxLegacy,
-        TxType,
+        TxType, transaction::Recovered,
     },
     primitives::{Address, B256, Log as PrimitiveLog, LogData, TxKind, U256, address, logs_bloom},
 };
@@ -18,7 +18,7 @@ use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
 use signet_rpc_storage::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
-use signet_storage_types::Receipt;
+use signet_storage_types::{Receipt, SealedHeader};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
@@ -124,9 +124,9 @@ const LOG_TOPIC: B256 = B256::repeat_byte(0xcc);
 
 /// Create a legacy transaction signed with a deterministic key.
 ///
-/// Uses alloy's signer to produce a valid ECDSA signature so that
-/// `recover_sender` succeeds during RPC response building.
-fn make_signed_tx(nonce: u64) -> (signet_storage_types::TransactionSigned, Address) {
+/// Returns a [`RecoveredTx`] with the sender pre-recovered, plus the sender
+/// address for use in test assertions.
+fn make_signed_tx(nonce: u64) -> (signet_storage_types::RecoveredTx, Address) {
     make_signed_tx_with_gas_price(nonce, 1_000_000_000)
 }
 
@@ -134,7 +134,7 @@ fn make_signed_tx(nonce: u64) -> (signet_storage_types::TransactionSigned, Addre
 fn make_signed_tx_with_gas_price(
     nonce: u64,
     gas_price: u128,
-) -> (signet_storage_types::TransactionSigned, Address) {
+) -> (signet_storage_types::RecoveredTx, Address) {
     use alloy::signers::{SignerSync, local::PrivateKeySigner};
 
     let signer = PrivateKeySigner::from_signing_key(
@@ -159,7 +159,7 @@ fn make_signed_tx_with_gas_price(
     let signed: signet_storage_types::TransactionSigned =
         EthereumTxEnvelope::Legacy(Signed::new_unhashed(tx, sig));
 
-    (signed, sender)
+    (Recovered::new_unchecked(signed, sender), sender)
 }
 
 /// Build a [`BlockData`] from pre-signed transactions.
@@ -168,7 +168,7 @@ fn make_signed_tx_with_gas_price(
 /// attaches logs to each receipt.
 fn make_block(
     block_num: u64,
-    txs: Vec<signet_storage_types::TransactionSigned>,
+    txs: Vec<signet_storage_types::RecoveredTx>,
     logs_per_receipt: usize,
 ) -> BlockData {
     let receipts: Vec<Receipt> = txs
@@ -212,7 +212,7 @@ fn make_block(
         ..Default::default()
     };
 
-    BlockData::new(header, txs, receipts, vec![], None)
+    BlockData::new(SealedHeader::new(header), txs, receipts, vec![], None)
 }
 
 // ---------------------------------------------------------------------------
