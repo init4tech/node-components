@@ -27,6 +27,21 @@ pub enum Either {
     Block(Box<Header>),
 }
 
+/// JSON-RPC subscription notification envelope.
+#[derive(serde::Serialize)]
+struct SubscriptionNotification<'a> {
+    jsonrpc: &'static str,
+    method: &'static str,
+    params: SubscriptionParams<'a>,
+}
+
+/// Params field of a subscription notification.
+#[derive(serde::Serialize)]
+struct SubscriptionParams<'a> {
+    result: &'a Either,
+    subscription: U64,
+}
+
 /// Buffer for subscription outputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubscriptionBuffer {
@@ -225,14 +240,11 @@ impl SubscriptionTask {
             // Drain one buffered item per iteration, checking for
             // cancellation between each send.
             if let Some(item) = notif_buffer.pop_front() {
-                let notification = ajj::serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "eth_subscription",
-                    "params": {
-                        "result": &item,
-                        "subscription": id
-                    },
-                });
+                let notification = SubscriptionNotification {
+                    jsonrpc: "2.0",
+                    method: "eth_subscription",
+                    params: SubscriptionParams { result: &item, subscription: id },
+                };
 
                 let _guard = span.enter();
                 tokio::select! {
