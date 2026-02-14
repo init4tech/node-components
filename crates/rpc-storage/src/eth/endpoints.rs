@@ -878,12 +878,8 @@ where
             }
         };
 
-        let logs = cold.get_logs(resolved_filter).await.map_err(|e| e.to_string())?;
-
         let max_logs = ctx.config().max_logs_per_response;
-        if max_logs > 0 && logs.len() > max_logs {
-            return Err(format!("query exceeds max logs per response ({max_logs})"));
-        }
+        let logs = cold.get_logs(resolved_filter, max_logs).await.map_err(|e| e.to_string())?;
 
         Ok(logs)
     };
@@ -980,7 +976,8 @@ where
                 ..stored
             };
 
-            let logs = cold.get_logs(resolved).await.map_err(|e| e.to_string())?;
+            let max_logs = ctx.config().max_logs_per_response;
+            let logs = cold.get_logs(resolved, max_logs).await.map_err(|e| e.to_string())?;
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))

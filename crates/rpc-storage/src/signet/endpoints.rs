@@ -1,12 +1,12 @@
 //! Signet namespace RPC endpoint implementations.
 
 use crate::{
-    ctx::StorageRpcCtx,
+    ctx::{EvmBlockContext, StorageRpcCtx},
     eth::helpers::{CfgFiller, await_handler, response_tri},
     signet::error::SignetError,
 };
 use ajj::{HandlerCtx, ResponsePayload};
-use alloy::eips::{BlockId, eip1559::BaseFeeParams};
+use alloy::eips::BlockId;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
 use signet_hot::HotKv;
 use signet_hot::model::HotKvRead;
@@ -51,36 +51,9 @@ where
 
     let task = async move {
         let id = bundle.state_block_number();
-        let mut block_id: BlockId = id.into();
+        let block_id: BlockId = id.into();
 
-        let pending = block_id.is_pending();
-        if pending {
-            block_id = BlockId::latest();
-        }
-
-        let cold = ctx.cold();
-        let block_num = response_tri!(ctx.resolve_block_id(block_id));
-
-        let sealed_header =
-            response_tri!(cold.get_header_by_number(block_num).await.map_err(|e| e.to_string()));
-
-        let sealed_header =
-            response_tri!(sealed_header.ok_or_else(|| format!("block not found: {block_id}")));
-
-        let parent_hash = sealed_header.hash();
-        let mut header = sealed_header.into_inner();
-
-        // For pending blocks, synthesize the next-block header.
-        if pending {
-            header.parent_hash = parent_hash;
-            header.number += 1;
-            header.timestamp += 12;
-            header.base_fee_per_gas = header.next_block_base_fee(BaseFeeParams::ethereum());
-            header.gas_limit = ctx.config().rpc_gas_cap;
-        }
-
-        // State at the resolved block number (before any pending header mutation).
-        let db = response_tri!(ctx.revm_state_at_height(block_num).map_err(|e| e.to_string()));
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(block_id));
 
         let mut driver = SignetBundleDriver::from(&bundle);
 
