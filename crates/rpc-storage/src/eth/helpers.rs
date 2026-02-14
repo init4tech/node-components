@@ -1,5 +1,6 @@
 //! Parameter types, macros, and utility helpers for ETH RPC endpoints.
 
+use crate::interest::InterestKind;
 use alloy::{
     consensus::{
         ReceiptEnvelope, ReceiptWithBloom, Transaction, TxReceipt, transaction::Recovered,
@@ -8,7 +9,8 @@ use alloy::{
     network::Ethereum,
     primitives::{Address, TxKind, U256},
     rpc::types::{
-        BlockOverrides, Log, TransactionReceipt, TransactionRequest, state::StateOverride,
+        BlockOverrides, Log, TransactionReceipt, TransactionRequest, pubsub::SubscriptionKind,
+        state::StateOverride,
     },
 };
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
@@ -52,6 +54,27 @@ pub(crate) struct SubscribeArgs(
     pub alloy::rpc::types::pubsub::SubscriptionKind,
     #[serde(default)] pub Option<Box<alloy::rpc::types::Filter>>,
 );
+
+impl TryFrom<SubscribeArgs> for InterestKind {
+    type Error = String;
+
+    fn try_from(args: SubscribeArgs) -> Result<Self, Self::Error> {
+        match args.0 {
+            SubscriptionKind::Logs => args
+                .1
+                .map(InterestKind::Log)
+                .ok_or_else(|| "missing filter for Logs subscription".to_string()),
+            SubscriptionKind::NewHeads => {
+                if args.1.is_some() {
+                    Err("filter not supported for NewHeads subscription".to_string())
+                } else {
+                    Ok(InterestKind::Block)
+                }
+            }
+            other => Err(format!("unsupported subscription kind: {other:?}")),
+        }
+    }
+}
 
 /// Normalize transaction request gas without making DB reads.
 ///

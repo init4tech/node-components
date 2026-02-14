@@ -827,9 +827,7 @@ where
 
         let hash = *envelope.tx_hash();
         hctx.spawn(async move {
-            if let Err(e) = tx_cache.forward_raw_transaction(envelope).await {
-                tracing::warn!(%hash, err = %e, "failed to forward raw transaction");
-            }
+            tx_cache.forward_raw_transaction(envelope).await.map_err(|e| e.to_string())
         });
 
         Ok(hash)
@@ -931,6 +929,7 @@ where
 }
 
 pub(crate) async fn uninstall_filter<H>(
+    hctx: HandlerCtx,
     (id,): (U64,),
     ctx: StorageRpcCtx<H>,
 ) -> Result<bool, String>
@@ -938,7 +937,8 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    Ok(ctx.filter_manager().uninstall(id).is_some())
+    let task = async move { Ok(ctx.filter_manager().uninstall(id).is_some()) };
+    await_handler!(@option hctx.spawn_blocking(task))
 }
 
 pub(crate) async fn get_filter_changes<H>(
@@ -996,33 +996,29 @@ where
 
 pub(crate) async fn subscribe<H>(
     hctx: HandlerCtx,
-    SubscribeArgs(kind, filter): SubscribeArgs,
+    sub: SubscribeArgs,
     ctx: StorageRpcCtx<H>,
 ) -> Result<U64, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let interest = match kind {
-        alloy::rpc::types::pubsub::SubscriptionKind::NewHeads => InterestKind::Block,
-        alloy::rpc::types::pubsub::SubscriptionKind::Logs => {
-            let f = filter.unwrap_or_default();
-            InterestKind::Log(f)
-        }
-        other => {
-            return Err(format!("unsupported subscription kind: {other:?}"));
-        }
-    };
+    let interest: InterestKind = sub.try_into()?;
 
     ctx.sub_manager()
         .subscribe(&hctx, interest)
         .ok_or_else(|| "notifications not enabled on this transport".to_string())
 }
 
-pub(crate) async fn unsubscribe<H>((id,): (U64,), ctx: StorageRpcCtx<H>) -> Result<bool, String>
+pub(crate) async fn unsubscribe<H>(
+    hctx: HandlerCtx,
+    (id,): (U64,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<bool, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    Ok(ctx.sub_manager().unsubscribe(id))
+    let task = async move { Ok(ctx.sub_manager().unsubscribe(id)) };
+    await_handler!(@option hctx.spawn_blocking(task))
 }
