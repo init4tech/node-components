@@ -75,7 +75,7 @@ where
             SignetError::Evm(e.to_string())
         }));
 
-        ResponsePayload::Success(driver.into_response())
+        ResponsePayload(Ok(driver.into_response()))
     };
 
     let task = async move {

@@ -2,10 +2,13 @@
 
 use crate::{
     config::{EvmBlockContext, StorageRpcCtx, gas_oracle},
-    eth::helpers::{
-        AddrWithBlock, BlockParams, CfgFiller, FeeHistoryArgs, StorageAtArgs, SubscribeArgs,
-        TxParams, await_handler, build_receipt, build_rpc_transaction, hot_reader_at_block,
-        normalize_gas_stateless, response_tri,
+    eth::{
+        error::CallErrorData,
+        helpers::{
+            AddrWithBlock, BlockParams, CfgFiller, FeeHistoryArgs, StorageAtArgs, SubscribeArgs,
+            TxParams, await_handler, build_receipt, build_rpc_transaction, hot_reader_at_block,
+            normalize_gas_stateless, response_tri,
+        },
     },
     interest::{FilterOutput, InterestKind},
 };
@@ -20,27 +23,91 @@ use alloy::{
     },
     network::{Ethereum, Network},
     primitives::{B256, U64, U256},
-    rpc::types::{Block, BlockTransactions, FeeHistory, Filter, Log},
+    rpc::types::{FeeHistory, Filter, Log},
+};
+use revm_inspectors::access_list::AccessListInspector;
+use serde::{Serialize, Serializer, ser::SerializeSeq};
+use signet_cold::{ColdReceipt, HeaderSpecifier, ReceiptSpecifier};
+use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
+use tracing::{Instrument, debug, trace_span};
+use trevm::{
+    EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
 };
 
-/// RPC block type for the Ethereum network.
-type RpcBlock = <Ethereum as Network>::BlockResponse;
 /// RPC header type for the Ethereum network.
 type RpcHeader = <Ethereum as Network>::HeaderResponse;
 /// RPC transaction type for the Ethereum network.
 type RpcTransaction = <Ethereum as Network>::TransactionResponse;
 /// RPC receipt type for the Ethereum network.
 type RpcReceipt = <Ethereum as Network>::ReceiptResponse;
-use revm_inspectors::access_list::AccessListInspector;
-use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
-use signet_hot::model::HotKvRead;
-use signet_hot::{HistoryRead, HotKv, db::HotDbRead};
-use tracing::{Instrument, debug, trace_span};
-use trevm::{
-    EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
-};
 
-use super::error::CallErrorData;
+// ---------------------------------------------------------------------------
+// Lazy serialization types
+// ---------------------------------------------------------------------------
+
+/// Serializes as an empty JSON array `[]` without allocating.
+pub(crate) struct EmptyArray;
+
+impl Serialize for EmptyArray {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_seq(Some(0))?.end()
+    }
+}
+
+/// Block transactions with lazy serialization.
+///
+/// In both variants the raw [`RecoveredTx`] list is kept and transformed
+/// during serialization — either to full RPC transaction objects or to bare
+/// hashes — avoiding an intermediate `Vec` allocation.
+pub(crate) enum BlockTransactions {
+    Full {
+        txs: Vec<signet_storage_types::RecoveredTx>,
+        block_num: u64,
+        block_hash: B256,
+        base_fee: Option<u64>,
+    },
+    Hashes(Vec<signet_storage_types::RecoveredTx>),
+}
+
+impl Serialize for BlockTransactions {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Full { txs, block_num, block_hash, base_fee } => {
+                let mut seq = serializer.serialize_seq(Some(txs.len()))?;
+                for (i, tx) in txs.iter().enumerate() {
+                    let meta = signet_storage_types::ConfirmationMeta::new(
+                        *block_num,
+                        *block_hash,
+                        i as u64,
+                    );
+                    seq.serialize_element(&build_rpc_transaction(tx, &meta, *base_fee))?;
+                }
+                seq.end()
+            }
+            Self::Hashes(txs) => {
+                let mut seq = serializer.serialize_seq(Some(txs.len()))?;
+                for tx in txs {
+                    seq.serialize_element(tx.tx_hash())?;
+                }
+                seq.end()
+            }
+        }
+    }
+}
+
+/// RPC block response with lazy transaction serialization.
+///
+/// Replaces the alloy `Block` type so that transactions are serialized
+/// inline from raw storage data. Signet has no uncles or withdrawals, so
+/// those are hardcoded as empty/absent to avoid allocations.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RpcBlock {
+    #[serde(flatten)]
+    header: alloy::rpc::types::Header,
+    transactions: BlockTransactions,
+    uncles: EmptyArray,
+}
 
 // ---------------------------------------------------------------------------
 // Not Supported
@@ -319,23 +386,12 @@ where
         let base_fee = header.base_fee_per_gas;
 
         let transactions = if full {
-            let rpc_txs: Vec<_> = txs
-                .into_iter()
-                .enumerate()
-                .map(|(i, tx)| {
-                    let meta = signet_storage_types::ConfirmationMeta::new(
-                        block_num, block_hash, i as u64,
-                    );
-                    build_rpc_transaction(tx, &meta, base_fee)
-                })
-                .collect();
-            BlockTransactions::Full(rpc_txs)
+            BlockTransactions::Full { txs, block_num, block_hash, base_fee }
         } else {
-            let hashes: Vec<B256> = txs.iter().map(|tx| *tx.tx_hash()).collect();
-            BlockTransactions::Hashes(hashes)
+            BlockTransactions::Hashes(txs)
         };
 
-        Ok(Some(Block {
+        Ok(Some(RpcBlock {
             header: alloy::rpc::types::Header {
                 inner: header.into_inner(),
                 hash: block_hash,
@@ -343,8 +399,7 @@ where
                 size: None,
             },
             transactions,
-            uncles: vec![],
-            withdrawals: None,
+            uncles: EmptyArray,
         }))
     };
 
@@ -377,12 +432,30 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// Lazily serialized receipt list. Each receipt is built and serialized
+/// inline without allocating an intermediate `Vec<RpcReceipt>`.
+pub(crate) struct LazyReceipts {
+    txs: Vec<signet_storage_types::RecoveredTx>,
+    receipts: Vec<ColdReceipt>,
+    base_fee: Option<u64>,
+}
+
+impl Serialize for LazyReceipts {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.txs.len()))?;
+        for (tx, cr) in self.txs.iter().zip(&self.receipts) {
+            seq.serialize_element(&build_receipt(cr, tx, self.base_fee))?;
+        }
+        seq.end()
+    }
+}
+
 /// `eth_getBlockReceipts` — all receipts in a block.
 pub(crate) async fn block_receipts<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<Vec<RpcReceipt>>, String>
+) -> Result<Option<LazyReceipts>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -404,10 +477,7 @@ where
 
         let base_fee = header.base_fee_per_gas;
 
-        let rpc_receipts =
-            txs.iter().zip(receipts).map(|(tx, cr)| build_receipt(cr, tx, base_fee)).collect();
-
-        Ok(Some(rpc_receipts))
+        Ok(Some(LazyReceipts { txs, receipts, base_fee }))
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
@@ -472,7 +542,7 @@ where
             cold.get_header_by_number(meta.block_number()).await.map_err(|e| e.to_string())?;
         let base_fee = header.and_then(|h| h.base_fee_per_gas);
 
-        Ok(Some(build_rpc_transaction(tx, &meta, base_fee)))
+        Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
@@ -529,7 +599,7 @@ where
             cold.get_header_by_number(meta.block_number()).await.map_err(|e| e.to_string())?;
         let base_fee = header.and_then(|h| h.base_fee_per_gas);
 
-        Ok(Some(build_rpc_transaction(tx, &meta, base_fee)))
+        Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
@@ -590,7 +660,7 @@ where
         let tx = tx.ok_or("receipt found but transaction missing")?.into_inner();
         let base_fee = header.and_then(|h| h.base_fee_per_gas);
 
-        Ok(Some(build_receipt(cr, &tx, base_fee)))
+        Ok(Some(build_receipt(&cr, &tx, base_fee)))
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
@@ -741,7 +811,7 @@ where
         }
 
         let result = response_tri!(trevm.call().map_err(signet_evm::EvmErrored::into_error));
-        ResponsePayload::Success(result.0)
+        ResponsePayload(Ok(result.0))
     }
     .instrument(span);
 
@@ -765,14 +835,14 @@ where
     normalize_gas_stateless(&mut params.0, max_gas);
 
     await_handler!(@response_option hctx.spawn_with_ctx(|hctx| async move {
-        let res = match run_call(hctx, params, ctx).await {
-            ResponsePayload::Success(res) => res,
-            ResponsePayload::Failure(err) => return ResponsePayload::Failure(err),
+        let res = match run_call(hctx, params, ctx).await.0 {
+            Ok(res) => res,
+            Err(err) => return ResponsePayload(Err(err)),
         };
 
         match res {
             ExecutionResult::Success { output, .. } => {
-                ResponsePayload::Success(output.data().clone())
+                ResponsePayload(Ok(output.data().clone()))
             }
             ExecutionResult::Revert { output, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
@@ -821,7 +891,7 @@ where
             response_tri!(trevm.estimate_gas().map_err(signet_evm::EvmErrored::into_error));
 
         match estimate {
-            EstimationResult::Success { limit, .. } => ResponsePayload::Success(U64::from(limit)),
+            EstimationResult::Success { limit, .. } => ResponsePayload(Ok(U64::from(limit))),
             EstimationResult::Revert { reason, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution reverted".into(),
@@ -882,7 +952,7 @@ where
 
         let access_list = inspector.into_access_list();
 
-        ResponsePayload::Success(AccessListResult { access_list, gas_used, error })
+        ResponsePayload(Ok(AccessListResult { access_list, gas_used, error }))
     }
     .instrument(span);
 
