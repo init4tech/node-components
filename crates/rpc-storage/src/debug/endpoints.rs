@@ -49,9 +49,7 @@ where
     let fut = async move {
         let cold = ctx.cold();
         let block_num = response_tri!(
-            ctx.resolve_block_id(id)
-                .await
-                .map_err(|e| { DebugError::BlockNotFound(e.to_string()) })
+            ctx.resolve_block_id(id).map_err(|e| { DebugError::BlockNotFound(e.to_string()) })
         );
 
         let (header, txs) = response_tri!(

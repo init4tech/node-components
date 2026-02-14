@@ -24,7 +24,6 @@ use alloy::{
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::model::HotKvRead;
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead};
-use std::borrow::Cow;
 use tracing::{Instrument, debug, trace_span};
 use trevm::{EstimationResult, revm::database::DBErrorMarker};
 
@@ -35,7 +34,7 @@ use super::error::CallErrorData;
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
-    ResponsePayload::internal_error_message(Cow::Borrowed("Method not supported."))
+    ResponsePayload::method_not_found()
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +273,7 @@ where
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
 
         let (header, txs) = tokio::try_join!(
             cold.get_header_by_number(block_num),
@@ -336,7 +335,7 @@ where
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
 
         cold.get_transaction_count(block_num)
             .await
@@ -358,7 +357,7 @@ where
 {
     let task = async move {
         let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
 
         let (header, txs, receipts) = tokio::try_join!(
             cold.get_header_by_number(block_num),
@@ -395,13 +394,9 @@ where
     let id = t.into();
 
     let task = async move {
-        let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
-
-        cold.get_header_by_number(block_num)
-            .await
-            .map(|h| {
-                h.map(|sh| {
+        ctx.resolve_header(id)
+            .map(|opt| {
+                opt.map(|sh| {
                     let hash = sh.hash();
                     alloy::rpc::types::Header {
                         inner: sh.into_inner(),
@@ -483,7 +478,7 @@ where
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
 
         let Some(confirmed) = cold
             .get_tx_by_block_and_index(block_num, index.to::<u64>())
@@ -518,7 +513,7 @@ where
 
     let task = async move {
         let cold = ctx.cold();
-        let block_num = ctx.resolve_block_id(id).await.map_err(|e| e.to_string())?;
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
 
         cold.get_tx_by_block_and_index(block_num, index.to::<u64>())
             .await
@@ -578,7 +573,7 @@ where
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -602,7 +597,7 @@ where
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let val = reader
@@ -627,7 +622,7 @@ where
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -651,7 +646,7 @@ where
     let block = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).await.map_err(|e| e.to_string())?;
+        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
 
         let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
         let acct =
@@ -693,7 +688,7 @@ where
     let span = trace_span!("eth_call", block_id = %id);
 
     let task = async move {
-        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id).await);
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
 
         let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))
@@ -750,7 +745,7 @@ where
     let span = trace_span!("eth_estimateGas", block_id = %id);
 
     let task = async move {
-        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id).await);
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
 
         let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))

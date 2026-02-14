@@ -59,7 +59,7 @@ where
         }
 
         let cold = ctx.cold();
-        let block_num = response_tri!(ctx.resolve_block_id(block_id).await);
+        let block_num = response_tri!(ctx.resolve_block_id(block_id));
 
         let sealed_header =
             response_tri!(cold.get_header_by_number(block_num).await.map_err(|e| e.to_string()));
