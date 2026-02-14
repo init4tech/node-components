@@ -17,12 +17,14 @@ use alloy::{
         BlockId, BlockNumberOrTag,
         eip1559::BaseFeeParams,
         eip2718::{Decodable2718, Encodable2718},
+        eip2930::AccessListResult,
     },
     network::Ethereum,
     primitives::{B256, U64, U256},
     rpc::types::{Block, BlockTransactions, FeeHistory, Filter, Log},
 };
 use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
+use revm_inspectors::access_list::AccessListInspector;
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::model::HotKvRead;
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead};
@@ -42,6 +44,16 @@ pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
     ResponsePayload::internal_error_message(Cow::Borrowed(
         "Method not supported. See signet documentation for a list of unsupported methods: https://signet.sh/docs",
     ))
+}
+
+/// Uncle count is always zero — Signet has no uncle blocks.
+pub(crate) async fn uncle_count() -> Result<U64, ()> {
+    Ok(U64::ZERO)
+}
+
+/// Uncle block is always absent — Signet has no uncle blocks.
+pub(crate) async fn uncle_block() -> Result<Option<()>, ()> {
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------
@@ -798,6 +810,53 @@ where
                 )
             }
         }
+    }
+    .instrument(span);
+
+    await_handler!(@response_option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn create_access_list<H>(
+    hctx: HandlerCtx,
+    TxParams(mut request, block, state_overrides, block_overrides): TxParams,
+    ctx: StorageRpcCtx<H>,
+) -> ResponsePayload<AccessListResult, CallErrorData>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let max_gas = ctx.config().rpc_gas_cap;
+    normalize_gas_stateless(&mut request, max_gas);
+
+    let id = block.unwrap_or(BlockId::pending());
+    let span = trace_span!("eth_createAccessList", block_id = %id);
+
+    let task = async move {
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
+
+        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
+
+        let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
+            .maybe_apply_block_overrides(block_overrides.as_deref())
+            .fill_tx(&request);
+
+        let initial = request.access_list.clone().unwrap_or_default();
+        let mut inspector = AccessListInspector::new(initial);
+
+        let result = trevm
+            .try_with_inspector(&mut inspector, |trevm| trevm.run())
+            .map_err(signet_evm::EvmErrored::into_error);
+
+        let (gas_used, error) = match result {
+            Ok(ref trevm) => (U256::from(trevm.gas_used()), None),
+            Err(ref e) => (U256::ZERO, Some(e.to_string())),
+        };
+
+        let access_list = inspector.into_access_list();
+
+        ResponsePayload::Success(AccessListResult { access_list, gas_used, error })
     }
     .instrument(span);
 

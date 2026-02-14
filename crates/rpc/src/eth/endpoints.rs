@@ -92,6 +92,16 @@ pub(super) async fn not_supported() -> ResponsePayload<(), ()> {
     ))
 }
 
+/// Uncle count is always zero — Signet has no uncle blocks.
+pub(super) async fn uncle_count() -> Result<U64, ()> {
+    Ok(U64::ZERO)
+}
+
+/// Uncle block is always absent — Signet has no uncle blocks.
+pub(super) async fn uncle_block() -> Result<Option<()>, ()> {
+    Ok(None)
+}
+
 pub(super) async fn protocol_version<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, String>
 where
     Host: FullNodeComponents,
