@@ -27,7 +27,6 @@ tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 dashmap = "6.1.0"
-reth-rpc-eth-api.workspace = true
 revm-inspectors.workspace = true
 itertools.workspace = true
 
