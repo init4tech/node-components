@@ -238,6 +238,11 @@ impl<H: HotKv> StorageRpcCtx<H> {
     ///
     /// Fetches the header from hot storage and creates a revm-compatible
     /// database snapshot at the resolved block height.
+    ///
+    /// For `Pending` block IDs, remaps to `Latest` and synthesizes a
+    /// next-block header (incremented number, timestamp +12s, projected
+    /// base fee, gas limit from config). State is loaded at the latest
+    /// finalized block in both cases.
     pub(crate) fn resolve_evm_block(
         &self,
         id: BlockId,
@@ -245,8 +250,24 @@ impl<H: HotKv> StorageRpcCtx<H> {
     where
         <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     {
-        let header = self.resolve_header(id)?.ok_or(EthError::BlockNotFound(id))?;
-        let db = self.revm_state_at_height(header.number)?;
-        Ok(EvmBlockContext { header: header.into_inner(), db })
+        let pending = id.is_pending();
+        let id = if pending { BlockId::latest() } else { id };
+
+        let sealed = self.resolve_header(id)?.ok_or(EthError::BlockNotFound(id))?;
+        let db = self.revm_state_at_height(sealed.number)?;
+
+        let parent_hash = sealed.hash();
+        let mut header = sealed.into_inner();
+
+        if pending {
+            header.parent_hash = parent_hash;
+            header.number += 1;
+            header.timestamp += 12;
+            header.base_fee_per_gas =
+                header.next_block_base_fee(alloy::eips::eip1559::BaseFeeParams::ethereum());
+            header.gas_limit = self.config().rpc_gas_cap;
+        }
+
+        Ok(EvmBlockContext { header, db })
     }
 }
