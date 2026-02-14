@@ -477,7 +477,7 @@ where
 
         let execution_result = response_tri!(trevm.call().map_err(EvmErrored::into_error)).0;
 
-        ResponsePayload::Success(execution_result)
+        ResponsePayload(Ok(execution_result))
     }
     .instrument(span);
 
@@ -501,14 +501,14 @@ where
     normalize_gas_stateless(&mut params.0, max_gas);
 
     await_handler!(@response_option hctx.spawn_with_ctx(|hctx| async move {
-        let res = match run_call(hctx, params, ctx).await {
-            ResponsePayload::Success(res) => res,
-            ResponsePayload::Failure(err) => return ResponsePayload::Failure(err),
+        let res = match run_call(hctx, params, ctx).await.0 {
+            Ok(res) => res,
+            Err(err) => return ResponsePayload(Err(err)),
         };
 
         match res {
             ExecutionResult::Success { output, .. } => {
-                ResponsePayload::Success(output.data().clone())
+                ResponsePayload(Ok(output.data().clone()))
             }
             ExecutionResult::Revert { output, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
@@ -578,7 +578,7 @@ where
         let (estimate, _) = response_tri!(trevm.estimate_gas().map_err(EvmErrored::into_error));
 
         match estimate {
-            EstimationResult::Success { limit, .. } => ResponsePayload::Success(U64::from(limit)),
+            EstimationResult::Success { limit, .. } => ResponsePayload(Ok(U64::from(limit))),
             EstimationResult::Revert { reason, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution reverted".into(),

@@ -30,7 +30,7 @@ where
             );
         };
 
-        ResponsePayload::Success(output)
+        ResponsePayload(Ok(output))
     };
 
     await_handler!(@response_option hctx.spawn_blocking(task))
