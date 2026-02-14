@@ -100,6 +100,9 @@ impl<Coder> CacheHandle<Coder> {
             .find(|data| keccak256(data) == extract.block_data_hash())
             .map(Into::into)
             .ok_or_else(|| BlobberError::block_data_not_found(extract.block_data_hash()))
+            .inspect(|_| {
+                trace!(slot, %tx_hash, "Successfully fetched and decoded blobs");
+            })
     }
 
     /// Fetch the blobs, decode them using the provided coder, and construct a
@@ -131,7 +134,13 @@ impl<Coder> CacheHandle<Coder> {
             }
             Err(BlobberError::Fetch(err)) => return Err(err),
         };
-        Ok(ZenithBlock::from_header_and_data(header, block_data))
+        Ok(ZenithBlock::from_header_and_data(header, block_data)).inspect(|block| {
+            trace!(
+                host_block_number = %block.header().hostBlockNumber,
+                tx_count = block.transactions().len(),
+                "Constructed ZenithBlock from header and data"
+            );
+        })
     }
 }
 
