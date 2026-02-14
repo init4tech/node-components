@@ -4,9 +4,10 @@ mod endpoints;
 use endpoints::{
     addr_tx_count, balance, block, block_number, block_receipts, block_tx_count, call, chain_id,
     code_at, estimate_gas, fee_history, gas_price, get_filter_changes, get_logs, header_by,
-    max_priority_fee_per_gas, new_block_filter, new_filter, not_supported, raw_transaction_by_hash,
-    raw_tx_by_block_and_index, send_raw_transaction, storage_at, subscribe, transaction_by_hash,
-    transaction_receipt, tx_by_block_and_index, uninstall_filter, unsubscribe,
+    max_priority_fee_per_gas, new_block_filter, new_filter, not_supported,
+    raw_transaction_by_block_and_index, raw_transaction_by_hash, send_raw_transaction, storage_at,
+    subscribe, transaction_by_block_and_index, transaction_by_hash, transaction_receipt,
+    uninstall_filter, unsubscribe,
 };
 
 mod error;
@@ -36,13 +37,19 @@ where
         .route("getBlockReceipts", block_receipts::<H>)
         .route("getRawTransactionByHash", raw_transaction_by_hash::<H>)
         .route("getTransactionByHash", transaction_by_hash::<H>)
-        .route("getRawTransactionByBlockHashAndIndex", raw_tx_by_block_and_index::<B256, H>)
+        .route(
+            "getRawTransactionByBlockHashAndIndex",
+            raw_transaction_by_block_and_index::<B256, H>,
+        )
         .route(
             "getRawTransactionByBlockNumberAndIndex",
-            raw_tx_by_block_and_index::<BlockNumberOrTag, H>,
+            raw_transaction_by_block_and_index::<BlockNumberOrTag, H>,
         )
-        .route("getTransactionByBlockHashAndIndex", tx_by_block_and_index::<B256, H>)
-        .route("getTransactionByBlockNumberAndIndex", tx_by_block_and_index::<BlockNumberOrTag, H>)
+        .route("getTransactionByBlockHashAndIndex", transaction_by_block_and_index::<B256, H>)
+        .route(
+            "getTransactionByBlockNumberAndIndex",
+            transaction_by_block_and_index::<BlockNumberOrTag, H>,
+        )
         .route("getTransactionReceipt", transaction_receipt::<H>)
         .route("getBlockHeaderByHash", header_by::<B256, H>)
         .route("getBlockHeaderByNumber", header_by::<BlockNumberOrTag, H>)
