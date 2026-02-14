@@ -5,6 +5,7 @@
 //! updating these as the chain progresses.
 
 use alloy::primitives::B256;
+use signet_storage::StorageError;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -77,9 +78,12 @@ impl BlockTags {
 /// Error resolving a block identifier.
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    /// Cold storage error.
+    /// Storage error (e.g. failed to open a read transaction).
     #[error(transparent)]
-    Cold(#[from] signet_cold::ColdStorageError),
+    Storage(#[from] StorageError),
+    /// Database read error.
+    #[error("{0}")]
+    Db(Box<dyn std::error::Error + Send + Sync>),
     /// Block hash not found.
     #[error("block hash not found: {0}")]
     HashNotFound(B256),

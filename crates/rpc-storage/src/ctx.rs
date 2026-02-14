@@ -8,6 +8,7 @@ use crate::{
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use signet_cold::ColdStorageReadHandle;
 use signet_hot::HotKv;
+use signet_hot::db::HotDbRead;
 use signet_hot::model::{HotKvRead, RevmRead};
 use signet_storage::UnifiedStorage;
 use signet_tx_cache::TxCache;
@@ -177,17 +178,43 @@ impl<H: HotKv> StorageRpcCtx<H> {
     ///
     /// For tag/number-based IDs, resolves synchronously via
     /// [`resolve_block_tag`](Self::resolve_block_tag). For hash-based IDs,
-    /// fetches the header from cold storage to obtain the block number.
-    pub(crate) async fn resolve_block_id(&self, id: BlockId) -> Result<u64, ResolveError> {
+    /// looks up the block number from hot storage's `HeaderNumbers` table.
+    pub(crate) fn resolve_block_id(&self, id: BlockId) -> Result<u64, ResolveError>
+    where
+        <H::RoTx as HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
+    {
         match id {
             BlockId::Number(tag) => Ok(self.resolve_block_tag(tag)),
             BlockId::Hash(h) => {
-                let header = self
-                    .cold()
-                    .get_header_by_hash(h.block_hash)
-                    .await?
-                    .ok_or(ResolveError::HashNotFound(h.block_hash))?;
-                Ok(header.number)
+                let reader = self.hot_reader()?;
+                reader
+                    .get_header_number(&h.block_hash)
+                    .map_err(|e| ResolveError::Db(Box::new(e)))?
+                    .ok_or(ResolveError::HashNotFound(h.block_hash))
+            }
+        }
+    }
+
+    /// Resolve a [`BlockId`] to a header from hot storage.
+    ///
+    /// For hash-based IDs, fetches the header directly by hash. For
+    /// tag/number-based IDs, resolves the tag then fetches the header by
+    /// number. Returns `None` if the header is not found.
+    pub(crate) fn resolve_header(
+        &self,
+        id: BlockId,
+    ) -> Result<Option<signet_storage_types::SealedHeader>, ResolveError>
+    where
+        <H::RoTx as HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let reader = self.hot_reader()?;
+        match id {
+            BlockId::Hash(h) => {
+                reader.header_by_hash(&h.block_hash).map_err(|e| ResolveError::Db(Box::new(e)))
+            }
+            BlockId::Number(tag) => {
+                let height = self.resolve_block_tag(tag);
+                reader.get_header(height).map_err(|e| ResolveError::Db(Box::new(e)))
             }
         }
     }
@@ -209,27 +236,16 @@ impl<H: HotKv> StorageRpcCtx<H> {
 
     /// Resolve a [`BlockId`] to a header and revm database in one pass.
     ///
-    /// For hash-based IDs, fetches the header directly by hash. For
-    /// tag/number-based IDs, resolves the tag then fetches the header by
-    /// number. This avoids a redundant header lookup that would occur if
-    /// resolving to a block number first.
-    pub(crate) async fn resolve_evm_block(
+    /// Fetches the header from hot storage and creates a revm-compatible
+    /// database snapshot at the resolved block height.
+    pub(crate) fn resolve_evm_block(
         &self,
         id: BlockId,
     ) -> Result<EvmBlockContext<RevmRead<H::RoTx>>, EthError>
     where
         <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     {
-        let cold = self.cold();
-        let header = match id {
-            BlockId::Hash(h) => cold.get_header_by_hash(h.block_hash).await?,
-            BlockId::Number(tag) => {
-                let height = self.resolve_block_tag(tag);
-                cold.get_header_by_number(height).await?
-            }
-        }
-        .ok_or(EthError::BlockNotFound(id))?;
-
+        let header = self.resolve_header(id)?.ok_or(EthError::BlockNotFound(id))?;
         let db = self.revm_state_at_height(header.number)?;
         Ok(EvmBlockContext { header: header.into_inner(), db })
     }

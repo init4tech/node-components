@@ -62,6 +62,17 @@ impl TestHarness {
         Self { app, cold, hot, tags, notif_tx, ctx, _cancel: cancel }
     }
 
+    /// Append a block to both hot and cold storage.
+    ///
+    /// Writes the header to hot so hash→number and header lookups work,
+    /// then writes the full block to cold.
+    async fn append_block(&self, block: BlockData) {
+        let writer = self.hot.writer().unwrap();
+        writer.put_header(&block.header).unwrap();
+        writer.commit().unwrap();
+        self.cold.append_block(block).await.unwrap();
+    }
+
     /// Build an axum router for the debug namespace.
     fn debug_app(&self) -> axum::Router {
         signet_rpc_storage::debug::<MemKv>().into_axum("/").with_state(self.ctx.clone())
@@ -238,7 +249,8 @@ async fn test_chain_id() {
 // Group 2: Cold storage — block queries
 // ---------------------------------------------------------------------------
 
-/// Shared setup: append a block with 2 signed transactions to cold storage.
+/// Shared setup: append a block with 2 signed transactions to both hot and
+/// cold storage.
 async fn setup_cold_block(h: &TestHarness) -> (Vec<B256>, Vec<Address>) {
     let (tx0, sender0) = make_signed_tx(0);
     let (tx1, sender1) = make_signed_tx(1);
@@ -247,7 +259,7 @@ async fn setup_cold_block(h: &TestHarness) -> (Vec<B256>, Vec<Address>) {
     let hash1 = *tx1.tx_hash();
 
     let block = make_block(1, vec![tx0, tx1], 1);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     (vec![hash0, hash1], vec![sender0, sender1])
@@ -441,7 +453,7 @@ async fn test_get_balance() {
 
     // Append a dummy block so tag resolution succeeds
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
 
     let result =
         rpc_call(&h.app, "getBalance", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
@@ -456,7 +468,7 @@ async fn test_get_transaction_count() {
     setup_hot_account(&h.hot);
 
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
 
     let result =
         rpc_call(&h.app, "getTransactionCount", json!([format!("{:?}", TEST_ADDR), "latest"]))
@@ -471,7 +483,7 @@ async fn test_get_storage_at() {
     setup_hot_account(&h.hot);
 
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
 
     let slot = format!("{:#066x}", 42u64);
     let result =
@@ -488,7 +500,7 @@ async fn test_get_code() {
     setup_hot_account(&h.hot);
 
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
 
     let result = rpc_call(&h.app, "getCode", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
 
@@ -500,7 +512,7 @@ async fn test_get_balance_unknown_account() {
     let h = TestHarness::new(1).await;
 
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
 
     let unknown = Address::repeat_byte(0xff);
     let result = rpc_call(&h.app, "getBalance", json!([format!("{:?}", unknown), "latest"])).await;
@@ -519,7 +531,7 @@ async fn test_get_logs_by_block_hash() {
     // Create block with transactions that have logs
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 2); // 2 logs per receipt
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     // Get the block hash
@@ -550,7 +562,7 @@ async fn test_get_logs_by_range() {
 
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 1);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(
@@ -575,7 +587,7 @@ async fn test_get_logs_empty() {
 
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 0); // no logs
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(
@@ -602,7 +614,7 @@ async fn test_not_supported() {
     let resp = rpc_call_raw(&h.app, "syncing", json!([])).await;
     assert!(resp.get("error").is_some());
     let msg = resp["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("not supported"), "unexpected error: {msg}");
+    assert!(msg.contains("not found"), "unexpected error: {msg}");
 }
 
 #[tokio::test]
@@ -623,7 +635,7 @@ async fn test_gas_price() {
     // Create a block with txs that have gas_price (2 gwei) > base_fee (1 gwei)
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(&h.app, "gasPrice", json!([])).await;
@@ -639,7 +651,7 @@ async fn test_max_priority_fee_per_gas() {
 
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(&h.app, "maxPriorityFeePerGas", json!([])).await;
@@ -653,7 +665,7 @@ async fn test_gas_price_empty_blocks() {
     let h = TestHarness::new(0).await;
 
     let block = make_block(1, vec![], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(&h.app, "gasPrice", json!([])).await;
@@ -669,7 +681,7 @@ async fn test_fee_history_basic() {
     for i in 1u64..=3 {
         let (tx, _) = make_signed_tx_with_gas_price(i - 1, 2_000_000_000);
         let block = make_block(i, vec![tx], 0);
-        h.cold.append_block(block).await.unwrap();
+        h.append_block(block).await;
     }
     h.tags.set_latest(3);
 
@@ -694,7 +706,7 @@ async fn test_fee_history_with_rewards() {
 
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let result = rpc_call(&h.app, "feeHistory", json!(["0x1", "0x1", [25.0, 75.0]])).await;
@@ -721,7 +733,7 @@ async fn test_new_block_filter_and_changes() {
     // Append a block
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     // Poll for changes — should get block hash for block 1
@@ -755,7 +767,7 @@ async fn test_new_log_filter_and_changes() {
     // Append a block with matching logs
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 2);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     // Poll for changes — should get matching logs
@@ -810,7 +822,7 @@ async fn test_trace_block_by_number_noop() {
     setup_hot_for_evm(&h.hot, sender, U256::from(1_000_000_000_000_000_000u128));
 
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let debug_app = h.debug_app();
@@ -830,7 +842,7 @@ async fn test_trace_transaction_noop() {
     setup_hot_for_evm(&h.hot, sender, U256::from(1_000_000_000_000_000_000u128));
 
     let block = make_block(1, vec![tx0], 0);
-    h.cold.append_block(block).await.unwrap();
+    h.append_block(block).await;
     h.tags.set_latest(1);
 
     let debug_app = h.debug_app();
