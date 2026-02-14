@@ -161,12 +161,12 @@ impl trevm::Cfg for CfgFiller {
 
 /// Build an [`alloy::rpc::types::Transaction`] from cold storage types.
 pub(crate) fn build_rpc_transaction(
-    tx: signet_storage_types::RecoveredTx,
+    tx: &signet_storage_types::RecoveredTx,
     meta: &ConfirmationMeta,
     base_fee: Option<u64>,
 ) -> RpcTransaction {
     let signer = tx.signer();
-    let tx_envelope: alloy::consensus::TxEnvelope = tx.into_inner().into();
+    let tx_envelope: alloy::consensus::TxEnvelope = tx.clone().into_inner().into();
     let inner = Recovered::new_unchecked(tx_envelope, signer);
 
     let egp = base_fee
@@ -187,7 +187,7 @@ pub(crate) fn build_rpc_transaction(
 /// The transaction is needed for `to`, `contract_address`, and
 /// `effective_gas_price` which are not stored on the receipt.
 pub(crate) fn build_receipt(
-    cr: ColdReceipt,
+    cr: &ColdReceipt,
     tx: &signet_storage_types::RecoveredTx,
     base_fee: Option<u64>,
 ) -> RpcReceipt {
@@ -195,8 +195,11 @@ pub(crate) fn build_receipt(
     let status = cr.receipt.status;
     let cumulative_gas_used = cr.receipt.cumulative_gas_used;
 
-    let rpc_receipt =
-        alloy::rpc::types::eth::Receipt { status, cumulative_gas_used, logs: cr.receipt.logs };
+    let rpc_receipt = alloy::rpc::types::eth::Receipt {
+        status,
+        cumulative_gas_used,
+        logs: cr.receipt.logs.clone(),
+    };
 
     let (contract_address, to) = match tx.kind() {
         TxKind::Create => (Some(cr.from.create(tx.nonce())), None),

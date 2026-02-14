@@ -1,13 +1,44 @@
 # Future Evaluation Notes
 
-## Vec Collection at API Boundary
+## Lazy Serialization (ajj 0.5.0)
 
-Several endpoints (`eth_getBlockReceipts`, `debug_traceBlockByNumber`, etc.)
-collect results into a `Vec` before returning. This is required because
-`ajj::ResponsePayload` expects an owned `Serialize` value — there is no way
-to feed items to the serializer via an iterator or streaming interface.
+ajj 0.5.0 relaxed `RpcSend` bounds so that custom `Serialize` impls can be
+returned from handlers without collecting into a `Vec`. Two endpoints now use
+this:
 
-If `ajj` adds support for streaming serialization (e.g. accepting an
-`Iterator<Item: Serialize>` or a `Stream`), these endpoints could be
-refactored to avoid the intermediate allocation. Until then, the `Vec`
-collection is the necessary approach at the API boundary.
+- **`eth_getBlockReceipts`** — `LazyReceipts` serializes receipts inline from
+  raw `ColdReceipt` + `RecoveredTx` data without an intermediate
+  `Vec<RpcReceipt>`.
+- **`eth_getBlockByHash` / `eth_getBlockByNumber`** — in-housed
+  `BlockTransactions` and `RpcBlock` types serialize full transactions or
+  hashes lazily from `Vec<RecoveredTx>`.
+
+## Endpoints that cannot benefit
+
+- **`debug_traceBlockByNumber`** — EVM state is sequential and destructively
+  consumed per transaction. Computation must be eager; the `Vec<TraceResult>`
+  confirms all traces succeed before returning. Converting `DebugError` to
+  `serde::ser::Error` would lose variant information.
+- **`eth_feeHistory`** — Vecs feed into `FeeHistory` (alloy type) which uses
+  `alloy_serde::quantity` custom serializers. In-housing is moderate effort
+  for low payoff.
+- **`eth_getLogs`** — `Vec<Log>` comes directly from cold storage with no
+  transformation at the API boundary.
+- **Other sites** — Vecs are needed for sorting (`calculate_reward_percentiles`,
+  `suggest_tip_cap`), poll buffering (`FilterOutput`), or feed into alloy
+  types we don't control.
+
+## Channel-based cold storage streaming
+
+If cold storage returned `tokio::mpsc::Receiver<T>` instead of `Vec<T>`, lazy
+async serialization is blocked by two constraints:
+
+1. `serde::Serialize` is synchronous — there is no way to `.await` a channel
+   receiver inside `serialize()`.
+2. ajj 0.5.0 buffers the entire response via `serde_json::to_raw_value` before
+   sending over HTTP or WebSocket. There is no chunked or streaming response
+   support.
+
+To unlock channel-based streaming, ajj would need a streaming response API
+(e.g. `AsyncSerialize` or HTTP chunked encoding with per-item flushing). Until
+then, handlers must drain receivers before returning.

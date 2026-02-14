@@ -62,7 +62,7 @@ signet-hot = "0.5.0"
 signet-storage-types = "0.5.0"
 
 # ajj
-ajj = { version = "0.3.4" }
+ajj = { version = "0.5.0" }
 
 # trevm
 trevm = { version = "0.34.0", features = ["full_env_cfg"] }
