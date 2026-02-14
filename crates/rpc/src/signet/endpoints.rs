@@ -62,7 +62,7 @@ where
 
         response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| e.into_error()));
 
-        ResponsePayload::Success(driver.into_response())
+        ResponsePayload(Ok(driver.into_response()))
     };
 
     let task = async move {

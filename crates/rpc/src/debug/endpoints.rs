@@ -90,7 +90,7 @@ where
             tracing::debug!(tx_index = idx, tx_hash = ?tx.hash(), "Traced transaction");
         }
 
-        ResponsePayload::Success(frames)
+        ResponsePayload(Ok(frames))
     }
     .instrument(span);
 
@@ -163,7 +163,7 @@ where
 
         let res = response_tri!(crate::debug::tracer::trace(trevm, &opts, tx_info)).0;
 
-        ResponsePayload::Success(res)
+        ResponsePayload(Ok(res))
     }
     .instrument(span);
 

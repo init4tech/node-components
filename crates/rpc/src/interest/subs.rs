@@ -1,5 +1,5 @@
 use crate::interest::InterestKind;
-use ajj::{HandlerCtx, serde_json};
+use ajj::HandlerCtx;
 use alloy::{primitives::U64, rpc::types::Log};
 use dashmap::DashMap;
 use reth::{
@@ -8,9 +8,7 @@ use reth::{
 };
 use signet_node_types::Pnt;
 use std::{
-    cmp::min,
     collections::VecDeque,
-    future::pending,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -19,7 +17,7 @@ use std::{
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{Instrument, debug, debug_span, enabled, trace};
+use tracing::{debug, debug_span, enabled, trace};
 
 /// Either type for subscription outputs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -211,9 +209,10 @@ impl SubscriptionTask {
     ) {
         let SubscriptionTask { id, filter, token, mut notifs } = self;
 
-        let Some(sender) = ajj_ctx.notifications() else { return };
+        if !ajj_ctx.notifications_enabled() {
+            return;
+        }
 
-        // Buffer for notifications to be sent to the client
         let mut notif_buffer = filter.empty_sub_buffer();
         tokio::pin!(ajj_cancel);
 
@@ -223,99 +222,69 @@ impl SubscriptionTask {
                 span.record("filter", format!("{filter:?}"));
             }
 
-            let guard = span.enter();
-            // This future checks if the notification buffer is non-empty and
-            // waits for the sender to have some capacity before sending.
-            let permit_fut = async {
-                if !notif_buffer.is_empty() {
-                    // NB: we reserve half the capacity to avoid blocking other
-                    // usage. This is a heuristic and can be adjusted as needed.
-                    sender.reserve_many(min(sender.max_capacity() / 2, notif_buffer.len())).await
-                } else {
-                    // If the notification buffer is empty, just never return
-                    pending().await
-                }
-            }
-            .in_current_span();
-            drop(guard);
+            // Drain one buffered item per iteration, checking for
+            // cancellation between each send.
+            if let Some(item) = notif_buffer.pop_front() {
+                let notification = ajj::serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "eth_subscription",
+                    "params": {
+                        "result": &item,
+                        "subscription": id
+                    },
+                });
 
-            // NB: this select is biased, this ensures that the outbound
-            // buffer is either drained, or blocked on permits before checking
-            // the inbound buffer
+                let _guard = span.enter();
+                tokio::select! {
+                    biased;
+                    _ = &mut ajj_cancel => {
+                        trace!("subscription cancelled by client disconnect");
+                        token.cancel();
+                        break;
+                    }
+                    _ = token.cancelled() => {
+                        trace!("subscription cancelled by user");
+                        break;
+                    }
+                    result = ajj_ctx.notify(&notification) => {
+                        if result.is_err() {
+                            trace!("channel to client closed");
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Buffer empty — wait for incoming notifications.
+            let _guard = span.enter();
             tokio::select! {
                 biased;
                 _ = &mut ajj_cancel => {
-                    let _guard = span.enter();
-                    // if AJJ cancelled us via client disconnect, we should
-                    // cancel the token so that we can be reaped by the
-                    // subscription cleaner task.
                     trace!("subscription cancelled by client disconnect");
                     token.cancel();
                     break;
                 }
                 _ = token.cancelled() => {
-                    // If the token is cancelled, this subscription has been
-                    // cancelled by eth_unsubscribe
-                    let _guard = span.enter();
                     trace!("subscription cancelled by user");
                     break;
                 }
-                permits = permit_fut => {
-                    let _guard = span.enter();
-                    // channel closed
-                    let Ok(permits) = permits else {
-                        trace!("channel to client closed");
-                        break
-                    };
-
-                    for permit in permits {
-                        // Send notification to the client for each permit.
-                        let Some(item) = notif_buffer.pop_front() else {
-                            // if we run out of notifications, we should break
-                            // This would be weird, as we only allocated
-                            // permits for notifications we had. Let's handle it anyway.
-                            break;
-                        };
-                        let notification = ajj::serde_json::json!{
-                            {
-                                "jsonrpc": "2.0",
-                                "method": "eth_subscription",
-                                "params": {
-                                    "result": &item,
-                                    "subscription": id
-                                },
-                            }
-                        };
-                        // Serialize and send.
-                        let Ok(brv) = serde_json::value::to_raw_value(&notification) else {
-                            trace!(?item, "failed to serialize notification");
-                            continue
-                        };
-                        permit.send(brv);
-                    }
-                }
                 notif_res = notifs.recv() => {
-                    let _guard = span.enter();
-
                     let notif = match notif_res {
                         Ok(notif) => notif,
                         Err(RecvError::Lagged(skipped)) => {
                             trace!(skipped, "missed notifications");
                             continue;
-                        },
-                        Err(e) =>{
+                        }
+                        Err(e) => {
                             trace!(?e, "CanonStateNotifications stream closed");
                             break;
                         }
                     };
 
                     let output = filter.filter_notification_for_sub(&notif);
-
                     trace!(count = output.len(), "Filter applied to notification");
                     if !output.is_empty() {
-                        // NB: this will panic if the filter type changes
-                        // mid-task. But that should never happen as it would
-                        // break API guarantees anyway
                         notif_buffer.extend(output);
                     }
                 }
