@@ -56,10 +56,10 @@ signet-tx-cache = "0.16.0-rc.8"
 signet-types = "0.16.0-rc.8"
 signet-zenith = "0.16.0-rc.8"
 signet-journal = "0.16.0-rc.8"
-signet-storage = "0.3.0"
-signet-cold = "0.3.0"
-signet-hot = "0.3.0"
-signet-storage-types = "0.3.0"
+signet-storage = "0.4.0"
+signet-cold = "0.4.0"
+signet-hot = "0.4.0"
+signet-storage-types = "0.4.0"
 
 # ajj
 ajj = { version = "0.3.4" }
