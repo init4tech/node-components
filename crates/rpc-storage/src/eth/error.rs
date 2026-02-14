@@ -14,7 +14,7 @@ pub enum EthError {
     Hot(#[from] signet_storage::StorageError),
     /// Block resolution error.
     #[error("resolve: {0}")]
-    Resolve(#[from] crate::resolve::ResolveError),
+    Resolve(#[from] crate::config::resolve::ResolveError),
     /// Invalid transaction signature.
     #[error("invalid transaction signature")]
     InvalidSignature,

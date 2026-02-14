@@ -57,7 +57,7 @@ impl TestHarness {
             StorageRpcConfig::default(),
             notif_tx.clone(),
         );
-        let app = signet_rpc_storage::eth::<MemKv>().into_axum("/").with_state(ctx.clone());
+        let app = signet_rpc_storage::router::<MemKv>().into_axum("/").with_state(ctx.clone());
 
         Self { app, cold, hot, tags, notif_tx, ctx, _cancel: cancel }
     }
@@ -72,23 +72,12 @@ impl TestHarness {
         writer.commit().unwrap();
         self.cold.append_block(block).await.unwrap();
     }
-
-    /// Build an axum router for the debug namespace.
-    fn debug_app(&self) -> axum::Router {
-        signet_rpc_storage::debug::<MemKv>().into_axum("/").with_state(self.ctx.clone())
-    }
-
-    /// Build an axum router for the signet namespace.
-    #[allow(dead_code)]
-    fn signet_app(&self) -> axum::Router {
-        signet_rpc_storage::signet::<MemKv>().into_axum("/").with_state(self.ctx.clone())
-    }
 }
 
 /// Make a JSON-RPC call and return the `"result"` field.
 ///
-/// The `method` parameter is the short name (e.g. `"blockNumber"`), without
-/// the `eth_` prefix. The router registers methods without namespace prefix.
+/// The `method` parameter is the fully-qualified name (e.g.
+/// `"eth_blockNumber"`). The router nests each namespace under its prefix.
 ///
 /// Panics if the response contains an `"error"` field.
 async fn rpc_call(app: &axum::Router, method: &str, params: Value) -> Value {
@@ -233,14 +222,14 @@ fn make_block(
 #[tokio::test]
 async fn test_block_number() {
     let h = TestHarness::new(42).await;
-    let result = rpc_call(&h.app, "blockNumber", json!([])).await;
+    let result = rpc_call(&h.app, "eth_blockNumber", json!([])).await;
     assert_eq!(result, json!("0x2a"));
 }
 
 #[tokio::test]
 async fn test_chain_id() {
     let h = TestHarness::new(0).await;
-    let result = rpc_call(&h.app, "chainId", json!([])).await;
+    let result = rpc_call(&h.app, "eth_chainId", json!([])).await;
     let expected = format!("0x{:x}", SignetSystemConstants::test().ru_chain_id());
     assert_eq!(result, json!(expected));
 }
@@ -270,7 +259,7 @@ async fn test_get_block_by_number_hashes() {
     let h = TestHarness::new(0).await;
     let (tx_hashes, _) = setup_cold_block(&h).await;
 
-    let result = rpc_call(&h.app, "getBlockByNumber", json!(["0x1", false])).await;
+    let result = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0x1", false])).await;
 
     assert_eq!(result["number"], json!("0x1"));
     let txs = result["transactions"].as_array().unwrap();
@@ -285,7 +274,7 @@ async fn test_get_block_by_number_full() {
     let h = TestHarness::new(0).await;
     let (tx_hashes, senders) = setup_cold_block(&h).await;
 
-    let result = rpc_call(&h.app, "getBlockByNumber", json!(["0x1", true])).await;
+    let result = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0x1", true])).await;
 
     assert_eq!(result["number"], json!("0x1"));
     let txs = result["transactions"].as_array().unwrap();
@@ -305,10 +294,10 @@ async fn test_get_block_by_hash() {
     setup_cold_block(&h).await;
 
     // Get the block to learn its hash
-    let block = rpc_call(&h.app, "getBlockByNumber", json!(["0x1", false])).await;
+    let block = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0x1", false])).await;
     let block_hash = block["hash"].as_str().unwrap().to_string();
 
-    let result = rpc_call(&h.app, "getBlockByHash", json!([block_hash, false])).await;
+    let result = rpc_call(&h.app, "eth_getBlockByHash", json!([block_hash, false])).await;
     assert_eq!(result["number"], json!("0x1"));
     assert_eq!(result["hash"], json!(block_hash));
 }
@@ -318,7 +307,7 @@ async fn test_get_block_tx_count() {
     let h = TestHarness::new(0).await;
     setup_cold_block(&h).await;
 
-    let result = rpc_call(&h.app, "getBlockTransactionCountByNumber", json!(["0x1"])).await;
+    let result = rpc_call(&h.app, "eth_getBlockTransactionCountByNumber", json!(["0x1"])).await;
     assert_eq!(result, json!("0x2"));
 }
 
@@ -327,7 +316,7 @@ async fn test_get_block_header() {
     let h = TestHarness::new(0).await;
     setup_cold_block(&h).await;
 
-    let result = rpc_call(&h.app, "getBlockHeaderByNumber", json!(["0x1"])).await;
+    let result = rpc_call(&h.app, "eth_getBlockHeaderByNumber", json!(["0x1"])).await;
     assert_eq!(result["number"], json!("0x1"));
     assert!(result["baseFeePerGas"].is_string());
 }
@@ -335,7 +324,7 @@ async fn test_get_block_header() {
 #[tokio::test]
 async fn test_get_block_not_found() {
     let h = TestHarness::new(255).await;
-    let result = rpc_call(&h.app, "getBlockByNumber", json!(["0xff", false])).await;
+    let result = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0xff", false])).await;
     assert!(result.is_null());
 }
 
@@ -349,7 +338,7 @@ async fn test_get_transaction_by_hash() {
     let (tx_hashes, senders) = setup_cold_block(&h).await;
 
     let result =
-        rpc_call(&h.app, "getTransactionByHash", json!([format!("{:?}", tx_hashes[0])])).await;
+        rpc_call(&h.app, "eth_getTransactionByHash", json!([format!("{:?}", tx_hashes[0])])).await;
 
     assert_eq!(result["hash"], json!(format!("{:?}", tx_hashes[0])));
     assert_eq!(result["from"], json!(format!("{:?}", senders[0])));
@@ -363,7 +352,8 @@ async fn test_get_raw_transaction_by_hash() {
     let (tx_hashes, _) = setup_cold_block(&h).await;
 
     let result =
-        rpc_call(&h.app, "getRawTransactionByHash", json!([format!("{:?}", tx_hashes[0])])).await;
+        rpc_call(&h.app, "eth_getRawTransactionByHash", json!([format!("{:?}", tx_hashes[0])]))
+            .await;
 
     // Raw transaction is a hex string
     let hex = result.as_str().unwrap();
@@ -377,7 +367,7 @@ async fn test_get_tx_by_block_and_index() {
     let (tx_hashes, senders) = setup_cold_block(&h).await;
 
     let result =
-        rpc_call(&h.app, "getTransactionByBlockNumberAndIndex", json!(["0x1", "0x0"])).await;
+        rpc_call(&h.app, "eth_getTransactionByBlockNumberAndIndex", json!(["0x1", "0x0"])).await;
 
     assert_eq!(result["hash"], json!(format!("{:?}", tx_hashes[0])));
     assert_eq!(result["from"], json!(format!("{:?}", senders[0])));
@@ -389,7 +379,7 @@ async fn test_get_transaction_receipt() {
     let (tx_hashes, senders) = setup_cold_block(&h).await;
 
     let result =
-        rpc_call(&h.app, "getTransactionReceipt", json!([format!("{:?}", tx_hashes[0])])).await;
+        rpc_call(&h.app, "eth_getTransactionReceipt", json!([format!("{:?}", tx_hashes[0])])).await;
 
     assert_eq!(result["transactionHash"], json!(format!("{:?}", tx_hashes[0])));
     assert_eq!(result["from"], json!(format!("{:?}", senders[0])));
@@ -403,7 +393,7 @@ async fn test_get_block_receipts() {
     let h = TestHarness::new(0).await;
     setup_cold_block(&h).await;
 
-    let result = rpc_call(&h.app, "getBlockReceipts", json!(["0x1"])).await;
+    let result = rpc_call(&h.app, "eth_getBlockReceipts", json!(["0x1"])).await;
 
     let receipts = result.as_array().unwrap();
     assert_eq!(receipts.len(), 2);
@@ -456,7 +446,7 @@ async fn test_get_balance() {
     h.append_block(block).await;
 
     let result =
-        rpc_call(&h.app, "getBalance", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
+        rpc_call(&h.app, "eth_getBalance", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
 
     // 1 ETH = 10^18
     assert_eq!(result, json!("0xde0b6b3a7640000"));
@@ -471,7 +461,7 @@ async fn test_get_transaction_count() {
     h.append_block(block).await;
 
     let result =
-        rpc_call(&h.app, "getTransactionCount", json!([format!("{:?}", TEST_ADDR), "latest"]))
+        rpc_call(&h.app, "eth_getTransactionCount", json!([format!("{:?}", TEST_ADDR), "latest"]))
             .await;
 
     assert_eq!(result, json!("0x5"));
@@ -487,7 +477,8 @@ async fn test_get_storage_at() {
 
     let slot = format!("{:#066x}", 42u64);
     let result =
-        rpc_call(&h.app, "getStorageAt", json!([format!("{:?}", TEST_ADDR), slot, "latest"])).await;
+        rpc_call(&h.app, "eth_getStorageAt", json!([format!("{:?}", TEST_ADDR), slot, "latest"]))
+            .await;
 
     // 999 = 0x3e7, padded to 32 bytes
     let expected = format!("{:#066x}", 999u64);
@@ -502,7 +493,8 @@ async fn test_get_code() {
     let block = make_block(1, vec![], 0);
     h.append_block(block).await;
 
-    let result = rpc_call(&h.app, "getCode", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
+    let result =
+        rpc_call(&h.app, "eth_getCode", json!([format!("{:?}", TEST_ADDR), "latest"])).await;
 
     assert_eq!(result, json!("0x60006000f3"));
 }
@@ -515,7 +507,8 @@ async fn test_get_balance_unknown_account() {
     h.append_block(block).await;
 
     let unknown = Address::repeat_byte(0xff);
-    let result = rpc_call(&h.app, "getBalance", json!([format!("{:?}", unknown), "latest"])).await;
+    let result =
+        rpc_call(&h.app, "eth_getBalance", json!([format!("{:?}", unknown), "latest"])).await;
 
     assert_eq!(result, json!("0x0"));
 }
@@ -535,12 +528,12 @@ async fn test_get_logs_by_block_hash() {
     h.tags.set_latest(1);
 
     // Get the block hash
-    let block_result = rpc_call(&h.app, "getBlockByNumber", json!(["0x1", false])).await;
+    let block_result = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0x1", false])).await;
     let block_hash = block_result["hash"].as_str().unwrap().to_string();
 
     let result = rpc_call(
         &h.app,
-        "getLogs",
+        "eth_getLogs",
         json!([{
             "blockHash": block_hash,
             "address": format!("{:?}", LOG_ADDR),
@@ -567,7 +560,7 @@ async fn test_get_logs_by_range() {
 
     let result = rpc_call(
         &h.app,
-        "getLogs",
+        "eth_getLogs",
         json!([{
             "fromBlock": "0x1",
             "toBlock": "0x1",
@@ -592,7 +585,7 @@ async fn test_get_logs_empty() {
 
     let result = rpc_call(
         &h.app,
-        "getLogs",
+        "eth_getLogs",
         json!([{
             "fromBlock": "0x1",
             "toBlock": "0x1",
@@ -611,16 +604,16 @@ async fn test_get_logs_empty() {
 #[tokio::test]
 async fn test_not_supported() {
     let h = TestHarness::new(0).await;
-    let resp = rpc_call_raw(&h.app, "syncing", json!([])).await;
+    let resp = rpc_call_raw(&h.app, "eth_syncing", json!([])).await;
     assert!(resp.get("error").is_some());
     let msg = resp["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("not supported"), "unexpected error: {msg}");
+    assert!(msg.contains("not found"), "unexpected error: {msg}");
 }
 
 #[tokio::test]
 async fn test_send_raw_tx_no_cache() {
     let h = TestHarness::new(0).await;
-    let resp = rpc_call_raw(&h.app, "sendRawTransaction", json!(["0x00"])).await;
+    let resp = rpc_call_raw(&h.app, "eth_sendRawTransaction", json!(["0x00"])).await;
     assert!(resp.get("error").is_some());
 }
 
@@ -638,7 +631,7 @@ async fn test_gas_price() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let result = rpc_call(&h.app, "gasPrice", json!([])).await;
+    let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
     // tip = gas_price - base_fee = 2e9 - 1e9 = 1e9
     // gasPrice = tip + base_fee = 1e9 + 1e9 = 2e9 = 0x77359400
@@ -654,7 +647,7 @@ async fn test_max_priority_fee_per_gas() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let result = rpc_call(&h.app, "maxPriorityFeePerGas", json!([])).await;
+    let result = rpc_call(&h.app, "eth_maxPriorityFeePerGas", json!([])).await;
 
     // tip only = gas_price - base_fee = 1e9 = 0x3b9aca00
     assert_eq!(result, json!("0x3b9aca00"));
@@ -668,7 +661,7 @@ async fn test_gas_price_empty_blocks() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let result = rpc_call(&h.app, "gasPrice", json!([])).await;
+    let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
     // No txs means tip = 0, gasPrice = base_fee = 1e9 = 0x3b9aca00
     assert_eq!(result, json!("0x3b9aca00"));
@@ -686,7 +679,7 @@ async fn test_fee_history_basic() {
     h.tags.set_latest(3);
 
     // Request 2 blocks of fee history ending at block 3
-    let result = rpc_call(&h.app, "feeHistory", json!(["0x2", "0x3", null])).await;
+    let result = rpc_call(&h.app, "eth_feeHistory", json!(["0x2", "0x3", null])).await;
 
     // oldest_block = end_block + 1 - block_count = 3 + 1 - 2 = 2
     assert_eq!(result["oldestBlock"], json!("0x2"));
@@ -709,7 +702,7 @@ async fn test_fee_history_with_rewards() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let result = rpc_call(&h.app, "feeHistory", json!(["0x1", "0x1", [25.0, 75.0]])).await;
+    let result = rpc_call(&h.app, "eth_feeHistory", json!(["0x1", "0x1", [25.0, 75.0]])).await;
 
     assert_eq!(result["oldestBlock"], json!("0x1"));
     let rewards = result["reward"].as_array().unwrap();
@@ -727,7 +720,7 @@ async fn test_new_block_filter_and_changes() {
     let h = TestHarness::new(0).await;
 
     // Install a block filter at block 0
-    let filter_id = rpc_call(&h.app, "newBlockFilter", json!([])).await;
+    let filter_id = rpc_call(&h.app, "eth_newBlockFilter", json!([])).await;
     let filter_id_str = filter_id.as_str().unwrap().to_string();
 
     // Append a block
@@ -737,13 +730,13 @@ async fn test_new_block_filter_and_changes() {
     h.tags.set_latest(1);
 
     // Poll for changes — should get block hash for block 1
-    let changes = rpc_call(&h.app, "getFilterChanges", json!([filter_id_str])).await;
+    let changes = rpc_call(&h.app, "eth_getFilterChanges", json!([filter_id_str])).await;
     let hashes = changes.as_array().unwrap();
     assert_eq!(hashes.len(), 1);
     assert!(hashes[0].is_string());
 
     // Poll again with no new blocks — should be empty
-    let changes = rpc_call(&h.app, "getFilterChanges", json!([filter_id_str])).await;
+    let changes = rpc_call(&h.app, "eth_getFilterChanges", json!([filter_id_str])).await;
     let hashes = changes.as_array().unwrap();
     assert!(hashes.is_empty());
 }
@@ -755,7 +748,7 @@ async fn test_new_log_filter_and_changes() {
     // Install a log filter for LOG_ADDR with LOG_TOPIC
     let filter_id = rpc_call(
         &h.app,
-        "newFilter",
+        "eth_newFilter",
         json!([{
             "address": format!("{:?}", LOG_ADDR),
             "topics": [format!("{:?}", LOG_TOPIC)],
@@ -771,7 +764,7 @@ async fn test_new_log_filter_and_changes() {
     h.tags.set_latest(1);
 
     // Poll for changes — should get matching logs
-    let changes = rpc_call(&h.app, "getFilterChanges", json!([filter_id_str])).await;
+    let changes = rpc_call(&h.app, "eth_getFilterChanges", json!([filter_id_str])).await;
     let logs = changes.as_array().unwrap();
     assert_eq!(logs.len(), 2);
     assert_eq!(logs[0]["address"], json!(format!("{:?}", LOG_ADDR)));
@@ -781,15 +774,15 @@ async fn test_new_log_filter_and_changes() {
 async fn test_uninstall_filter() {
     let h = TestHarness::new(0).await;
 
-    let filter_id = rpc_call(&h.app, "newBlockFilter", json!([])).await;
+    let filter_id = rpc_call(&h.app, "eth_newBlockFilter", json!([])).await;
     let filter_id_str = filter_id.as_str().unwrap().to_string();
 
     // Uninstall
-    let result = rpc_call(&h.app, "uninstallFilter", json!([filter_id_str])).await;
+    let result = rpc_call(&h.app, "eth_uninstallFilter", json!([filter_id_str])).await;
     assert_eq!(result, json!(true));
 
     // Uninstall again — should return false
-    let result = rpc_call(&h.app, "uninstallFilter", json!([filter_id_str])).await;
+    let result = rpc_call(&h.app, "eth_uninstallFilter", json!([filter_id_str])).await;
     assert_eq!(result, json!(false));
 }
 
@@ -825,9 +818,9 @@ async fn test_trace_block_by_number_noop() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let debug_app = h.debug_app();
     let result =
-        rpc_call(&debug_app, "traceBlockByNumber", json!(["0x1", {"tracer": "noopTracer"}])).await;
+        rpc_call(&h.app, "debug_traceBlockByNumber", json!(["0x1", {"tracer": "noopTracer"}]))
+            .await;
 
     let traces = result.as_array().unwrap();
     assert_eq!(traces.len(), 1);
@@ -845,10 +838,9 @@ async fn test_trace_transaction_noop() {
     h.append_block(block).await;
     h.tags.set_latest(1);
 
-    let debug_app = h.debug_app();
     let result = rpc_call(
-        &debug_app,
-        "traceTransaction",
+        &h.app,
+        "debug_traceTransaction",
         json!([format!("{:?}", tx_hash), {"tracer": "noopTracer"}]),
     )
     .await;

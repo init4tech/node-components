@@ -6,7 +6,7 @@ mod error;
 pub use error::DebugError;
 pub(crate) mod tracer;
 
-use crate::ctx::StorageRpcCtx;
+use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
 use signet_hot::HotKv;
 use signet_hot::model::HotKvRead;

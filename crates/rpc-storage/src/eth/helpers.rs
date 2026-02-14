@@ -6,18 +6,22 @@ use alloy::{
         ReceiptEnvelope, ReceiptWithBloom, Transaction, TxReceipt, transaction::Recovered,
     },
     eips::BlockId,
-    network::Ethereum,
+    network::{Ethereum, Network},
     primitives::{Address, TxKind, U256},
     rpc::types::{
         BlockOverrides, Log, TransactionReceipt, TransactionRequest, pubsub::SubscriptionKind,
         state::StateOverride,
     },
 };
-use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use serde::Deserialize;
 use signet_cold::ColdReceipt;
 use signet_storage_types::ConfirmationMeta;
 use trevm::MIN_TRANSACTION_GAS;
+
+/// RPC transaction type for the Ethereum network.
+type RpcTransaction = <Ethereum as Network>::TransactionResponse;
+/// RPC receipt type for the Ethereum network.
+type RpcReceipt = <Ethereum as Network>::ReceiptResponse;
 
 /// Args for `eth_call` and `eth_estimateGas`.
 #[derive(Debug, Deserialize)]
@@ -128,6 +132,24 @@ macro_rules! response_tri {
 }
 pub(crate) use response_tri;
 
+/// Resolve a block ID and open a hot storage reader at that height.
+///
+/// Shared by account-state endpoints (`balance`, `storage_at`,
+/// `addr_tx_count`, `code_at`) which all follow the same
+/// resolve → open reader → query pattern.
+pub(crate) fn hot_reader_at_block<H>(
+    ctx: &crate::config::StorageRpcCtx<H>,
+    id: BlockId,
+) -> Result<(H::RoTx, u64), String>
+where
+    H: signet_hot::HotKv,
+    <H::RoTx as signet_hot::model::HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
+{
+    let height = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+    let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+    Ok((reader, height))
+}
+
 /// Small wrapper implementing [`trevm::Cfg`] to set the chain ID.
 pub(crate) struct CfgFiller(pub u64);
 
@@ -142,7 +164,7 @@ pub(crate) fn build_rpc_transaction(
     tx: signet_storage_types::RecoveredTx,
     meta: &ConfirmationMeta,
     base_fee: Option<u64>,
-) -> RpcTransaction<Ethereum> {
+) -> RpcTransaction {
     let signer = tx.signer();
     let tx_envelope: alloy::consensus::TxEnvelope = tx.into_inner().into();
     let inner = Recovered::new_unchecked(tx_envelope, signer);
@@ -168,7 +190,7 @@ pub(crate) fn build_receipt(
     cr: ColdReceipt,
     tx: &signet_storage_types::RecoveredTx,
     base_fee: Option<u64>,
-) -> RpcReceipt<Ethereum> {
+) -> RpcReceipt {
     let logs_bloom = cr.receipt.bloom();
     let status = cr.receipt.status;
     let cumulative_gas_used = cr.receipt.cumulative_gas_used;

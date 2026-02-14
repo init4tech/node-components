@@ -1,13 +1,12 @@
 //! ETH namespace RPC endpoint implementations.
 
 use crate::{
-    ctx::{EvmBlockContext, StorageRpcCtx},
+    config::{EvmBlockContext, StorageRpcCtx, gas_oracle},
     eth::helpers::{
         AddrWithBlock, BlockParams, CfgFiller, FeeHistoryArgs, StorageAtArgs, SubscribeArgs,
-        TxParams, await_handler, build_receipt, build_rpc_transaction, normalize_gas_stateless,
-        response_tri,
+        TxParams, await_handler, build_receipt, build_rpc_transaction, hot_reader_at_block,
+        normalize_gas_stateless, response_tri,
     },
-    gas_oracle,
     interest::{FilterOutput, InterestKind},
 };
 use ajj::{HandlerCtx, ResponsePayload};
@@ -19,16 +18,23 @@ use alloy::{
         eip2718::{Decodable2718, Encodable2718},
         eip2930::AccessListResult,
     },
-    network::Ethereum,
+    network::{Ethereum, Network},
     primitives::{B256, U64, U256},
     rpc::types::{Block, BlockTransactions, FeeHistory, Filter, Log},
 };
-use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
+
+/// RPC block type for the Ethereum network.
+type RpcBlock = <Ethereum as Network>::BlockResponse;
+/// RPC header type for the Ethereum network.
+type RpcHeader = <Ethereum as Network>::HeaderResponse;
+/// RPC transaction type for the Ethereum network.
+type RpcTransaction = <Ethereum as Network>::TransactionResponse;
+/// RPC receipt type for the Ethereum network.
+type RpcReceipt = <Ethereum as Network>::ReceiptResponse;
 use revm_inspectors::access_list::AccessListInspector;
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::model::HotKvRead;
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead};
-use std::borrow::Cow;
 use tracing::{Instrument, debug, trace_span};
 use trevm::{
     EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
@@ -41,9 +47,7 @@ use super::error::CallErrorData;
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
-    ResponsePayload::internal_error_message(Cow::Borrowed(
-        "Method not supported. See signet documentation for a list of unsupported methods: https://signet.sh/docs",
-    ))
+    ResponsePayload::method_not_found()
 }
 
 /// Uncle count is always zero — Signet has no uncle blocks.
@@ -60,10 +64,12 @@ pub(crate) async fn uncle_block() -> Result<Option<()>, ()> {
 // Simple Queries
 // ---------------------------------------------------------------------------
 
+/// `eth_blockNumber` — returns the latest block number from block tags.
 pub(crate) async fn block_number<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, String> {
     Ok(U64::from(ctx.tags().latest()))
 }
 
+/// `eth_chainId` — returns the configured chain ID.
 pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()> {
     Ok(U64::from(ctx.chain_id()))
 }
@@ -72,6 +78,7 @@ pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()>
 // Gas & Fee Queries
 // ---------------------------------------------------------------------------
 
+/// `eth_gasPrice` — suggests gas price based on recent block tips + base fee.
 pub(crate) async fn gas_price<H>(hctx: HandlerCtx, ctx: StorageRpcCtx<H>) -> Result<U256, String>
 where
     H: HotKv + Send + Sync + 'static,
@@ -98,6 +105,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_maxPriorityFeePerGas` — suggests priority fee from recent block tips.
 pub(crate) async fn max_priority_fee_per_gas<H>(
     hctx: HandlerCtx,
     ctx: StorageRpcCtx<H>,
@@ -116,6 +124,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_feeHistory` — returns base fee and reward percentile data.
 pub(crate) async fn fee_history<H>(
     hctx: HandlerCtx,
     FeeHistoryArgs(block_count, newest, reward_percentiles): FeeHistoryArgs,
@@ -277,11 +286,13 @@ fn calculate_reward_percentiles(
 // Block Queries
 // ---------------------------------------------------------------------------
 
+/// `eth_getBlockByHash` / `eth_getBlockByNumber` — resolve block, fetch
+/// header + transactions from cold storage, assemble RPC block response.
 pub(crate) async fn block<T, H>(
     hctx: HandlerCtx,
     BlockParams(t, full): BlockParams<T>,
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<RpcBlock<Ethereum>>, String>
+) -> Result<Option<RpcBlock>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -340,6 +351,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getBlockTransactionCount*` — transaction count in a block.
 pub(crate) async fn block_tx_count<T, H>(
     hctx: HandlerCtx,
     (t,): (T,),
@@ -365,11 +377,12 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getBlockReceipts` — all receipts in a block.
 pub(crate) async fn block_receipts<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<Vec<RpcReceipt<Ethereum>>>, String>
+) -> Result<Option<Vec<RpcReceipt>>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -400,11 +413,12 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getBlockHeaderByHash` / `eth_getBlockHeaderByNumber`.
 pub(crate) async fn header_by<T, H>(
     hctx: HandlerCtx,
     (t,): (T,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<RpcHeader<Ethereum>>, String>
+) -> Result<Option<RpcHeader>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -435,11 +449,12 @@ where
 // Transaction Queries
 // ---------------------------------------------------------------------------
 
+/// `eth_getTransactionByHash` — look up transaction by hash from cold storage.
 pub(crate) async fn transaction_by_hash<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<RpcTransaction<Ethereum>>, String>
+) -> Result<Option<RpcTransaction>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -463,6 +478,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getRawTransactionByHash` — RLP-encoded transaction bytes.
 pub(crate) async fn raw_transaction_by_hash<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
@@ -483,11 +499,12 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getTransactionByBlock*AndIndex` — transaction by position in block.
 pub(crate) async fn transaction_by_block_and_index<T, H>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<RpcTransaction<Ethereum>>, String>
+) -> Result<Option<RpcTransaction>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -518,6 +535,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getRawTransactionByBlock*AndIndex` — raw RLP bytes by position.
 pub(crate) async fn raw_transaction_by_block_and_index<T, H>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
@@ -543,11 +561,13 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getTransactionReceipt` — receipt by tx hash. Fetches the receipt,
+/// then the associated transaction and header for derived fields.
 pub(crate) async fn transaction_receipt<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<RpcReceipt<Ethereum>>, String>
+) -> Result<Option<RpcReceipt>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -580,6 +600,7 @@ where
 // Account State (Hot Storage)
 // ---------------------------------------------------------------------------
 
+/// `eth_getBalance` — account balance at a given block from hot storage.
 pub(crate) async fn balance<H>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
@@ -589,12 +610,10 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let block = block.unwrap_or(BlockId::latest());
+    let id = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
-
-        let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
         let acct =
             reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
 
@@ -604,6 +623,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getStorageAt` — contract storage slot at a given block.
 pub(crate) async fn storage_at<H>(
     hctx: HandlerCtx,
     StorageAtArgs(address, key, block): StorageAtArgs,
@@ -613,12 +633,10 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let block = block.unwrap_or(BlockId::latest());
+    let id = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
-
-        let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
         let val = reader
             .get_storage_at_height(&address, &key, Some(height))
             .map_err(|e| e.to_string())?;
@@ -629,6 +647,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getTransactionCount` — account nonce at a given block.
 pub(crate) async fn addr_tx_count<H>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
@@ -638,12 +657,10 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let block = block.unwrap_or(BlockId::latest());
+    let id = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
-
-        let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
         let acct =
             reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
 
@@ -653,6 +670,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getCode` — contract bytecode at a given block.
 pub(crate) async fn code_at<H>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
@@ -662,12 +680,10 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let block = block.unwrap_or(BlockId::latest());
+    let id = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let height = ctx.resolve_block_id(block).map_err(|e| e.to_string())?;
-
-        let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
         let acct =
             reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
 
@@ -691,6 +707,10 @@ where
 // EVM Execution
 // ---------------------------------------------------------------------------
 
+/// Shared EVM call execution used by `eth_call` and `eth_estimateGas`.
+///
+/// Resolves the block, builds a revm instance with the requested state
+/// and block overrides, then executes the transaction request.
 pub(crate) async fn run_call<H>(
     hctx: HandlerCtx,
     TxParams(request, block, state_overrides, block_overrides): TxParams,
@@ -728,6 +748,10 @@ where
     await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
+/// `eth_call` — execute a call and return the output bytes.
+///
+/// Delegates to [`run_call`], then maps the execution result to raw
+/// output bytes, revert data, or halt reason.
 pub(crate) async fn call<H>(
     hctx: HandlerCtx,
     mut params: TxParams,
@@ -766,6 +790,7 @@ where
     }))
 }
 
+/// `eth_estimateGas` — estimate gas required for a transaction.
 pub(crate) async fn estimate_gas<H>(
     hctx: HandlerCtx,
     TxParams(mut request, block, state_overrides, block_overrides): TxParams,
@@ -816,6 +841,7 @@ where
     await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
+/// `eth_createAccessList` — generate an access list for a transaction.
 pub(crate) async fn create_access_list<H>(
     hctx: HandlerCtx,
     TxParams(mut request, block, state_overrides, block_overrides): TxParams,
@@ -867,6 +893,10 @@ where
 // Transaction Submission
 // ---------------------------------------------------------------------------
 
+/// `eth_sendRawTransaction` — decode and forward a signed transaction.
+///
+/// The transaction is forwarded to the tx cache in a fire-and-forget
+/// task; the hash is returned immediately.
 pub(crate) async fn send_raw_transaction<H>(
     hctx: HandlerCtx,
     (tx,): (alloy::primitives::Bytes,),
@@ -886,7 +916,9 @@ where
 
         let hash = *envelope.tx_hash();
         hctx.spawn(async move {
-            tx_cache.forward_raw_transaction(envelope).await.map_err(|e| e.to_string())
+            if let Err(e) = tx_cache.forward_raw_transaction(envelope).await {
+                tracing::warn!(error = %e, %hash, "failed to forward raw transaction");
+            }
         });
 
         Ok(hash)
@@ -899,6 +931,7 @@ where
 // Logs
 // ---------------------------------------------------------------------------
 
+/// `eth_getLogs` — query logs from cold storage with filter criteria.
 pub(crate) async fn get_logs<H>(
     hctx: HandlerCtx,
     (filter,): (Filter,),
@@ -950,6 +983,7 @@ where
 // Filters
 // ---------------------------------------------------------------------------
 
+/// `eth_newFilter` — install a log filter for polling.
 pub(crate) async fn new_filter<H>(
     hctx: HandlerCtx,
     (filter,): (Filter,),
@@ -967,6 +1001,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_newBlockFilter` — install a block hash filter for polling.
 pub(crate) async fn new_block_filter<H>(
     hctx: HandlerCtx,
     ctx: StorageRpcCtx<H>,
@@ -983,6 +1018,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_uninstallFilter` — remove a filter.
 pub(crate) async fn uninstall_filter<H>(
     hctx: HandlerCtx,
     (id,): (U64,),
@@ -996,6 +1032,8 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
+/// `eth_getFilterChanges` / `eth_getFilterLogs` — poll a filter for new
+/// results since the last poll. Fetches matching data from cold storage.
 pub(crate) async fn get_filter_changes<H>(
     hctx: HandlerCtx,
     (id,): (U64,),
@@ -1050,6 +1088,7 @@ where
 // Subscriptions
 // ---------------------------------------------------------------------------
 
+/// `eth_subscribe` — register a push-based subscription (WebSocket/SSE).
 pub(crate) async fn subscribe<H>(
     hctx: HandlerCtx,
     sub: SubscribeArgs,
@@ -1066,6 +1105,7 @@ where
         .ok_or_else(|| "notifications not enabled on this transport".to_string())
 }
 
+/// `eth_unsubscribe` — cancel a push-based subscription.
 pub(crate) async fn unsubscribe<H>(
     hctx: HandlerCtx,
     (id,): (U64,),

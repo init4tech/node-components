@@ -7,9 +7,25 @@
 use alloy::primitives::B256;
 use signet_storage::StorageError;
 use std::sync::{
-    Arc,
+    Arc, RwLock,
     atomic::{AtomicU64, Ordering},
 };
+
+/// Snapshot of the node's syncing progress.
+///
+/// When the node is still catching up to the network, this struct
+/// describes the sync window. Once fully synced, the context owner
+/// should call [`BlockTags::clear_sync_status`] to indicate that
+/// syncing is complete.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncStatus {
+    /// Block number the node started syncing from.
+    pub starting_block: u64,
+    /// Current block the node has synced to.
+    pub current_block: u64,
+    /// Highest known block number on the network.
+    pub highest_block: u64,
+}
 
 /// Externally-updated block tag tracker.
 ///
@@ -26,12 +42,19 @@ use std::sync::{
 ///
 /// tags.set_latest(101);
 /// assert_eq!(tags.latest(), 101);
+///
+/// // Update all tags at once.
+/// tags.update_all(200, 195, 190);
+/// assert_eq!(tags.latest(), 200);
+/// assert_eq!(tags.safe(), 195);
+/// assert_eq!(tags.finalized(), 190);
 /// ```
 #[derive(Debug, Clone)]
 pub struct BlockTags {
     latest: Arc<AtomicU64>,
     safe: Arc<AtomicU64>,
     finalized: Arc<AtomicU64>,
+    sync_status: Arc<RwLock<Option<SyncStatus>>>,
 }
 
 impl BlockTags {
@@ -41,6 +64,7 @@ impl BlockTags {
             latest: Arc::new(AtomicU64::new(latest)),
             safe: Arc::new(AtomicU64::new(safe)),
             finalized: Arc::new(AtomicU64::new(finalized)),
+            sync_status: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -72,6 +96,37 @@ impl BlockTags {
     /// Set the finalized block number.
     pub fn set_finalized(&self, n: u64) {
         self.finalized.store(n, Ordering::Release);
+    }
+
+    /// Update all three tags in one call.
+    ///
+    /// Stores are ordered finalized → safe → latest so that readers
+    /// always observe a consistent or slightly-stale view (never a
+    /// latest that is behind the finalized it was published with).
+    pub fn update_all(&self, latest: u64, safe: u64, finalized: u64) {
+        self.finalized.store(finalized, Ordering::Release);
+        self.safe.store(safe, Ordering::Release);
+        self.latest.store(latest, Ordering::Release);
+    }
+
+    /// Returns `true` if the node is currently syncing.
+    pub fn is_syncing(&self) -> bool {
+        self.sync_status.read().expect("sync status lock poisoned").is_some()
+    }
+
+    /// Returns the current sync status, if the node is syncing.
+    pub fn sync_status(&self) -> Option<SyncStatus> {
+        *self.sync_status.read().expect("sync status lock poisoned")
+    }
+
+    /// Update the sync status to indicate the node is syncing.
+    pub fn set_sync_status(&self, status: SyncStatus) {
+        *self.sync_status.write().expect("sync status lock poisoned") = Some(status);
+    }
+
+    /// Clear the sync status, indicating the node is fully synced.
+    pub fn clear_sync_status(&self) {
+        *self.sync_status.write().expect("sync status lock poisoned") = None;
     }
 }
 

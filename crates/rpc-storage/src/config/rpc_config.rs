@@ -66,6 +66,13 @@ pub struct StorageRpcConfig {
     ///
     /// Default: `1024`.
     pub max_block_history: u64,
+
+    /// Default timeout in milliseconds for bundle simulation.
+    ///
+    /// Used when the bundle request does not specify its own timeout.
+    ///
+    /// Default: `1000` (1 second).
+    pub default_bundle_timeout_ms: u64,
 }
 
 impl Default for StorageRpcConfig {
@@ -80,6 +87,7 @@ impl Default for StorageRpcConfig {
             gas_oracle_percentile: 60.0,
             max_header_history: 1024,
             max_block_history: 1024,
+            default_bundle_timeout_ms: 1000,
         }
     }
 }

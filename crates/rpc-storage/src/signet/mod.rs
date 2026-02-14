@@ -4,7 +4,7 @@ mod endpoints;
 use endpoints::{call_bundle, send_order};
 pub(crate) mod error;
 
-use crate::ctx::StorageRpcCtx;
+use crate::config::StorageRpcCtx;
 use signet_hot::HotKv;
 use signet_hot::model::HotKvRead;
 use trevm::revm::database::DBErrorMarker;

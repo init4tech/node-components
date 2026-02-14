@@ -15,7 +15,7 @@ pub use error::EthError;
 
 pub(crate) mod helpers;
 
-use crate::StorageRpcCtx;
+use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
 use signet_hot::HotKv;
 use signet_hot::model::HotKvRead;

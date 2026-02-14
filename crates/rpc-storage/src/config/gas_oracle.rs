@@ -6,7 +6,7 @@
 use alloy::{consensus::Transaction, primitives::U256};
 use signet_cold::{ColdStorageError, ColdStorageReadHandle, HeaderSpecifier};
 
-use crate::StorageRpcConfig;
+use crate::config::StorageRpcConfig;
 
 /// Suggest a tip cap based on recent transaction tips.
 ///

@@ -1,7 +1,7 @@
 //! Debug namespace RPC endpoint implementations.
 
 use crate::{
-    ctx::StorageRpcCtx,
+    config::StorageRpcCtx,
     debug::DebugError,
     eth::helpers::{CfgFiller, await_handler, response_tri},
 };
@@ -41,6 +41,9 @@ where
 {
     let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
 
+    // Acquire a tracing semaphore permit to limit concurrent debug
+    // requests. The permit is held for the entire handler lifetime and
+    // is dropped when the async block completes.
     let _permit = ctx.acquire_tracing_permit().await;
 
     let id = id.into();
@@ -48,16 +51,20 @@ where
 
     let fut = async move {
         let cold = ctx.cold();
-        let block_num = response_tri!(
-            ctx.resolve_block_id(id).map_err(|e| { DebugError::BlockNotFound(e.to_string()) })
-        );
+        let block_num = response_tri!(ctx.resolve_block_id(id).map_err(|e| {
+            tracing::warn!(error = %e, ?id, "block resolution failed");
+            DebugError::BlockNotFound(id)
+        }));
 
         let (header, txs) = response_tri!(
             tokio::try_join!(
                 cold.get_header_by_number(block_num),
                 cold.get_transactions_in_block(block_num),
             )
-            .map_err(|e| DebugError::Cold(e.to_string()))
+            .map_err(|e| {
+                tracing::warn!(error = %e, block_num, "cold storage read failed");
+                DebugError::Cold(e.to_string())
+            })
         );
 
         let Some(header) = header else {
@@ -73,11 +80,12 @@ where
 
         let mut frames = Vec::with_capacity(txs.len());
 
-        // State BEFORE this block
-        let db = response_tri!(
-            ctx.revm_state_at_height(header.number.saturating_sub(1))
-                .map_err(|e| DebugError::Hot(e.to_string()))
-        );
+        // State BEFORE this block.
+        let db =
+            response_tri!(ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
+                tracing::warn!(error = %e, block_num, "hot storage read failed");
+                DebugError::Hot(e.to_string())
+            }));
 
         let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))
@@ -123,6 +131,7 @@ where
 {
     let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
 
+    // Held for the handler duration; dropped when the async block completes.
     let _permit = ctx.acquire_tracing_permit().await;
 
     let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.tracer.as_ref());
@@ -130,10 +139,11 @@ where
     let fut = async move {
         let cold = ctx.cold();
 
-        // Look up the transaction and its containing block
-        let confirmed = response_tri!(
-            cold.get_tx_by_hash(tx_hash).await.map_err(|e| DebugError::Cold(e.to_string()))
-        );
+        // Look up the transaction and its containing block.
+        let confirmed = response_tri!(cold.get_tx_by_hash(tx_hash).await.map_err(|e| {
+            tracing::warn!(error = %e, %tx_hash, "cold storage read failed");
+            DebugError::Cold(e.to_string())
+        }));
 
         let confirmed = response_tri!(confirmed.ok_or(DebugError::TransactionNotFound));
         let (_tx, meta) = confirmed.into_parts();
@@ -146,20 +156,23 @@ where
                 cold.get_header_by_number(block_num),
                 cold.get_transactions_in_block(block_num),
             )
-            .map_err(|e| DebugError::Cold(e.to_string()))
+            .map_err(|e| {
+                tracing::warn!(error = %e, block_num, "cold storage read failed");
+                DebugError::Cold(e.to_string())
+            })
         );
 
-        let header =
-            response_tri!(header.ok_or(DebugError::BlockNotFound(format!("block {block_num}"))))
-                .into_inner();
+        let block_id = BlockId::Number(block_num.into());
+        let header = response_tri!(header.ok_or(DebugError::BlockNotFound(block_id))).into_inner();
 
         tracing::debug!(number = block_num, "Loaded containing block");
 
-        // State BEFORE this block
-        let db = response_tri!(
-            ctx.revm_state_at_height(block_num.saturating_sub(1))
-                .map_err(|e| DebugError::Hot(e.to_string()))
-        );
+        // State BEFORE this block.
+        let db =
+            response_tri!(ctx.revm_state_at_height(block_num.saturating_sub(1)).map_err(|e| {
+                tracing::warn!(error = %e, block_num, "hot storage read failed");
+                DebugError::Hot(e.to_string())
+            }));
 
         let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
             .fill_cfg(&CfgFiller(ctx.chain_id()))

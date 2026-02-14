@@ -1,9 +1,12 @@
 //! RPC context wrapping [`UnifiedStorage`].
 
 use crate::{
-    EthError, StorageRpcConfig,
+    config::{
+        StorageRpcConfig,
+        resolve::{BlockTags, ResolveError},
+    },
+    eth::EthError,
     interest::{FilterManager, NewBlockNotification, SubscriptionManager},
-    resolve::{BlockTags, ResolveError},
 };
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use signet_cold::ColdStorageReadHandle;
