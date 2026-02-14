@@ -614,7 +614,7 @@ async fn test_not_supported() {
     let resp = rpc_call_raw(&h.app, "syncing", json!([])).await;
     assert!(resp.get("error").is_some());
     let msg = resp["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("not found"), "unexpected error: {msg}");
+    assert!(msg.contains("not supported"), "unexpected error: {msg}");
 }
 
 #[tokio::test]

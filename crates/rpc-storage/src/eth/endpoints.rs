@@ -18,14 +18,19 @@ use alloy::{
         eip1559::BaseFeeParams,
         eip2718::{Decodable2718, Encodable2718},
     },
+    network::Ethereum,
     primitives::{B256, U64, U256},
     rpc::types::{Block, BlockTransactions, FeeHistory, Filter, Log},
 };
+use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::model::HotKvRead;
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead};
+use std::borrow::Cow;
 use tracing::{Instrument, debug, trace_span};
-use trevm::{EstimationResult, revm::database::DBErrorMarker};
+use trevm::{
+    EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
+};
 
 use super::error::CallErrorData;
 
@@ -34,7 +39,9 @@ use super::error::CallErrorData;
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
-    ResponsePayload::method_not_found()
+    ResponsePayload::internal_error_message(Cow::Borrowed(
+        "Method not supported. See signet documentation for a list of unsupported methods: https://signet.sh/docs",
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +269,7 @@ pub(crate) async fn block<T, H>(
     hctx: HandlerCtx,
     BlockParams(t, full): BlockParams<T>,
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<Block>, String>
+) -> Result<Option<RpcBlock<Ethereum>>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -350,7 +357,7 @@ pub(crate) async fn block_receipts<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<Vec<alloy::rpc::types::TransactionReceipt>>, String>
+) -> Result<Option<Vec<RpcReceipt<Ethereum>>>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -385,7 +392,7 @@ pub(crate) async fn header_by<T, H>(
     hctx: HandlerCtx,
     (t,): (T,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<alloy::rpc::types::Header>, String>
+) -> Result<Option<RpcHeader<Ethereum>>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -420,7 +427,7 @@ pub(crate) async fn transaction_by_hash<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<alloy::rpc::types::Transaction>, String>
+) -> Result<Option<RpcTransaction<Ethereum>>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -464,11 +471,11 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
-pub(crate) async fn tx_by_block_and_index<T, H>(
+pub(crate) async fn transaction_by_block_and_index<T, H>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<alloy::rpc::types::Transaction>, String>
+) -> Result<Option<RpcTransaction<Ethereum>>, String>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
@@ -499,7 +506,7 @@ where
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
-pub(crate) async fn raw_tx_by_block_and_index<T, H>(
+pub(crate) async fn raw_transaction_by_block_and_index<T, H>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
     ctx: StorageRpcCtx<H>,
@@ -528,7 +535,7 @@ pub(crate) async fn transaction_receipt<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
     ctx: StorageRpcCtx<H>,
-) -> Result<Option<alloy::rpc::types::TransactionReceipt>, String>
+) -> Result<Option<RpcReceipt<Ethereum>>, String>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -672,20 +679,17 @@ where
 // EVM Execution
 // ---------------------------------------------------------------------------
 
-pub(crate) async fn call<H>(
+pub(crate) async fn run_call<H>(
     hctx: HandlerCtx,
-    TxParams(mut request, block, state_overrides, block_overrides): TxParams,
+    TxParams(request, block, state_overrides, block_overrides): TxParams,
     ctx: StorageRpcCtx<H>,
-) -> ResponsePayload<alloy::primitives::Bytes, CallErrorData>
+) -> ResponsePayload<ExecutionResult, CallErrorData>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let max_gas = ctx.config().rpc_gas_cap;
-    normalize_gas_stateless(&mut request, max_gas);
-
     let id = block.unwrap_or(BlockId::latest());
-    let span = trace_span!("eth_call", block_id = %id);
+    let span = trace_span!("run_call", block_id = %id);
 
     let task = async move {
         let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
@@ -705,28 +709,49 @@ where
         }
 
         let result = response_tri!(trevm.call().map_err(signet_evm::EvmErrored::into_error));
+        ResponsePayload::Success(result.0)
+    }
+    .instrument(span);
 
-        match result.0 {
-            trevm::revm::context::result::ExecutionResult::Success { output, .. } => {
+    await_handler!(@response_option hctx.spawn_blocking(task))
+}
+
+pub(crate) async fn call<H>(
+    hctx: HandlerCtx,
+    mut params: TxParams,
+    ctx: StorageRpcCtx<H>,
+) -> ResponsePayload<alloy::primitives::Bytes, CallErrorData>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let max_gas = ctx.config().rpc_gas_cap;
+    normalize_gas_stateless(&mut params.0, max_gas);
+
+    await_handler!(@response_option hctx.spawn_with_ctx(|hctx| async move {
+        let res = match run_call(hctx, params, ctx).await {
+            ResponsePayload::Success(res) => res,
+            ResponsePayload::Failure(err) => return ResponsePayload::Failure(err),
+        };
+
+        match res {
+            ExecutionResult::Success { output, .. } => {
                 ResponsePayload::Success(output.data().clone())
             }
-            trevm::revm::context::result::ExecutionResult::Revert { output, .. } => {
+            ExecutionResult::Revert { output, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution reverted".into(),
                     output.clone().into(),
                 )
             }
-            trevm::revm::context::result::ExecutionResult::Halt { reason, .. } => {
+            ExecutionResult::Halt { reason, .. } => {
                 ResponsePayload::internal_error_with_message_and_obj(
                     "execution halted".into(),
                     format!("{reason:?}").into(),
                 )
             }
         }
-    }
-    .instrument(span);
-
-    await_handler!(@response_option hctx.spawn_blocking(task))
+    }))
 }
 
 pub(crate) async fn estimate_gas<H>(

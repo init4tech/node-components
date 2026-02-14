@@ -5,11 +5,13 @@ use alloy::{
         ReceiptEnvelope, ReceiptWithBloom, Transaction, TxReceipt, transaction::Recovered,
     },
     eips::BlockId,
+    network::Ethereum,
     primitives::{Address, TxKind, U256},
     rpc::types::{
         BlockOverrides, Log, TransactionReceipt, TransactionRequest, state::StateOverride,
     },
 };
+use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use serde::Deserialize;
 use signet_cold::ColdReceipt;
 use signet_storage_types::ConfirmationMeta;
@@ -117,7 +119,7 @@ pub(crate) fn build_rpc_transaction(
     tx: signet_storage_types::RecoveredTx,
     meta: &ConfirmationMeta,
     base_fee: Option<u64>,
-) -> alloy::rpc::types::Transaction {
+) -> RpcTransaction<Ethereum> {
     let signer = tx.signer();
     let tx_envelope: alloy::consensus::TxEnvelope = tx.into_inner().into();
     let inner = Recovered::new_unchecked(tx_envelope, signer);
@@ -143,7 +145,7 @@ pub(crate) fn build_receipt(
     cr: ColdReceipt,
     tx: &signet_storage_types::RecoveredTx,
     base_fee: Option<u64>,
-) -> TransactionReceipt<ReceiptEnvelope<Log>> {
+) -> RpcReceipt<Ethereum> {
     let logs_bloom = cr.receipt.bloom();
     let status = cr.receipt.status;
     let cumulative_gas_used = cr.receipt.cumulative_gas_used;
