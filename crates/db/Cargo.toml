@@ -12,7 +12,6 @@ repository.workspace = true
 signet-node-types.workspace = true
 
 signet-evm.workspace = true
-signet-journal.workspace = true
 signet-types.workspace = true
 signet-zenith.workspace = true
 
@@ -28,8 +27,6 @@ reth-stages-types.workspace = true
 itertools.workspace = true
 serde.workspace = true
 tracing.workspace = true
-futures-util = "0.3.31"
-tokio.workspace = true
 auto_impl = "1.3.0"
 
 [dev-dependencies]

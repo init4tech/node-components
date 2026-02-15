@@ -13,7 +13,6 @@ repository.workspace = true
 signet-constants.workspace = true
 signet-evm.workspace = true
 signet-extract.workspace = true
-signet-journal.workspace = true
 signet-types.workspace = true
 
 init4-bin-base.workspace = true

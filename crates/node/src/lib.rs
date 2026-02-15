@@ -17,6 +17,11 @@ pub use builder::SignetNodeBuilder;
 mod metrics;
 
 mod node;
-pub use node::{GENESIS_JOURNAL_HASH, SignetNode};
+pub use node::SignetNode;
 
 mod rpc;
+
+mod serve;
+
+mod status;
+pub use status::NodeStatus;

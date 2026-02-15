@@ -23,14 +23,11 @@ pub use consistency::ProviderConsistencyExt;
 mod convert;
 pub use convert::DataCompat;
 
-pub mod journal;
-
 mod provider;
 
 mod tables;
 pub use tables::{
-    DbEnter, DbEnterToken, DbSignetEvent, DbTransact, DbZenithHeader, JournalHashes, SignetEvents,
-    ZenithHeaders,
+    DbEnter, DbEnterToken, DbSignetEvent, DbTransact, DbZenithHeader, SignetEvents, ZenithHeaders,
 };
 
 mod traits;

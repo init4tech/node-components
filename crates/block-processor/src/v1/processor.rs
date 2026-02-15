@@ -1,7 +1,7 @@
 use crate::{AliasOracle, AliasOracleFactory, Chain, metrics};
 use alloy::{
     consensus::BlockHeader,
-    primitives::{Address, B256, map::HashSet},
+    primitives::{Address, map::HashSet},
 };
 use core::fmt;
 use eyre::ContextCompat;
@@ -21,10 +21,9 @@ use signet_constants::SignetSystemConstants;
 use signet_db::{DataCompat, DbProviderExt, RuChain, RuRevmState, RuWriter};
 use signet_evm::{BlockResult, EvmNeedsCfg, SignetDriver};
 use signet_extract::{Extractor, Extracts};
-use signet_journal::HostJournal;
 use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
 use std::{collections::VecDeque, sync::Arc};
-use tracing::{Instrument, debug, error, info, info_span, instrument};
+use tracing::{Instrument, error, info, info_span, instrument};
 use trevm::revm::primitives::hardfork::SpecId;
 
 /// A block processor that listens to host chain commits and processes
@@ -145,7 +144,6 @@ where
         let mut start = None;
         let mut current = 0;
         let last_ru_height = self.ru_provider.last_block_number()?;
-        let mut prev_block_journal = self.ru_provider.provider_rw()?.latest_journal_hash()?;
 
         let mut net_outcome = ExecutionOutcome::default();
 
@@ -191,10 +189,8 @@ where
             metrics::record_block_result(&block_result, &start_time);
 
             let _ = span.enter();
-            let journal =
-                self.commit_evm_results(&block_extracts, &block_result, prev_block_journal)?;
+            self.commit_evm_results(&block_extracts, &block_result)?;
 
-            prev_block_journal = journal.journal_hash();
             net_outcome.extend(block_result.execution_outcome.convert());
         }
         info!("committed blocks");
@@ -308,36 +304,21 @@ where
 
     /// Commit the outputs of a zenith block to the database.
     #[instrument(skip_all)]
-    fn commit_evm_results<'a>(
+    fn commit_evm_results(
         &self,
         extracts: &Extracts<'_, ExtractableChainShim<'_>>,
-        block_result: &'a BlockResult,
-        prev_block_journal: B256,
-    ) -> eyre::Result<HostJournal<'a>> {
-        let journal = block_result.make_host_journal(prev_block_journal);
-        let time = std::time::Instant::now();
-        let jh = journal.journal_hash();
-
-        debug!(
-            target: "signet::journal::serialize",
-            bytes = journal.serialized().len(),
-            hash = %jh,
-            elapsed_micros = %time.elapsed().as_micros(),
-            "journal produced"
-        );
-
+        block_result: &BlockResult,
+    ) -> eyre::Result<()> {
         self.ru_provider.provider_rw()?.update(|writer| {
-            // add execution results to database
             writer.append_host_block(
                 extracts.ru_header(),
                 extracts.transacts().cloned(),
                 extracts.enters(),
                 extracts.enter_tokens(),
                 block_result,
-                jh,
             )?;
             Ok(())
         })?;
-        Ok(journal)
+        Ok(())
     }
 }

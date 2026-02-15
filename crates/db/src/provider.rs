@@ -1,6 +1,6 @@
 use crate::{
     DataCompat, DbZenithHeader, RuChain, SignetDbRw, ZenithHeaders,
-    tables::{DbSignetEvent, JournalHashes, SignetEvents},
+    tables::{DbSignetEvent, SignetEvents},
     traits::RuWriter,
 };
 use alloy::{
@@ -39,28 +39,6 @@ where
 {
     fn last_block_number(&self) -> ProviderResult<BlockNumber> {
         BlockNumReader::last_block_number(&self.0)
-    }
-
-    fn insert_journal_hash(&self, ru_height: u64, hash: B256) -> ProviderResult<()> {
-        self.tx_ref().put::<JournalHashes>(ru_height, hash)?;
-        Ok(())
-    }
-
-    fn remove_journal_hash(&self, ru_height: u64) -> ProviderResult<()> {
-        self.tx_ref().delete::<JournalHashes>(ru_height, None)?;
-        Ok(())
-    }
-
-    fn get_journal_hash(&self, ru_height: u64) -> ProviderResult<Option<B256>> {
-        self.tx_ref().get::<JournalHashes>(ru_height).map_err(Into::into)
-    }
-
-    #[track_caller]
-    fn latest_journal_hash(&self) -> ProviderResult<B256> {
-        let latest_height = self.last_block_number()?;
-        Ok(self
-            .get_journal_hash(latest_height)?
-            .expect("DB in corrupt state. Missing Journal Hash for latest height"))
     }
 
     /// Insert an enter into the DB
@@ -118,7 +96,6 @@ where
     }
 
     /// Inserts the zenith block into the database, always modifying the following tables:
-    /// * [`JournalHashes`]
     /// * [`CanonicalHeaders`](tables::CanonicalHeaders)
     /// * [`Headers`](tables::Headers)
     /// * [`HeaderTerminalDifficulties`](tables::HeaderTerminalDifficulties)
@@ -144,7 +121,6 @@ where
         &self,
         header: Option<Zenith::BlockHeader>,
         block: &RecoveredBlock,
-        journal_hash: B256,
     ) -> ProviderResult<StoredBlockBodyIndices> {
         // Implementation largely copied from
         // `BlockWriter::insert_block`
@@ -154,14 +130,9 @@ where
         // Last reviewed at tag v1.9.0
         let block_number = block.number();
 
-        // SIGNET-SPECIFIC
-        // Put journal hash into the DB
         if let Some(header) = header {
             self.insert_signet_header(header, block_number)?;
         }
-        // SIGNET-SPECIFIC
-        // Put journal hash into the DB
-        self.tx_ref().put::<crate::JournalHashes>(block_number, journal_hash)?;
 
         let block_hash = block.block.header.hash();
         let block_header = block.block.header.header();
@@ -366,7 +337,6 @@ where
         enters: impl IntoIterator<Item = Passage::Enter>,
         enter_tokens: impl IntoIterator<Item = Passage::EnterToken>,
         block_result: &BlockResult,
-        journal_hash: B256,
     ) -> ProviderResult<()> {
         // Implementation largely copied from
         // `BlockWriter::append_blocks_with_state`
@@ -378,7 +348,7 @@ where
         let BlockResult { sealed_block: block, execution_outcome, .. } = block_result;
 
         let ru_height = block.number();
-        self.insert_signet_block(header, block, journal_hash)?;
+        self.insert_signet_block(header, block)?;
 
         // Write the state and match the storage location that Reth uses.
         self.ru_write_state(execution_outcome, OriginalValuesKnown::No)?;

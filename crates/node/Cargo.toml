@@ -19,7 +19,10 @@ signet-blobber.workspace = true
 signet-tx-cache.workspace = true
 signet-types.workspace = true
 
+ajj.workspace = true
 alloy.workspace = true
+axum = "0.8.1"
+interprocess = { version = "2.2.2", features = ["tokio"] }
 
 reth.workspace = true
 reth-chainspec.workspace = true
@@ -33,4 +36,5 @@ futures-util.workspace = true
 metrics.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
+tower-http = { version = "0.6.2", features = ["cors"] }
 tracing.workspace = true

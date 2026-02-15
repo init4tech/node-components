@@ -6,7 +6,7 @@ Node.
 This library contains the following:
 
 - Traits for reading and writing Signet events
-- Table definitions for Signet Events, Headers, and JournalHashes
+- Table definitions for Signet Events and Headers
 - Helpers for reading, writing, reverting, Signet EVM blocks and headers
 
 ## Significant Traits

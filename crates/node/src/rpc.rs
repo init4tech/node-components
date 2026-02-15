@@ -1,9 +1,12 @@
-use crate::SignetNode;
+use crate::{
+    SignetNode,
+    serve::{RpcServerGuard, ServeConfig},
+};
 use reth::{primitives::EthPrimitives, rpc::builder::config::RethRpcServerConfig};
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
 use signet_node_types::NodeTypesDbTrait;
-use signet_rpc::{RpcCtx, RpcServerGuard, ServeConfig};
+use signet_rpc::RpcCtx;
 use signet_tx_cache::TxCache;
 use tracing::info;
 

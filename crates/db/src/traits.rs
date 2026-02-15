@@ -1,5 +1,5 @@
 use crate::{DbExtractionResults, DbSignetEvent, RuChain, SignetDbRw};
-use alloy::primitives::{B256, BlockNumber};
+use alloy::primitives::BlockNumber;
 use itertools::Itertools;
 #[cfg(doc)]
 use reth::providers::DatabaseProviderRW;
@@ -18,18 +18,6 @@ pub trait RuWriter {
     /// Get the last block number
     fn last_block_number(&self) -> ProviderResult<BlockNumber>;
 
-    /// Insert a journal hash into the DB.
-    fn insert_journal_hash(&self, rollup_height: u64, hash: B256) -> ProviderResult<()>;
-
-    /// Remove a journal hash from the DB.
-    fn remove_journal_hash(&self, rollup_height: u64) -> ProviderResult<()>;
-
-    /// Get a journal hash from the DB.
-    fn get_journal_hash(&self, rollup_height: u64) -> ProviderResult<Option<B256>>;
-
-    /// Get the latest journal hash from the DB.
-    fn latest_journal_hash(&self) -> ProviderResult<B256>;
-
     /// Store a zenith header in the DB
     fn insert_signet_header(
         &self,
@@ -45,7 +33,6 @@ pub trait RuWriter {
         &self,
         header: Option<Zenith::BlockHeader>,
         block: &RecoveredBlock,
-        journal_hash: B256,
     ) -> ProviderResult<StoredBlockBodyIndices>;
 
     /// Append a zenith block body to the DB.
@@ -225,7 +212,6 @@ pub trait RuWriter {
     }
 
     /// Add the output of a host block to the DB.
-    #[allow(clippy::too_many_arguments)]
     fn append_host_block(
         &self,
         header: Option<Zenith::BlockHeader>,
@@ -233,7 +219,6 @@ pub trait RuWriter {
         enters: impl IntoIterator<Item = Passage::Enter>,
         enter_tokens: impl IntoIterator<Item = Passage::EnterToken>,
         block_result: &BlockResult,
-        journal_hash: B256,
     ) -> ProviderResult<()>;
 
     /// Take the block and execution range from the DB, reverting the blocks

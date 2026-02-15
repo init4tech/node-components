@@ -5,37 +5,6 @@
 //! integrated with `reth`, and expects a variety of `reth`-specific types to be
 //! passed in. As such, it is mostly useful within the context of a `signet`
 //! node.
-//!
-//! ## Usage Example
-//!
-//! ```rust
-//! # use signet_rpc::{RpcCtx};
-//! # use signet_node_types::Pnt;
-//! # use reth_node_api::FullNodeComponents;
-//! # use reth::tasks::TaskExecutor;
-//! use signet_rpc::{router, ServeConfig};
-//!
-//! # pub async fn f<Host, Signet>(ctx: RpcCtx<Host, Signet>, tasks: &TaskExecutor) -> eyre::Result<()>
-//! # where
-//! #   Host: FullNodeComponents,
-//! #   Signet: Pnt,
-//! # {
-//! let router = signet_rpc::router().with_state(ctx);
-//!
-//! let cfg = ServeConfig {
-//!     http: vec!["localhost:8080".parse()?],
-//!     http_cors: None,
-//!     ws: vec![],
-//!     ws_cors: None,
-//!     ipc: None,
-//! };
-//!
-//! // Spawn the server on the given addresses, the shutdown guard
-//! // will shutdown the server(s) when dropped.
-//! let shutdown_guard = cfg.serve(tasks, router).await?;
-//! # Ok(())
-//! # }
-//! ```
 
 #![warn(
     missing_copy_implementations,
@@ -48,10 +17,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-
-mod config;
-
-pub use config::{RpcServerGuard, ServeConfig};
 
 mod ctx;
 pub use ctx::{LoadState, RpcCtx, SignetCtx};
@@ -72,8 +37,7 @@ mod interest;
 
 pub mod receipts;
 
-/// Utils and simple serve functions.
-pub mod utils;
+mod utils;
 
 /// Re-exported for convenience
 pub use ::ajj;
