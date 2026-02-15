@@ -346,22 +346,6 @@ impl Decompress for DbSignetEvent {
     }
 }
 
-/// Table that maps rollup block heights to post-block journal hashes.
-#[derive(Debug, Clone, Copy)]
-pub struct JournalHashes {
-    _private: (),
-}
-
-impl Table for JournalHashes {
-    const NAME: &'static str = <tables::HashedAccounts as Table>::NAME;
-
-    const DUPSORT: bool = <tables::HashedAccounts as Table>::DUPSORT;
-
-    type Key = u64;
-
-    type Value = B256;
-}
-
 #[cfg(test)]
 mod test {
     use super::*;

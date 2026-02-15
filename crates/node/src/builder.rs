@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use crate::{GENESIS_JOURNAL_HASH, SignetNode};
+use crate::{NodeStatus, SignetNode};
 use eyre::OptionExt;
 use reth::{
     primitives::EthPrimitives,
@@ -13,7 +13,7 @@ use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
 use signet_db::DbProviderExt;
 use signet_node_config::SignetNodeConfig;
-use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
+use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
 use std::sync::Arc;
 
 /// A type that does not implement [`AliasOracleFactory`].
@@ -198,11 +198,6 @@ where
                     writer.tx_mut().clear::<reth_db::tables::HashedAccounts>()?;
                     writer.tx_mut().clear::<reth_db::tables::HashedStorages>()?;
                     writer.tx_mut().clear::<reth_db::tables::AccountsTrie>()?;
-
-                    writer.tx_ref().put::<signet_db::JournalHashes>(0, GENESIS_JOURNAL_HASH)?;
-                    // we do not need to pre-populate the `ZenithHeaders` or
-                    // `SignetEvents` tables, as missing data is legal in those
-                    // tables
 
                     Ok(())
                 },

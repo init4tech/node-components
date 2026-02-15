@@ -26,7 +26,6 @@ fn test_insert_signet_block() {
     let factory = test_common::create_test_provider_factory();
     let writer = factory.provider_rw().unwrap();
 
-    let journal_hash = B256::repeat_byte(0x55);
     let header = Some(Zenith::BlockHeader {
         rollupChainId: U256::from(RU_CHAIN_ID),
         hostBlockNumber: U256::from(DEPLOY_HEIGHT),
@@ -55,15 +54,13 @@ fn test_insert_signet_block() {
         senders: std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect(),
     };
 
-    writer.insert_signet_block(header, &block, journal_hash).unwrap();
+    writer.insert_signet_block(header, &block).unwrap();
     writer.commit().unwrap();
 
     let reader = factory.provider_rw().unwrap();
 
     // Check basic updates
     assert_eq!(reader.last_block_number().unwrap(), block.number());
-    assert_eq!(reader.latest_journal_hash().unwrap(), journal_hash);
-    assert_eq!(reader.get_journal_hash(block.number()).unwrap(), Some(journal_hash));
     // This tests resolving `BlockId::Latest`
     assert_eq!(reader.best_block_number().unwrap(), block.number());
 
@@ -90,7 +87,6 @@ fn test_transaction_hash_indexing() {
     let factory = test_common::create_test_provider_factory();
     let writer = factory.provider_rw().unwrap();
 
-    let journal_hash = B256::repeat_byte(0x55);
     let header = Some(Zenith::BlockHeader {
         rollupChainId: U256::from(RU_CHAIN_ID),
         hostBlockNumber: U256::from(DEPLOY_HEIGHT),
@@ -119,7 +115,7 @@ fn test_transaction_hash_indexing() {
         senders: std::iter::repeat_n(Address::repeat_byte(0x33), 5).collect(),
     };
 
-    writer.insert_signet_block(header, &block, journal_hash).unwrap();
+    writer.insert_signet_block(header, &block).unwrap();
     writer.commit().unwrap();
 
     let reader = factory.provider_rw().unwrap();

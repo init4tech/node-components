@@ -1,8 +1,8 @@
-use crate::metrics;
+use crate::{NodeStatus, metrics, serve::RpcServerGuard};
 use alloy::{
     consensus::BlockHeader,
     eips::NumHash,
-    primitives::{B256, BlockNumber, b256},
+    primitives::{B256, BlockNumber},
 };
 use eyre::Context;
 use futures_util::StreamExt;
@@ -22,16 +22,11 @@ use signet_blobber::BlobFetcher;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_db::{DbProviderExt, ProviderConsistencyExt, RuChain, RuWriter};
 use signet_node_config::SignetNodeConfig;
-use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
-use signet_rpc::RpcServerGuard;
+use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, mem::MaybeUninit, sync::Arc};
 use tokio::sync::watch;
 use tracing::{debug, info, instrument};
-
-/// The genesis journal hash for the signet chain.
-pub const GENESIS_JOURNAL_HASH: B256 =
-    b256!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
 
 /// Make it easier to write some args
 type PrimitivesOf<Host> = <<Host as FullNodeTypes>::Types as NodeTypes>::Primitives;
