@@ -5,6 +5,8 @@ use endpoints::*;
 
 pub(crate) mod error;
 
+pub use endpoints::SignetNetworkStatus;
+
 use crate::ctx::RpcCtx;
 use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
@@ -15,5 +17,8 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new().route("sendOrder", send_order).route("callBundle", call_bundle)
+    ajj::Router::new()
+        .route("sendOrder", send_order)
+        .route("callBundle", call_bundle)
+        .route("networkStatus", network_status)
 }

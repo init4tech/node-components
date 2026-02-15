@@ -4,12 +4,70 @@ use crate::{
     utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
+use alloy::{eips::BlockId, primitives::B256};
+use reth::providers::{BlockHashReader, BlockNumReader};
 use reth_node_api::FullNodeComponents;
+use serde::Serialize;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
 use signet_node_types::Pnt;
 use signet_types::SignedOrder;
 use std::time::Duration;
 use tokio::select;
+
+/// Signet network status information.
+///
+/// This provides Signet-specific network status, as opposed to the host
+/// network status which would be returned by `eth_protocolVersion`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignetNetworkStatus {
+    /// The Signet chain ID.
+    pub chain_id: u64,
+    /// The genesis block hash.
+    pub genesis: B256,
+    /// The current head block hash.
+    pub head: B256,
+    /// The current head block number.
+    pub head_number: u64,
+}
+
+/// Returns the Signet network status including genesis and head block info.
+///
+/// This endpoint provides Signet-specific network information that reflects
+/// the rollup's state rather than the underlying host network.
+pub(super) async fn network_status<Host, Signet>(
+    hctx: HandlerCtx,
+    ctx: RpcCtx<Host, Signet>,
+) -> Result<SignetNetworkStatus, String>
+where
+    Host: FullNodeComponents,
+    Signet: Pnt,
+{
+    let task = async move {
+        let provider = ctx.signet().provider();
+
+        // Get the genesis block hash (block 0)
+        let genesis = provider
+            .block_hash(0)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "genesis block hash not found".to_string())?;
+
+        // Get the current head block number and hash
+        let head_number = provider.last_block_number().map_err(|e| e.to_string())?;
+
+        let head = provider
+            .block_hash(head_number)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "head block hash not found".to_string())?;
+
+        // Get the chain ID from constants
+        let chain_id = ctx.signet().constants().ru_chain_id();
+
+        Ok(SignetNetworkStatus { chain_id, genesis, head, head_number })
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
 
 pub(super) async fn send_order<Host, Signet>(
     hctx: HandlerCtx,

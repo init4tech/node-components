@@ -63,7 +63,7 @@ mod eth;
 pub use eth::{CallErrorData, EthError, eth};
 
 mod signet;
-pub use signet::{error::SignetError, signet};
+pub use signet::{SignetNetworkStatus, error::SignetError, signet};
 
 mod inspect;
 pub use inspect::inspect;
