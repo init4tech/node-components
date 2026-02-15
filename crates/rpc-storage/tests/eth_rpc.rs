@@ -35,6 +35,7 @@ struct TestHarness {
     tags: BlockTags,
     #[allow(dead_code)]
     notif_tx: broadcast::Sender<NewBlockNotification>,
+    #[allow(dead_code)]
     ctx: StorageRpcCtx<MemKv>,
     _cancel: CancellationToken,
 }
