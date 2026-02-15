@@ -1,12 +1,12 @@
 //! Parameter types, macros, and utility helpers for ETH RPC endpoints.
 
+use super::types::{RpcReceipt, RpcTransaction};
 use crate::interest::InterestKind;
 use alloy::{
     consensus::{
         ReceiptEnvelope, ReceiptWithBloom, Transaction, TxReceipt, transaction::Recovered,
     },
     eips::BlockId,
-    network::{Ethereum, Network},
     primitives::{Address, TxKind, U256},
     rpc::types::{
         BlockOverrides, Log, TransactionReceipt, TransactionRequest, pubsub::SubscriptionKind,
@@ -17,11 +17,6 @@ use serde::Deserialize;
 use signet_cold::ColdReceipt;
 use signet_storage_types::ConfirmationMeta;
 use trevm::MIN_TRANSACTION_GAS;
-
-/// RPC transaction type for the Ethereum network.
-type RpcTransaction = <Ethereum as Network>::TransactionResponse;
-/// RPC receipt type for the Ethereum network.
-type RpcReceipt = <Ethereum as Network>::ReceiptResponse;
 
 /// Args for `eth_call` and `eth_estimateGas`.
 #[derive(Debug, Deserialize)]

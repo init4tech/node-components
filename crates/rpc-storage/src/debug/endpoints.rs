@@ -2,15 +2,17 @@
 
 use crate::{
     config::StorageRpcCtx,
-    debug::DebugError,
+    debug::{
+        DebugError,
+        types::{TraceBlockParams, TraceTransactionParams},
+    },
     eth::helpers::{CfgFiller, await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
     consensus::BlockHeader,
     eips::BlockId,
-    primitives::B256,
-    rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
+    rpc::types::trace::geth::{GethTrace, TraceResult},
 };
 use itertools::Itertools;
 use signet_evm::EvmErrored;
@@ -19,14 +21,6 @@ use signet_hot::model::HotKvRead;
 use signet_types::MagicSig;
 use tracing::Instrument;
 use trevm::revm::database::DBErrorMarker;
-
-/// Params for `debug_traceBlockByNumber` and `debug_traceBlockByHash`.
-#[derive(Debug, serde::Deserialize)]
-pub(super) struct TraceBlockParams<T>(T, #[serde(default)] Option<GethDebugTracingOptions>);
-
-/// Params for `debug_traceTransaction`.
-#[derive(Debug, serde::Deserialize)]
-pub(super) struct TraceTransactionParams(B256, #[serde(default)] Option<GethDebugTracingOptions>);
 
 /// `debug_traceBlockByNumber` and `debug_traceBlockByHash` handler.
 pub(super) async fn trace_block<T, H>(
