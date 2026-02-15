@@ -1001,7 +1001,24 @@ where
 // Logs
 // ---------------------------------------------------------------------------
 
+/// Drain a [`signet_cold::LogStream`] into a `Vec<Log>`.
+///
+/// Errors from the stream (deadline exceeded, too many logs, reorg) are
+/// propagated as the first encountered error.
+async fn collect_log_stream(stream: signet_cold::LogStream) -> signet_cold::ColdResult<Vec<Log>> {
+    use tokio_stream::StreamExt;
+    let mut logs = Vec::new();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(log) = stream.next().await {
+        logs.push(log?);
+    }
+    Ok(logs)
+}
+
 /// `eth_getLogs` — query logs from cold storage with filter criteria.
+///
+/// Uses `stream_logs` for deadline enforcement and dedicated concurrency
+/// control. The stream is collected into a `Vec` for the JSON-RPC response.
 pub(crate) async fn get_logs<H>(
     hctx: HandlerCtx,
     (filter,): (Filter,),
@@ -1041,9 +1058,14 @@ where
         };
 
         let max_logs = ctx.config().max_logs_per_response;
-        let logs = cold.get_logs(resolved_filter, max_logs).await.map_err(|e| e.to_string())?;
+        let deadline = ctx.config().max_log_query_deadline;
 
-        Ok(logs)
+        let stream = cold
+            .stream_logs(resolved_filter, max_logs, deadline)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        collect_log_stream(stream).await.map_err(|e| e.to_string())
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
@@ -1144,7 +1166,12 @@ where
             };
 
             let max_logs = ctx.config().max_logs_per_response;
-            let logs = cold.get_logs(resolved, max_logs).await.map_err(|e| e.to_string())?;
+            let deadline = ctx.config().max_log_query_deadline;
+
+            let stream =
+                cold.stream_logs(resolved, max_logs, deadline).await.map_err(|e| e.to_string())?;
+
+            let logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))
