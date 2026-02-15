@@ -5,6 +5,7 @@ use endpoints::{trace_block, trace_transaction};
 mod error;
 pub use error::DebugError;
 pub(crate) mod tracer;
+mod types;
 
 use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};

@@ -14,6 +14,7 @@ mod error;
 pub use error::EthError;
 
 pub(crate) mod helpers;
+pub(crate) mod types;
 
 use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
