@@ -19,6 +19,7 @@ use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
 use signet_rpc_storage::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
 use signet_storage_types::{Receipt, SealedHeader};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
@@ -51,7 +52,7 @@ impl TestHarness {
         let tags = BlockTags::new(latest, latest.saturating_sub(2), 0);
         let (notif_tx, _) = broadcast::channel::<NewBlockNotification>(16);
         let ctx = StorageRpcCtx::new(
-            storage,
+            Arc::new(storage),
             constants,
             tags.clone(),
             None,

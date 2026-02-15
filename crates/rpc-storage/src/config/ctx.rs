@@ -56,7 +56,7 @@ impl<H: HotKv> Clone for StorageRpcCtx<H> {
 
 #[derive(Debug)]
 struct StorageRpcCtxInner<H: HotKv> {
-    storage: UnifiedStorage<H>,
+    storage: Arc<UnifiedStorage<H>>,
     constants: SignetSystemConstants,
     tags: BlockTags,
     tx_cache: Option<TxCache>,
@@ -73,7 +73,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// new block notifications. Callers send [`NewBlockNotification`]s on
     /// this channel as blocks are appended to storage.
     pub fn new(
-        storage: UnifiedStorage<H>,
+        storage: Arc<UnifiedStorage<H>>,
         constants: SignetSystemConstants,
         tags: BlockTags,
         tx_cache: Option<TxCache>,
