@@ -34,6 +34,14 @@ pub struct StorageRpcConfig {
     /// Default: `20_000`.
     pub max_logs_per_response: usize,
 
+    /// Maximum wall-clock time for a single log query.
+    ///
+    /// If a log query exceeds this duration, the stream is terminated
+    /// early and the handler returns a deadline-exceeded error.
+    ///
+    /// Default: `10` seconds.
+    pub max_log_query_deadline: Duration,
+
     /// Maximum concurrent tracing/debug requests.
     ///
     /// Controls the size of the semaphore that gates debug
@@ -81,6 +89,7 @@ impl Default for StorageRpcConfig {
             rpc_gas_cap: 30_000_000,
             max_blocks_per_filter: 10_000,
             max_logs_per_response: 20_000,
+            max_log_query_deadline: Duration::from_secs(10),
             max_tracing_requests: 25,
             stale_filter_ttl: Duration::from_secs(5 * 60),
             gas_oracle_block_count: 20,
