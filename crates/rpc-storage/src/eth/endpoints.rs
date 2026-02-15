@@ -56,7 +56,7 @@ impl Serialize for EmptyArray {
 
 /// Block transactions with lazy serialization.
 ///
-/// In both variants the raw [`RecoveredTx`] list is kept and transformed
+/// In both variants the raw `RecoveredTx` list is kept and transformed
 /// during serialization — either to full RPC transaction objects or to bare
 /// hashes — avoiding an intermediate `Vec` allocation.
 pub(crate) enum BlockTransactions {
