@@ -8,7 +8,9 @@ use reth::{
 };
 use signet_node_types::Pnt;
 use std::{
+    cmp::min,
     collections::VecDeque,
+    future::pending,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -17,7 +19,7 @@ use std::{
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
-use tracing::{debug, debug_span, enabled, trace};
+use tracing::{Instrument, debug, debug_span, enabled, trace};
 
 /// Either type for subscription outputs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -237,38 +239,23 @@ impl SubscriptionTask {
                 span.record("filter", format!("{filter:?}"));
             }
 
-            // Drain one buffered item per iteration, checking for
-            // cancellation between each send.
-            if let Some(item) = notif_buffer.pop_front() {
-                let notification = SubscriptionNotification {
-                    jsonrpc: "2.0",
-                    method: "eth_subscription",
-                    params: SubscriptionParams { result: &item, subscription: id },
-                };
-
-                let _guard = span.enter();
-                tokio::select! {
-                    biased;
-                    _ = &mut ajj_cancel => {
-                        trace!("subscription cancelled by client disconnect");
-                        token.cancel();
-                        break;
-                    }
-                    _ = token.cancelled() => {
-                        trace!("subscription cancelled by user");
-                        break;
-                    }
-                    result = ajj_ctx.notify(&notification) => {
-                        if result.is_err() {
-                            trace!("channel to client closed");
-                            break;
-                        }
-                    }
+            // NB: reserve half the capacity to avoid blocking other
+            // usage. This is a heuristic and can be adjusted as needed.
+            let guard = span.enter();
+            let permit_fut = async {
+                if !notif_buffer.is_empty() {
+                    ajj_ctx
+                        .permit_many(min(ajj_ctx.notification_capacity() / 2, notif_buffer.len()))
+                        .await
+                } else {
+                    pending().await
                 }
-                continue;
             }
+            .in_current_span();
+            drop(guard);
 
-            // Buffer empty — wait for incoming notifications.
+            // NB: biased select ensures we check cancellation before
+            // processing new notifications.
             let _guard = span.enter();
             tokio::select! {
                 biased;
@@ -280,6 +267,22 @@ impl SubscriptionTask {
                 _ = token.cancelled() => {
                     trace!("subscription cancelled by user");
                     break;
+                }
+                permits = permit_fut => {
+                    let Some(permits) = permits else {
+                        trace!("channel to client closed");
+                        break
+                    };
+
+                    for permit in permits {
+                        let Some(item) = notif_buffer.pop_front() else { break };
+                        let notification = SubscriptionNotification {
+                            jsonrpc: "2.0",
+                            method: "eth_subscription",
+                            params: SubscriptionParams { result: &item, subscription: id },
+                        };
+                        let _ = permit.send(&notification);
+                    }
                 }
                 notif_res = notifs.recv() => {
                     let notif = match notif_res {
