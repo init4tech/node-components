@@ -1,4 +1,4 @@
-//! Integration tests for the `signet-rpc-storage` ETH RPC endpoints.
+//! Integration tests for the `signet-rpc` ETH RPC endpoints.
 //!
 //! Tests exercise the public router API via the axum service layer, using
 //! in-memory storage backends (`MemKv` + `MemColdBackend`).
@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use signet_cold::{BlockData, ColdStorageHandle, ColdStorageTask, mem::MemColdBackend};
 use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
-use signet_rpc_storage::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
+use signet_rpc::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
 use signet_storage_types::{Receipt, SealedHeader};
 use std::sync::Arc;
@@ -59,7 +59,7 @@ impl TestHarness {
             StorageRpcConfig::default(),
             notif_tx.clone(),
         );
-        let app = signet_rpc_storage::router::<MemKv>().into_axum("/").with_state(ctx.clone());
+        let app = signet_rpc::router::<MemKv>().into_axum("/").with_state(ctx.clone());
 
         Self { app, cold, hot, tags, notif_tx, ctx, _cancel: cancel }
     }

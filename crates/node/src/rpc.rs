@@ -5,7 +5,7 @@ use crate::{
 use reth::primitives::EthPrimitives;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
-use signet_rpc_storage::{StorageRpcConfig, StorageRpcCtx};
+use signet_rpc::{StorageRpcConfig, StorageRpcCtx};
 use signet_storage::HotKv;
 use signet_tx_cache::TxCache;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ where
             StorageRpcConfig::default(),
             self.notif_tx.clone(),
         );
-        let router = signet_rpc_storage::router::<H>().with_state(rpc_ctx);
+        let router = signet_rpc::router::<H>().with_state(rpc_ctx);
         let serve_config: ServeConfig = self.config.merge_rpc_configs(&self.host)?.into();
         serve_config.serve(tasks, router).await
     }

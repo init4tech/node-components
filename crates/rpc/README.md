@@ -1,10 +1,9 @@
-# signet-rpc-storage
+# signet-rpc
 
 Ethereum JSON-RPC server backed by `signet-storage`'s unified storage backend.
 
 This crate provides a standalone ETH RPC implementation that uses hot storage
 for state queries and cold storage for block, transaction, and receipt data.
-Unlike `signet-rpc`, it does not depend on reth's `FullNodeComponents`.
 
 ## Supported Methods
 

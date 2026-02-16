@@ -13,7 +13,7 @@ use signet_blobber::ExtractableChainShim;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc_storage::{BlockTags, NewBlockNotification};
+use signet_rpc::{BlockTags, NewBlockNotification};
 use signet_storage::{HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};

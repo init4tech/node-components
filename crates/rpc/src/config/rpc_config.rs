@@ -10,7 +10,7 @@ use std::time::Duration;
 /// # Example
 ///
 /// ```
-/// use signet_rpc_storage::StorageRpcConfig;
+/// use signet_rpc::StorageRpcConfig;
 ///
 /// // Use defaults (matches reth defaults).
 /// let config = StorageRpcConfig::default();
