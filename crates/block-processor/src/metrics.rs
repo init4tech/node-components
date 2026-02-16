@@ -57,9 +57,6 @@ const ENTER_TOKEN_PROCESSED_HELP: &str =
 const TRANSACT_PROCESSED: &str = "signet.block_processor.transact_events.processed";
 const TRANSACT_PROCESSED_HELP: &str = "Histogram of number of transact events processed per block";
 
-const EXTRACTION_TIME: &str = "signet.block_processor.extraction.time";
-const EXTRACTION_TIME_HELP: &str = "Time taken to extract signet outputs from a host notification. Note: sometimes the extraction includes multiple blocks.";
-
 const PROCESSING_TIME: &str = "signet.block_processor.processing.time";
 const PROCESSING_TIME_HELP: &str =
     "Time taken to process a single signet block from extracts, in milliseconds.";
@@ -80,7 +77,6 @@ static DESCRIBE: LazyLock<()> = LazyLock::new(|| {
     describe_histogram!(ENTER_PROCESSED, ENTER_PROCESSED_HELP);
     describe_histogram!(ENTER_TOKEN_PROCESSED, ENTER_TOKEN_PROCESSED_HELP);
     describe_histogram!(TRANSACT_PROCESSED, TRANSACT_PROCESSED_HELP);
-    describe_histogram!(EXTRACTION_TIME, EXTRACTION_TIME_HELP);
     describe_histogram!(PROCESSING_TIME, PROCESSING_TIME_HELP);
     describe_histogram!(BLOCK_GAS_USED, BLOCK_GAS_USED_HELP);
 });
@@ -182,15 +178,6 @@ fn transacts_processed() -> Histogram {
 
 fn record_transacts_processed(value: u64) {
     transacts_processed().record(value as f64);
-}
-
-fn extraction_time() -> Histogram {
-    LazyLock::force(&DESCRIBE);
-    histogram!(EXTRACTION_TIME)
-}
-
-pub(crate) fn record_extraction_time(started_at: &std::time::Instant) {
-    extraction_time().record(started_at.elapsed().as_millis() as f64);
 }
 
 fn processing_time() -> Histogram {

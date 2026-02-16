@@ -21,13 +21,3 @@ pub use utils::revm_spec;
 
 mod v1;
 pub use v1::SignetBlockProcessor as SignetBlockProcessorV1;
-
-/// Primitives used by the host.
-pub type PrimitivesOf<Host> =
-    <<Host as reth_node_api::FullNodeTypes>::Types as reth_node_api::NodeTypes>::Primitives;
-
-/// A [`reth::providers::Chain`] using the host primitives.
-pub type Chain<Host> = reth::providers::Chain<PrimitivesOf<Host>>;
-
-/// A [`reth_exex::ExExNotification`] using the host primitives.
-pub type ExExNotification<Host> = reth_exex::ExExNotification<PrimitivesOf<Host>>;

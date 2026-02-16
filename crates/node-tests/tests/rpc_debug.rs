@@ -1,8 +1,5 @@
 use alloy::{primitives::Bytes, providers::ext::DebugApi, sol_types::SolCall};
-use reth::{
-    providers::TransactionsProvider,
-    rpc::types::trace::geth::{CallConfig, GethDebugTracingOptions},
-};
+use reth::rpc::types::trace::geth::{CallConfig, GethDebugTracingOptions};
 use serial_test::serial;
 use signet_node_tests::{rpc::rpc_test, types::Counter::incrementCall};
 use signet_test_utils::specs::{HostBlockSpec, RuBlockSpec};
@@ -12,8 +9,9 @@ use signet_test_utils::specs::{HostBlockSpec, RuBlockSpec};
 async fn test_debug_trace_transaction() {
     rpc_test(|ctx, counter| async move {
         let deployer = ctx.addresses[0];
-        let deploy_tx = &ctx.factory.transactions_by_block(1.into()).unwrap().unwrap()[0];
-        let tx_hash = *deploy_tx.hash();
+        let txs = ctx.transactions_in_block(1).await;
+        let deploy_tx = &txs[0];
+        let tx_hash = *deploy_tx.tx_hash();
 
         let tracing_opts = GethDebugTracingOptions::call_tracer(CallConfig {
             only_top_call: Some(false),

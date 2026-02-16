@@ -1,15 +1,13 @@
-use crate::interest::InterestKind;
-use ajj::HandlerCtx;
-use alloy::{primitives::U64, rpc::types::Log};
-use dashmap::DashMap;
-use reth::{
-    providers::{CanonStateNotifications, CanonStateSubscriptions, providers::BlockchainProvider},
-    rpc::types::Header,
+//! Subscription management for `eth_subscribe` / `eth_unsubscribe`.
+
+use crate::interest::{
+    InterestKind, NewBlockNotification,
+    buffer::{EventBuffer, EventItem},
 };
-use signet_node_types::Pnt;
+use ajj::HandlerCtx;
+use alloy::primitives::U64;
+use dashmap::DashMap;
 use std::{
-    cmp::min,
-    collections::VecDeque,
     future::pending,
     sync::{
         Arc, Weak,
@@ -17,17 +15,12 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::{self, error::RecvError};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tracing::{Instrument, debug, debug_span, enabled, trace};
 
-/// Either type for subscription outputs.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(untagged)]
-pub enum Either {
-    Log(Box<Log>),
-    Block(Box<Header>),
-}
+/// Buffer for subscription outputs: log entries or block headers.
+pub(crate) type SubscriptionBuffer = EventBuffer<alloy::rpc::types::Header>;
 
 /// JSON-RPC subscription notification envelope.
 #[derive(serde::Serialize)]
@@ -40,77 +33,8 @@ struct SubscriptionNotification<'a> {
 /// Params field of a subscription notification.
 #[derive(serde::Serialize)]
 struct SubscriptionParams<'a> {
-    result: &'a Either,
+    result: &'a EventItem<alloy::rpc::types::Header>,
     subscription: U64,
-}
-
-/// Buffer for subscription outputs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SubscriptionBuffer {
-    Log(VecDeque<Log>),
-    Block(VecDeque<Header>),
-}
-
-impl SubscriptionBuffer {
-    /// True if the buffer is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Get the number of items in the buffer.
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Log(buf) => buf.len(),
-            Self::Block(buf) => buf.len(),
-        }
-    }
-
-    /// Extend this buffer with another buffer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the buffers are of different types.
-    pub fn extend(&mut self, other: Self) {
-        match (self, other) {
-            (Self::Log(buf), Self::Log(other)) => buf.extend(other),
-            (Self::Block(buf), Self::Block(other)) => buf.extend(other),
-            _ => panic!("mismatched buffer types"),
-        }
-    }
-
-    /// Pop the front of the buffer.
-    pub fn pop_front(&mut self) -> Option<Either> {
-        match self {
-            Self::Log(buf) => buf.pop_front().map(|log| Either::Log(Box::new(log))),
-            Self::Block(buf) => buf.pop_front().map(|header| Either::Block(Box::new(header))),
-        }
-    }
-}
-
-impl From<Vec<Log>> for SubscriptionBuffer {
-    fn from(logs: Vec<Log>) -> Self {
-        Self::Log(logs.into())
-    }
-}
-
-impl FromIterator<Log> for SubscriptionBuffer {
-    fn from_iter<T: IntoIterator<Item = Log>>(iter: T) -> Self {
-        let inner: VecDeque<_> = iter.into_iter().collect();
-        Self::Log(inner)
-    }
-}
-
-impl From<Vec<Header>> for SubscriptionBuffer {
-    fn from(headers: Vec<Header>) -> Self {
-        Self::Block(headers.into())
-    }
-}
-
-impl FromIterator<Header> for SubscriptionBuffer {
-    fn from_iter<T: IntoIterator<Item = Header>>(iter: T) -> Self {
-        let inner: VecDeque<_> = iter.into_iter().collect();
-        Self::Block(inner)
-    }
 }
 
 /// Tracks ongoing subscription tasks.
@@ -124,30 +48,33 @@ impl FromIterator<Header> for SubscriptionBuffer {
 /// This task runs on a separate thread to avoid [`DashMap::retain`] deadlock.
 /// See [`DashMap`] documentation for more information.
 #[derive(Clone)]
-pub struct SubscriptionManager<N: Pnt> {
-    inner: Arc<SubscriptionManagerInner<N>>,
+pub(crate) struct SubscriptionManager {
+    inner: Arc<SubscriptionManagerInner>,
 }
 
-impl<N: Pnt> SubscriptionManager<N> {
+impl SubscriptionManager {
     /// Instantiate a new subscription manager, start a task to clean up
-    /// subscriptions cancelled by user disconnection
-    pub fn new(provider: BlockchainProvider<N>, clean_interval: Duration) -> Self {
-        let inner = Arc::new(SubscriptionManagerInner::new(provider));
+    /// subscriptions cancelled by user disconnection.
+    pub(crate) fn new(
+        notif_sender: broadcast::Sender<NewBlockNotification>,
+        clean_interval: Duration,
+    ) -> Self {
+        let inner = Arc::new(SubscriptionManagerInner::new(notif_sender));
         let task = SubCleanerTask::new(Arc::downgrade(&inner), clean_interval);
         task.spawn();
         Self { inner }
     }
 }
 
-impl<N: Pnt> core::ops::Deref for SubscriptionManager<N> {
-    type Target = SubscriptionManagerInner<N>;
+impl core::ops::Deref for SubscriptionManager {
+    type Target = SubscriptionManagerInner;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<N: Pnt> core::fmt::Debug for SubscriptionManager<N> {
+impl core::fmt::Debug for SubscriptionManager {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SubscriptionManager").finish_non_exhaustive()
     }
@@ -155,19 +82,16 @@ impl<N: Pnt> core::fmt::Debug for SubscriptionManager<N> {
 
 /// Inner logic for [`SubscriptionManager`].
 #[derive(Debug)]
-pub struct SubscriptionManagerInner<N>
-where
-    N: Pnt,
-{
+pub(crate) struct SubscriptionManagerInner {
     next_id: AtomicU64,
     tasks: DashMap<U64, CancellationToken>,
-    provider: BlockchainProvider<N>,
+    notif_sender: broadcast::Sender<NewBlockNotification>,
 }
 
-impl<N: Pnt> SubscriptionManagerInner<N> {
+impl SubscriptionManagerInner {
     /// Create a new subscription manager.
-    pub fn new(provider: BlockchainProvider<N>) -> Self {
-        Self { next_id: AtomicU64::new(1), tasks: DashMap::new(), provider }
+    fn new(notif_sender: broadcast::Sender<NewBlockNotification>) -> Self {
+        Self { next_id: AtomicU64::new(1), tasks: DashMap::new(), notif_sender }
     }
 
     /// Assign a new subscription ID.
@@ -176,7 +100,7 @@ impl<N: Pnt> SubscriptionManagerInner<N> {
     }
 
     /// Cancel a subscription task.
-    pub fn unsubscribe(&self, id: U64) -> bool {
+    pub(crate) fn unsubscribe(&self, id: U64) -> bool {
         if let Some(task) = self.tasks.remove(&id) {
             task.1.cancel();
             true
@@ -187,18 +111,19 @@ impl<N: Pnt> SubscriptionManagerInner<N> {
 
     /// Subscribe to notifications. Returns `None` if notifications are
     /// disabled.
-    pub fn subscribe(&self, ajj_ctx: &HandlerCtx, filter: InterestKind) -> Option<U64> {
+    pub(crate) fn subscribe(&self, ajj_ctx: &HandlerCtx, filter: InterestKind) -> Option<U64> {
         if !ajj_ctx.notifications_enabled() {
             return None;
         }
 
         let id = self.next_id();
         let token = CancellationToken::new();
+        self.tasks.insert(id, token.clone());
         let task = SubscriptionTask {
             id,
             filter,
             token: token.clone(),
-            notifs: self.provider.subscribe_to_canonical_state(),
+            notifs: self.notif_sender.subscribe(),
         };
         task.spawn(ajj_ctx);
 
@@ -214,16 +139,12 @@ struct SubscriptionTask {
     id: U64,
     filter: InterestKind,
     token: CancellationToken,
-    notifs: CanonStateNotifications,
+    notifs: broadcast::Receiver<NewBlockNotification>,
 }
 
 impl SubscriptionTask {
     /// Create the task future.
-    pub(crate) async fn task_future(
-        self,
-        ajj_ctx: HandlerCtx,
-        ajj_cancel: WaitForCancellationFutureOwned,
-    ) {
+    async fn task_future(self, ajj_ctx: HandlerCtx, ajj_cancel: WaitForCancellationFutureOwned) {
         let SubscriptionTask { id, filter, token, mut notifs } = self;
 
         if !ajj_ctx.notifications_enabled() {
@@ -245,7 +166,7 @@ impl SubscriptionTask {
             let permit_fut = async {
                 if !notif_buffer.is_empty() {
                     ajj_ctx
-                        .permit_many(min(ajj_ctx.notification_capacity() / 2, notif_buffer.len()))
+                        .permit_many((ajj_ctx.notification_capacity() / 2).min(notif_buffer.len()))
                         .await
                 } else {
                     pending().await
@@ -292,7 +213,7 @@ impl SubscriptionTask {
                             continue;
                         }
                         Err(e) => {
-                            trace!(?e, "CanonStateNotifications stream closed");
+                            trace!(?e, "notification stream closed");
                             break;
                         }
                     };
@@ -308,7 +229,7 @@ impl SubscriptionTask {
     }
 
     /// Spawn on the ajj [`HandlerCtx`].
-    pub(crate) fn spawn(self, ctx: &HandlerCtx) {
+    fn spawn(self, ctx: &HandlerCtx) {
         ctx.spawn_graceful_with_ctx(|ctx, ajj_cancel| self.task_future(ctx, ajj_cancel));
     }
 }
@@ -317,29 +238,27 @@ impl SubscriptionTask {
 ///
 /// This task runs on a separate thread to avoid [`DashMap::retain`] deadlocks.
 #[derive(Debug)]
-pub(super) struct SubCleanerTask<N: Pnt> {
-    inner: Weak<SubscriptionManagerInner<N>>,
-    interval: std::time::Duration,
+struct SubCleanerTask {
+    inner: Weak<SubscriptionManagerInner>,
+    interval: Duration,
 }
 
-impl<N: Pnt> SubCleanerTask<N> {
+impl SubCleanerTask {
     /// Create a new subscription cleaner task.
-    pub(super) const fn new(
-        inner: Weak<SubscriptionManagerInner<N>>,
-        interval: std::time::Duration,
-    ) -> Self {
+    const fn new(inner: Weak<SubscriptionManagerInner>, interval: Duration) -> Self {
         Self { inner, interval }
     }
 
     /// Run the task. This task runs on a separate thread, which ensures that
     /// [`DashMap::retain`]'s deadlock condition is not met. See [`DashMap`]
     /// documentation for more information.
-    pub(super) fn spawn(self) {
+    fn spawn(self) {
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(self.interval);
-                if let Some(inner) = self.inner.upgrade() {
-                    inner.tasks.retain(|_, task| !task.is_cancelled());
+                match self.inner.upgrade() {
+                    Some(inner) => inner.tasks.retain(|_, task| !task.is_cancelled()),
+                    None => break,
                 }
             }
         });

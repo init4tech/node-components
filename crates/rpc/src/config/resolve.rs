@@ -35,7 +35,7 @@ pub struct SyncStatus {
 /// # Example
 ///
 /// ```
-/// use signet_rpc_storage::BlockTags;
+/// use signet_rpc::BlockTags;
 ///
 /// let tags = BlockTags::new(100, 95, 90);
 /// assert_eq!(tags.latest(), 100);

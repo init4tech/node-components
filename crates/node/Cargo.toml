@@ -10,10 +10,12 @@ repository.workspace = true
 
 [dependencies]
 signet-block-processor.workspace = true
-signet-db.workspace = true
+signet-extract.workspace = true
 signet-node-config.workspace = true
-signet-node-types.workspace = true
 signet-rpc.workspace = true
+signet-hot.workspace = true
+signet-storage.workspace = true
+signet-storage-types.workspace = true
 
 signet-blobber.workspace = true
 signet-tx-cache.workspace = true
@@ -25,11 +27,10 @@ axum = "0.8.1"
 interprocess = { version = "2.2.2", features = ["tokio"] }
 
 reth.workspace = true
-reth-chainspec.workspace = true
-reth-db.workspace = true
-reth-db-common.workspace = true
 reth-exex.workspace = true
 reth-node-api.workspace = true
+
+trevm.workspace = true
 
 eyre.workspace = true
 futures-util.workspace = true

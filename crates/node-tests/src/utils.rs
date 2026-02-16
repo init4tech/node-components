@@ -5,19 +5,7 @@ use alloy::{
     signers::{SignerSync, local::PrivateKeySigner},
     uint,
 };
-use reth::{
-    chainspec::ChainSpec,
-    primitives::{Block, BlockBody, Header, RecoveredBlock, Transaction, TransactionSigned},
-    providers::{
-        ProviderFactory,
-        providers::{RocksDBProvider, StaticFileProvider},
-    },
-};
-use reth_db::test_utils::{
-    create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
-};
-use reth_exex_test_utils::TmpDB;
-use signet_node_types::SignetNodeTypes;
+use reth::primitives::{Block, BlockBody, Header, RecoveredBlock, Transaction, TransactionSigned};
 use signet_zenith::Zenith;
 use std::{panic, sync::Once};
 use tracing_subscriber::EnvFilter;
@@ -126,19 +114,4 @@ pub fn adjust_usd_decimals_u256(amount: U256, decimals: u8) -> U256 {
 /// This is calculated as `amount * 10^(18 - decimals)`.
 pub fn adjust_usd_decimals(amount: usize, decimals: u8) -> U256 {
     adjust_usd_decimals_u256(U256::from(amount), decimals)
-}
-
-/// Create a provider factory with a chain spec
-pub fn create_test_provider_factory_with_chain_spec(
-    chain_spec: std::sync::Arc<ChainSpec>,
-) -> ProviderFactory<SignetNodeTypes<TmpDB>> {
-    let (static_dir, _) = create_test_static_files_dir();
-    let (rocks, _) = create_test_rocksdb_dir();
-
-    let db = create_test_rw_db();
-    let sfp = StaticFileProvider::read_write(static_dir.keep()).expect("static file provider");
-
-    let rocks = RocksDBProvider::builder(rocks.keep()).build().expect("rocksdb provider");
-
-    ProviderFactory::new(db, chain_spec, sfp, rocks).unwrap()
 }

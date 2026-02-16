@@ -11,11 +11,13 @@ repository.workspace = true
 [dependencies]
 signet-node.workspace = true
 signet-node-config = { workspace = true, features = ["test_utils"] }
-signet-node-types.workspace = true
-signet-db.workspace = true
 
+signet-cold = { workspace = true, features = ["in-memory"] }
 signet-constants.workspace = true
 signet-evm.workspace = true
+signet-hot = { workspace = true, features = ["in-memory"] }
+signet-storage.workspace = true
+signet-storage-types.workspace = true
 signet-test-utils.workspace = true
 signet-types.workspace = true
 signet-zenith.workspace = true
@@ -23,15 +25,14 @@ signet-zenith.workspace = true
 alloy.workspace = true
 
 reth.workspace = true
-reth-db.workspace = true
 reth-exex.workspace = true
 reth-exex-test-utils.workspace = true
 reth-node-api.workspace = true
 
 eyre.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tokio.workspace = true
 
 [dev-dependencies]
 signet-genesis.workspace = true

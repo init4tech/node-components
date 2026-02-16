@@ -1,24 +1,25 @@
-mod endpoints;
-use endpoints::*;
+//! Debug namespace RPC router backed by storage.
 
+mod endpoints;
+use endpoints::{trace_block, trace_transaction};
 mod error;
 pub use error::DebugError;
+pub(crate) mod tracer;
+mod types;
 
-mod tracer;
-
-use crate::ctx::RpcCtx;
+use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
-use reth_node_api::FullNodeComponents;
-use signet_node_types::Pnt;
+use signet_hot::{HotKv, model::HotKvRead};
+use trevm::revm::database::DBErrorMarker;
 
-/// Instantiate a `debug` API router.
-pub fn debug<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>
+/// Instantiate a `debug` API router backed by storage.
+pub(crate) fn debug<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     ajj::Router::new()
-        .route("traceBlockByNumber", trace_block::<BlockNumberOrTag, _, _>)
-        .route("traceBlockByHash", trace_block::<B256, _, _>)
-        .route("traceTransaction", trace_transaction)
+        .route("traceBlockByNumber", trace_block::<BlockNumberOrTag, H>)
+        .route("traceBlockByHash", trace_block::<B256, H>)
+        .route("traceTransaction", trace_transaction::<H>)
 }

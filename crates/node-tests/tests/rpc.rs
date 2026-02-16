@@ -13,7 +13,6 @@ use alloy::{
     },
     sol_types::{SolCall, SolEvent},
 };
-use reth::providers::{BlockNumReader, BlockReader, TransactionsProvider};
 use serial_test::serial;
 use signet_node_tests::{
     HostBlockSpec, SignetTestContext,
@@ -99,28 +98,29 @@ async fn test_eth_estimateGas(ctx: &SignetTestContext, contract: &TestCounterIns
 }
 
 async fn test_eth_getBlockByHash(ctx: &SignetTestContext, _contract: &TestCounterInstance) {
-    let genesis = ctx.factory.block(0.into()).unwrap().unwrap();
+    let genesis = ctx.header_by_number(0).unwrap();
 
-    let block = ctx.alloy_provider.get_block_by_hash(genesis.hash_slow()).await.unwrap().unwrap();
+    let block = ctx.alloy_provider.get_block_by_hash(genesis.hash()).await.unwrap().unwrap();
     assert_eq!(block.header.number, genesis.number);
     assert_eq!(block.header.timestamp, genesis.timestamp);
 }
 
 async fn test_eth_getBlockByNumber(ctx: &SignetTestContext, _contract: &TestCounterInstance) {
-    let db_block = ctx.factory.block(1.into()).unwrap().unwrap();
+    let db_header = ctx.header_by_number(1).unwrap();
 
     let rpc_block =
-        ctx.alloy_provider.get_block_by_number(db_block.number.into()).await.unwrap().unwrap();
-    assert_eq!(rpc_block.header.number, db_block.number);
-    assert_eq!(rpc_block.header.timestamp, db_block.timestamp);
-    assert_eq!(rpc_block.header.hash, db_block.hash_slow());
+        ctx.alloy_provider.get_block_by_number(db_header.number.into()).await.unwrap().unwrap();
+    assert_eq!(rpc_block.header.number, db_header.number);
+    assert_eq!(rpc_block.header.timestamp, db_header.timestamp);
+    assert_eq!(rpc_block.header.hash, db_header.hash());
 }
 
 async fn test_eth_getTransactionByHash(ctx: &SignetTestContext, _contract: &TestCounterInstance) {
     let deployer = ctx.addresses[0];
 
-    let deploy_tx = &ctx.factory.transactions_by_block(1.into()).unwrap().unwrap()[0];
-    let tx_hash = *deploy_tx.hash();
+    let txs = ctx.transactions_in_block(1).await;
+    let deploy_tx = &txs[0];
+    let tx_hash = *deploy_tx.tx_hash();
 
     let rpc_tx = ctx.alloy_provider.get_transaction_by_hash(tx_hash).await.unwrap().unwrap();
     assert_eq!(rpc_tx.tx_hash(), tx_hash);
@@ -135,8 +135,9 @@ async fn test_eth_getTransactionByHash(ctx: &SignetTestContext, _contract: &Test
 async fn test_eth_getTransactionReceipt(ctx: &SignetTestContext, contract: &TestCounterInstance) {
     let deployer = ctx.addresses[0];
 
-    let deploy_tx = &ctx.factory.transactions_by_block(1.into()).unwrap().unwrap()[0];
-    let tx_hash = *deploy_tx.hash();
+    let txs = ctx.transactions_in_block(1).await;
+    let deploy_tx = &txs[0];
+    let tx_hash = *deploy_tx.tx_hash();
 
     let receipt = ctx.alloy_provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
 
@@ -210,8 +211,8 @@ async fn test_stateful_rpc_calls() {
 }
 
 async fn getLogs_post(ctx: &SignetTestContext, contract: &TestCounterInstance) {
-    let latest_block = ctx.factory.last_block_number().unwrap();
-    let latest_hash = ctx.factory.block(latest_block.into()).unwrap().unwrap().hash_slow();
+    let latest_block = ctx.last_block_number();
+    let latest_hash = ctx.header_by_number(latest_block).unwrap().hash();
 
     let logs = ctx
         .alloy_provider
@@ -303,8 +304,8 @@ async fn newBlockFilter_pre(ctx: &SignetTestContext) -> U256 {
 
 async fn newBlockFilter_post(ctx: &SignetTestContext, filter_id: U256) {
     let blocks: Vec<B256> = ctx.alloy_provider.get_filter_changes(filter_id).await.unwrap();
-    let latest_block = ctx.factory.last_block_number().unwrap();
-    let latest_hash = ctx.factory.block(latest_block.into()).unwrap().unwrap().hash_slow();
+    let latest_block = ctx.last_block_number();
+    let latest_hash = ctx.header_by_number(latest_block).unwrap().hash();
 
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0], latest_hash);
@@ -534,8 +535,8 @@ async fn subscribe_blocks_pre(ctx: &SignetTestContext) -> Subscription<Header> {
 async fn subscribe_blocks_post(ctx: &SignetTestContext, mut sub: Subscription<Header>) {
     let block = sub.recv().await.unwrap();
 
-    let latest_block = ctx.factory.last_block_number().unwrap();
-    let latest_hash = ctx.factory.block(latest_block.into()).unwrap().unwrap().hash_slow();
+    let latest_block = ctx.last_block_number();
+    let latest_hash = ctx.header_by_number(latest_block).unwrap().hash();
     assert_eq!(block.number, latest_block);
     assert_eq!(block.hash, latest_hash);
 }
@@ -665,19 +666,19 @@ async fn verify_all_txs_in_block(ctx: &SignetTestContext, block_number: u64) {
 
     let txs = block.transactions.as_transactions().unwrap();
 
-    // Also get transactions directly from DB
-    let db_txs = ctx.factory.transactions_by_block(block_number.into()).unwrap().unwrap();
+    // Also get transactions directly from storage
+    let db_txs = ctx.transactions_in_block(block_number).await;
 
     assert_eq!(txs.len(), db_txs.len(), "Transaction count mismatch in block {}", block_number);
 
     for (idx, (rpc_tx, db_tx)) in txs.iter().zip(db_txs.iter()).enumerate() {
         let rpc_hash = rpc_tx.tx_hash();
-        let db_hash = *db_tx.hash();
+        let db_hash = *db_tx.tx_hash();
 
-        // Verify RPC and DB hashes match
+        // Verify RPC and storage hashes match
         assert_eq!(
             rpc_hash, db_hash,
-            "Hash mismatch between RPC and DB for block {} tx {}",
+            "Hash mismatch between RPC and storage for block {} tx {}",
             block_number, idx
         );
 
@@ -688,11 +689,11 @@ async fn verify_all_txs_in_block(ctx: &SignetTestContext, block_number: u64) {
             "RPC hash lookup failed: block={block_number}, idx={idx}, hash={rpc_hash}",
         );
 
-        // Verify hash lookup works via DB provider
-        let provider_lookup = ctx.factory.provider().unwrap().transaction_by_hash(db_hash).unwrap();
+        // Verify hash lookup works via cold storage
+        let storage_lookup = ctx.transaction_by_hash(db_hash).await;
         assert!(
-            provider_lookup.is_some(),
-            "DB provider hash lookup failed: block={}, idx={}, hash={}",
+            storage_lookup.is_some(),
+            "Cold storage hash lookup failed: block={}, idx={}, hash={}",
             block_number,
             idx,
             db_hash

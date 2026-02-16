@@ -1,4 +1,4 @@
-//! Integration tests for the `signet-rpc-storage` ETH RPC endpoints.
+//! Integration tests for the `signet-rpc` ETH RPC endpoints.
 //!
 //! Tests exercise the public router API via the axum service layer, using
 //! in-memory storage backends (`MemKv` + `MemColdBackend`).
@@ -9,6 +9,7 @@ use alloy::{
         TxType, transaction::Recovered,
     },
     primitives::{Address, B256, Log as PrimitiveLog, LogData, TxKind, U256, address, logs_bloom},
+    signers::{SignerSync, local::PrivateKeySigner},
 };
 use axum::body::Body;
 use http::Request;
@@ -16,12 +17,14 @@ use serde_json::{Value, json};
 use signet_cold::{BlockData, ColdStorageHandle, ColdStorageTask, mem::MemColdBackend};
 use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
-use signet_rpc_storage::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
+use signet_rpc::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
-use signet_storage_types::{Receipt, SealedHeader};
+use signet_storage_types::{Account, Receipt, SealedHeader};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
+use trevm::revm::bytecode::Bytecode;
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -51,14 +54,14 @@ impl TestHarness {
         let tags = BlockTags::new(latest, latest.saturating_sub(2), 0);
         let (notif_tx, _) = broadcast::channel::<NewBlockNotification>(16);
         let ctx = StorageRpcCtx::new(
-            storage,
+            Arc::new(storage),
             constants,
             tags.clone(),
             None,
             StorageRpcConfig::default(),
             notif_tx.clone(),
         );
-        let app = signet_rpc_storage::router::<MemKv>().into_axum("/").with_state(ctx.clone());
+        let app = signet_rpc::router::<MemKv>().into_axum("/").with_state(ctx.clone());
 
         Self { app, cold, hot, tags, notif_tx, ctx, _cancel: cancel }
     }
@@ -136,8 +139,6 @@ fn make_signed_tx_with_gas_price(
     nonce: u64,
     gas_price: u128,
 ) -> (signet_storage_types::RecoveredTx, Address) {
-    use alloy::signers::{SignerSync, local::PrivateKeySigner};
-
     let signer = PrivateKeySigner::from_signing_key(
         alloy::signers::k256::ecdsa::SigningKey::from_slice(
             &B256::repeat_byte((nonce as u8).wrapping_add(1)).0,
@@ -410,9 +411,6 @@ async fn test_get_block_receipts() {
 
 /// Populate hot storage with a test account.
 fn setup_hot_account(hot: &MemKv) {
-    use signet_storage_types::Account;
-    use trevm::revm::bytecode::Bytecode;
-
     let writer = hot.writer().unwrap();
 
     let code = alloy::primitives::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
@@ -621,7 +619,7 @@ async fn test_syncing_not_syncing() {
 #[tokio::test]
 async fn test_syncing_in_progress() {
     let h = TestHarness::new(0).await;
-    h.tags.set_sync_status(signet_rpc_storage::SyncStatus {
+    h.tags.set_sync_status(signet_rpc::SyncStatus {
         starting_block: 0,
         current_block: 50,
         highest_block: 100,
@@ -685,8 +683,8 @@ async fn test_gas_price_empty_blocks() {
 
     let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
-    // No txs means tip = 0, gasPrice = base_fee = 1e9 = 0x3b9aca00
-    assert_eq!(result, json!("0x3b9aca00"));
+    // No txs → tip defaults to 1 Gwei, gasPrice = base_fee + tip = 2 Gwei
+    assert_eq!(result, json!("0x77359400"));
 }
 
 #[tokio::test]
@@ -817,8 +815,6 @@ async fn test_uninstall_filter() {
 /// The genesis header at block 0 is required so `revm_reader_at_height`
 /// can validate height bounds. Without it, MemKv returns `NoBlocks`.
 fn setup_hot_for_evm(hot: &MemKv, addr: Address, balance: U256) {
-    use signet_storage_types::{Account, SealedHeader};
-
     let writer = hot.writer().unwrap();
 
     // Write a genesis header so the hot storage tracks block 0.

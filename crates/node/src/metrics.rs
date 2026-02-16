@@ -7,6 +7,7 @@
 //!   - Number of reorgs processed
 
 use metrics::{Counter, counter, describe_counter};
+use reth::primitives::NodePrimitives;
 use reth_exex::ExExNotification;
 use std::sync::LazyLock;
 
@@ -29,13 +30,22 @@ static DESCRIBE: LazyLock<()> = LazyLock::new(|| {
     describe_counter!(REORGS_PROCESSED, REORGS_PROCESSED_HELP);
 });
 
-fn reorgs_processed() -> Counter {
+fn notifications_received() -> Counter {
     LazyLock::force(&DESCRIBE);
-    counter!(REORGS_PROCESSED)
+    counter!(NOTIFICATION_RECEIVED)
 }
 
-fn inc_reorgs_processed() {
-    reorgs_processed().increment(1);
+fn inc_notifications_received() {
+    notifications_received().increment(1);
+}
+
+fn reorgs_received() -> Counter {
+    LazyLock::force(&DESCRIBE);
+    counter!(REORGS_RECEIVED)
+}
+
+fn inc_reorgs_received() {
+    reorgs_received().increment(1);
 }
 
 fn notifications_processed() -> Counter {
@@ -47,14 +57,23 @@ fn inc_notifications_processed() {
     notifications_processed().increment(1);
 }
 
-pub(crate) fn record_notification_received(notification: &ExExNotification) {
-    inc_notifications_processed();
+fn reorgs_processed() -> Counter {
+    LazyLock::force(&DESCRIBE);
+    counter!(REORGS_PROCESSED)
+}
+
+fn inc_reorgs_processed() {
+    reorgs_processed().increment(1);
+}
+
+pub(crate) fn record_notification_received<N: NodePrimitives>(notification: &ExExNotification<N>) {
+    inc_notifications_received();
     if notification.reverted_chain().is_some() {
-        inc_reorgs_processed();
+        inc_reorgs_received();
     }
 }
 
-pub(crate) fn record_notification_processed(notification: &ExExNotification) {
+pub(crate) fn record_notification_processed<N: NodePrimitives>(notification: &ExExNotification<N>) {
     inc_notifications_processed();
     if notification.reverted_chain().is_some() {
         inc_reorgs_processed();

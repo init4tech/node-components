@@ -1,66 +1,78 @@
+//! Signet namespace RPC endpoint implementations.
+
 use crate::{
-    ctx::RpcCtx,
+    config::{EvmBlockContext, StorageRpcCtx},
+    eth::helpers::{CfgFiller, await_handler, response_tri},
     signet::error::SignetError,
-    utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
-use reth_node_api::FullNodeComponents;
+use alloy::eips::BlockId;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
-use signet_node_types::Pnt;
+use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::SignedOrder;
 use std::time::Duration;
 use tokio::select;
+use trevm::revm::database::DBErrorMarker;
 
-pub(super) async fn send_order<Host, Signet>(
+/// `signet_sendOrder` handler.
+pub(super) async fn send_order<H>(
     hctx: HandlerCtx,
     order: SignedOrder,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<(), String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
+    let Some(tx_cache) = ctx.tx_cache().cloned() else {
+        return Err(SignetError::TxCacheNotProvided.to_string());
+    };
+
     let task = |hctx: HandlerCtx| async move {
-        let Some(tx_cache) = ctx.signet().tx_cache() else {
-            return Err(SignetError::TxCacheUrlNotProvided.into_string());
-        };
-
-        hctx.spawn(async move { tx_cache.forward_order(order).await.map_err(|e| e.to_string()) });
-
+        hctx.spawn(async move {
+            if let Err(e) = tx_cache.forward_order(order).await {
+                tracing::warn!(error = %e, "failed to forward order");
+            }
+        });
         Ok(())
     };
 
     await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
-pub(super) async fn call_bundle<Host, Signet>(
+/// `signet_callBundle` handler.
+pub(super) async fn call_bundle<H>(
     hctx: HandlerCtx,
     bundle: SignetCallBundle,
-    ctx: RpcCtx<Host, Signet>,
-) -> ResponsePayload<SignetCallBundleResponse, String>
+    ctx: StorageRpcCtx<H>,
+) -> ResponsePayload<SignetCallBundleResponse, SignetError>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let timeout = bundle.bundle.timeout.unwrap_or(1000);
+    let timeout = bundle.bundle.timeout.unwrap_or(ctx.config().default_bundle_timeout_ms);
 
     let task = async move {
         let id = bundle.state_block_number();
-        let block_cfg = match ctx.signet().block_cfg(id.into()).await {
-            Ok(block_cfg) => block_cfg,
-            Err(e) => {
-                return ResponsePayload::internal_error_with_message_and_obj(
-                    "error while loading block cfg".into(),
-                    e.to_string(),
-                );
-            }
-        };
+        let block_id: BlockId = id.into();
+
+        let EvmBlockContext { header, db } =
+            response_tri!(ctx.resolve_evm_block(block_id).map_err(|e| {
+                tracing::warn!(error = %e, ?block_id, "block resolution failed for bundle");
+                SignetError::Resolve(e.to_string())
+            }));
 
         let mut driver = SignetBundleDriver::from(&bundle);
 
-        let trevm = response_tri!(ctx.trevm(id.into(), &block_cfg));
+        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
 
-        response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| e.into_error()));
+        response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| {
+            let e = e.into_error();
+            tracing::warn!(error = %e, "evm error during bundle simulation");
+            SignetError::Evm(e.to_string())
+        }));
 
         ResponsePayload(Ok(driver.into_response()))
     };
@@ -69,7 +81,7 @@ where
         select! {
             _ = tokio::time::sleep(Duration::from_millis(timeout)) => {
                 ResponsePayload::internal_error_message(
-                    "timeout during bundle simulation".into(),
+                    SignetError::Timeout.to_string().into(),
                 )
             }
             result = task => {
@@ -78,5 +90,5 @@ where
         }
     };
 
-    await_handler!(@response_option hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn(task))
 }

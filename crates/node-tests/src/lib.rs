@@ -32,7 +32,7 @@ pub mod types;
 pub mod utils;
 pub use utils::run_test;
 
-pub use reth_exex_test_utils::{Adapter, TestExExContext, TmpDB as TmpDb};
+pub use reth_exex_test_utils::{Adapter, TestExExContext};
 pub use signet_test_utils::specs::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
 };
