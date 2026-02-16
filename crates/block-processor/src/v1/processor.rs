@@ -157,7 +157,7 @@ where
     /// ███████   ████   ██      ██
     /// ===========================
     /// ===========================
-
+    ///
     /// Run the EVM for a single block extraction.
     async fn run_evm(
         &self,
