@@ -21,6 +21,9 @@ pub use context::{BalanceChecks, NonceChecks, SignetTestContext};
 /// Bespoke conversion utilities for converting between alloy and reth types.
 pub mod convert;
 
+/// Proptest strategies for fuzzing transactions, blocks, and headers.
+pub mod fuzz;
+
 /// Signet node RPC server utilities and helpers.
 pub mod rpc;
 pub use rpc::rpc_test;
