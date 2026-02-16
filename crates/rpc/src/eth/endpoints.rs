@@ -107,7 +107,7 @@ where
         let latest = ctx.tags().latest();
         let cold = ctx.cold();
 
-        let tip = gas_oracle::suggest_tip_cap(&cold, latest, ctx.config())
+        let tip = gas_oracle::suggest_tip_cap(&cold, latest, ctx.config(), ctx.gas_cache())
             .await
             .map_err(|e| e.to_string())?;
 
@@ -135,7 +135,7 @@ where
 {
     let task = async move {
         let latest = ctx.tags().latest();
-        gas_oracle::suggest_tip_cap(&ctx.cold(), latest, ctx.config())
+        gas_oracle::suggest_tip_cap(&ctx.cold(), latest, ctx.config(), ctx.gas_cache())
             .await
             .map_err(|e| e.to_string())
     };

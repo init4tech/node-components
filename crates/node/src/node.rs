@@ -9,8 +9,9 @@ use reth::{
 };
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
-use signet_blobber::ExtractableChainShim;
+use signet_blobber::{CacheHandle, ExtractableChainShim};
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
+use signet_evm::EthereumHardfork;
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
 use signet_rpc::{ChainNotifier, NewBlockNotification};
@@ -56,8 +57,11 @@ where
     /// Status channel, currently used only for testing.
     pub(crate) status: watch::Sender<NodeStatus>,
 
-    /// The block processor.
-    pub(crate) processor: SignetBlockProcessorV1<H, AliasOracle>,
+    /// An oracle for determining whether addresses should be aliased.
+    pub(crate) alias_oracle: Arc<AliasOracle>,
+
+    /// A handle to the blob cacher.
+    pub(crate) blob_cacher: CacheHandle,
 
     /// A reqwest client, used by the blob fetch and the tx cache forwarder.
     pub(crate) client: reqwest::Client,
@@ -116,15 +120,6 @@ where
             .wrap_err("failed to create blob cacher")?
             .spawn();
 
-        let processor = SignetBlockProcessorV1::new(
-            constants.clone(),
-            config.chain_spec().clone(),
-            storage.hot().clone(),
-            alias_oracle,
-            config.slot_calculator(),
-            blob_cacher,
-        );
-
         let this = Self {
             config: config.into(),
             host: ctx,
@@ -133,10 +128,17 @@ where
             rpc_handle: None,
             constants,
             status,
-            processor,
+            alias_oracle: Arc::new(alias_oracle),
+            blob_cacher,
             client,
         };
         Ok((this, receiver))
+    }
+
+    /// Get the last rollup block number from hot storage.
+    fn last_rollup_block(&self) -> eyre::Result<u64> {
+        let reader = self.storage.reader()?;
+        Ok(reader.last_block_number()?.unwrap_or(0))
     }
 
     /// Start the Signet instance, listening for ExEx notifications. Trace any
@@ -146,9 +148,7 @@ where
         // Ensure hot and cold storage are at the same height. If either
         // is ahead, unwind to the minimum so the host re-delivers blocks.
         {
-            let reader = self.storage.reader()?;
-            let hot_tip = reader.last_block_number()?.unwrap_or(0);
-            drop(reader);
+            let hot_tip = self.last_rollup_block()?;
             let cold_tip = self.storage.cold_reader().get_latest_block().await?.unwrap_or(0);
 
             let target = hot_tip.min(cold_tip);
@@ -185,9 +185,7 @@ where
         self.start_rpc().await?;
 
         // Determine the last block written to storage for backfill
-        let reader = self.storage.reader()?;
-        let last_rollup_block = reader.last_block_number()?.unwrap_or(0);
-        drop(reader);
+        let last_rollup_block = self.last_rollup_block()?;
 
         info!(last_rollup_block, "resuming execution from last rollup block found");
 
@@ -280,15 +278,14 @@ where
 
         // NB: REVERTS MUST RUN FIRST
         if let Some(chain) = notification.reverted_chain() {
-            self.on_host_revert(&chain).wrap_err("error encountered during revert")?;
-            changed = true;
+            changed |= self.on_host_revert(&chain).wrap_err("error encountered during revert")?;
         }
 
         if let Some(chain) = notification.committed_chain() {
-            self.process_committed_chain(&chain)
+            changed |= self
+                .process_committed_chain(&chain)
                 .await
                 .wrap_err("error encountered during commit")?;
-            changed = true;
         }
 
         if changed {
@@ -300,21 +297,36 @@ where
     }
 
     /// Process a committed chain by extracting and executing blocks.
-    async fn process_committed_chain(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<()> {
+    ///
+    /// Returns `true` if any rollup blocks were processed.
+    async fn process_committed_chain(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
         let shim = ExtractableChainShim::new(chain);
         let extractor = Extractor::new(self.constants.clone());
         let extracts: Vec<_> = extractor.extract_signet(&shim).collect();
 
-        let reader = self.storage.reader()?;
-        let last_height = reader.last_block_number()?.unwrap_or(0);
-        drop(reader);
+        let last_height = self.last_rollup_block()?;
 
+        let mut processed = false;
         for block_extracts in extracts.iter().filter(|e| e.ru_height > last_height) {
-            let executed = self.processor.process_block(block_extracts).await?;
+            let hardforks = EthereumHardfork::active_hardforks(
+                &self.config.genesis().config,
+                block_extracts.host_block.number(),
+                block_extracts.host_block.timestamp(),
+            );
+            let processor = SignetBlockProcessorV1::new(
+                self.constants.clone(),
+                hardforks,
+                self.storage.hot().clone(),
+                self.alias_oracle.clone(),
+                self.config.slot_calculator(),
+                self.blob_cacher.clone(),
+            );
+            let executed = processor.process_block(block_extracts).await?;
             self.notify_new_block(&executed);
             self.storage.append_blocks(vec![executed])?;
+            processed = true;
         }
-        Ok(())
+        Ok(processed)
     }
 
     /// Send a new block notification on the broadcast channel.
@@ -331,9 +343,7 @@ where
     /// Update the status channel and block tags. This keeps the RPC node
     /// in sync with the latest block information.
     fn update_status(&self) -> eyre::Result<()> {
-        let reader = self.storage.reader()?;
-        let ru_height = reader.last_block_number()?.unwrap_or(0);
-        drop(reader);
+        let ru_height = self.last_rollup_block()?;
 
         self.update_block_tags(ru_height)?;
         self.status.send_modify(|s| *s = NodeStatus::AtHeight(ru_height));
@@ -443,11 +453,13 @@ where
     }
 
     /// Called when the host chain has reverted a block or set of blocks.
+    ///
+    /// Returns `true` if any rollup state was unwound.
     #[instrument(skip_all, fields(first = chain.first().number(), tip = chain.tip().number()))]
-    pub fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<()> {
+    pub fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
         // If the end is before the RU genesis, nothing to do.
         if chain.tip().number() <= self.constants.host_deploy_height() {
-            return Ok(());
+            return Ok(false);
         }
 
         // Target is the block BEFORE the first block in the chain, or 0.
@@ -458,6 +470,6 @@ where
             .saturating_sub(1);
 
         self.storage.unwind_above(target)?;
-        Ok(())
+        Ok(true)
     }
 }

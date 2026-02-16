@@ -1,23 +1,22 @@
 use crate::{AliasOracle, AliasOracleFactory, metrics};
 use alloy::{
     consensus::BlockHeader,
-    primitives::{Address, Sealable, map::HashSet},
+    primitives::{Address, map::HashSet},
 };
 use core::fmt;
-use eyre::ContextCompat;
+use eyre::{ContextCompat, WrapErr};
 use init4_bin_base::utils::calc::SlotCalculator;
 use reth::{providers::StateProviderFactory, revm::db::StateBuilder};
-use reth_chainspec::ChainSpec;
 use signet_blobber::{CacheHandle, ExtractableChainShim};
 use signet_constants::SignetSystemConstants;
-use signet_evm::{BlockResult, EvmNeedsCfg, SignetDriver};
+use signet_evm::{BlockResult, EthereumHardfork, EvmNeedsCfg, SignetDriver};
 use signet_extract::Extracts;
 use signet_hot::{
     db::HotDbRead,
     model::{HotKv, HotKvRead, RevmRead},
 };
 use signet_storage_types::{DbSignetEvent, DbZenithHeader, ExecutedBlock, ExecutedBlockBuilder};
-use std::{collections::VecDeque, sync::Arc};
+use std::collections::VecDeque;
 use tracing::{error, instrument};
 use trevm::revm::{
     database::{DBErrorMarker, State},
@@ -40,8 +39,8 @@ where
     /// Signet System Constants.
     constants: SignetSystemConstants,
 
-    /// The chain specification, used to determine active hardforks.
-    chain_spec: Arc<ChainSpec>,
+    /// Active hardforks for this block's execution context.
+    hardforks: EthereumHardfork,
 
     /// Hot storage handle for rollup state reads.
     hot: H,
@@ -76,18 +75,13 @@ where
     /// Create a new [`SignetBlockProcessor`].
     pub const fn new(
         constants: SignetSystemConstants,
-        chain_spec: Arc<ChainSpec>,
+        hardforks: EthereumHardfork,
         hot: H,
         alias_oracle: Alias,
         slot_calculator: SlotCalculator,
         blob_cacher: CacheHandle,
     ) -> Self {
-        Self { constants, chain_spec, hot, alias_oracle, slot_calculator, blob_cacher }
-    }
-
-    /// Get the active spec id at the given timestamp.
-    fn spec_id(&self, timestamp: u64) -> SpecId {
-        crate::revm_spec(&self.chain_spec, timestamp)
+        Self { constants, hardforks, hot, alias_oracle, slot_calculator, blob_cacher }
     }
 
     /// Build a revm [`State`] backed by hot storage at the given parent
@@ -130,15 +124,8 @@ where
         &self,
         block_extracts: &Extracts<'_, ExtractableChainShim<'_>>,
     ) -> eyre::Result<ExecutedBlock> {
-        let start_time = std::time::Instant::now();
-        let spec_id = self.spec_id(block_extracts.host_block.timestamp());
-
         metrics::record_extracts(block_extracts);
-
-        let block_result = self.run_evm(block_extracts, spec_id).await?;
-        metrics::record_block_result(&block_result, &start_time);
-
-        self.build_executed_block(block_extracts, block_result)
+        self.run_evm(block_extracts).await
     }
 
     /// ==========================
@@ -158,13 +145,16 @@ where
     /// ===========================
     /// ===========================
     ///
-    /// Run the EVM for a single block extraction.
+    /// Run the EVM for a single block extraction, returning the fully
+    /// assembled [`ExecutedBlock`].
     #[instrument(skip_all)]
     async fn run_evm(
         &self,
         block_extracts: &Extracts<'_, ExtractableChainShim<'_>>,
-        spec_id: SpecId,
-    ) -> eyre::Result<BlockResult> {
+    ) -> eyre::Result<ExecutedBlock> {
+        let start_time = std::time::Instant::now();
+        let spec_id = self.hardforks.spec_id();
+
         let ru_height = block_extracts.ru_height;
         let host_height = block_extracts.host_block.number();
         let timestamp = block_extracts.host_block.timestamp();
@@ -224,32 +214,18 @@ where
         let (sealed_block, receipts) = driver.finish();
         let bundle = trevm.finish();
 
-        Ok(BlockResult {
+        let block_result = BlockResult {
             sealed_block,
             execution_outcome: signet_evm::ExecutionOutcome::new(bundle, vec![receipts], ru_height),
             host_height,
-        })
-    }
+        };
+        metrics::record_block_result(&block_result, &start_time);
 
-    /// Build an [`ExecutedBlock`] from processor outputs.
-    #[instrument(skip_all)]
-    fn build_executed_block(
-        &self,
-        extracts: &Extracts<'_, ExtractableChainShim<'_>>,
-        block_result: BlockResult,
-    ) -> eyre::Result<ExecutedBlock> {
+        // Assemble the ExecutedBlock from the EVM result.
         let BlockResult { sealed_block, execution_outcome, .. } = block_result;
-
-        // Header from the sealed block. Re-use the known hash to avoid
-        // recomputing it.
-        let hash = sealed_block.block.header.hash();
-        let header = sealed_block.block.header.header().clone().seal_unchecked(hash);
-
-        // Bundle and receipts from execution outcome.
+        let header = sealed_block.header.clone();
         let (bundle, receipt_vecs, _) = execution_outcome.into_parts();
 
-        // Flatten receipts (one block → one inner vec) and convert to
-        // storage Receipt type.
         let receipts = receipt_vecs
             .into_iter()
             .flatten()
@@ -259,22 +235,20 @@ where
             })
             .collect();
 
-        // Transactions: zip txs + senders → Vec<RecoveredTx>.
         let transactions = sealed_block
-            .block
-            .body
             .transactions
             .into_iter()
-            .zip(sealed_block.senders)
-            .map(|(tx, sender)| signet_storage_types::Recovered::new_unchecked(tx, sender))
+            .map(|recovered| {
+                let (tx, sender) = recovered.into_parts();
+                signet_storage_types::Recovered::new_unchecked(tx, sender)
+            })
             .collect();
 
-        // Signet events with a single incrementing index across all types.
-        let signet_events: Vec<_> = extracts
+        let signet_events: Vec<_> = block_extracts
             .enters()
             .map(|e| DbSignetEvent::Enter(0, e))
-            .chain(extracts.enter_tokens().map(|e| DbSignetEvent::EnterToken(0, e)))
-            .chain(extracts.transacts().map(|t| DbSignetEvent::Transact(0, t.clone())))
+            .chain(block_extracts.enter_tokens().map(|e| DbSignetEvent::EnterToken(0, e)))
+            .chain(block_extracts.transacts().map(|t| DbSignetEvent::Transact(0, t.clone())))
             .enumerate()
             .map(|(i, e)| match e {
                 DbSignetEvent::Enter(_, v) => DbSignetEvent::Enter(i as u64, v),
@@ -283,8 +257,7 @@ where
             })
             .collect();
 
-        // Zenith header from extracts.
-        let zenith_header = extracts.ru_header().map(DbZenithHeader::from);
+        let zenith_header = block_extracts.ru_header().map(DbZenithHeader::from);
 
         ExecutedBlockBuilder::new()
             .header(header)
@@ -294,6 +267,6 @@ where
             .signet_events(signet_events)
             .zenith_header(zenith_header)
             .build()
-            .map_err(|e| eyre::eyre!("failed to build ExecutedBlock: {e}"))
+            .wrap_err("failed to build ExecutedBlock")
     }
 }

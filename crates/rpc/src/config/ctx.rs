@@ -2,7 +2,7 @@
 
 use crate::{
     config::{
-        ChainNotifier, StorageRpcConfig,
+        ChainNotifier, GasOracleCache, StorageRpcConfig,
         resolve::{BlockTags, ResolveError},
     },
     eth::EthError,
@@ -70,6 +70,7 @@ struct StorageRpcCtxInner<H: HotKv> {
     tracing_semaphore: Arc<Semaphore>,
     filter_manager: FilterManager,
     sub_manager: SubscriptionManager,
+    gas_cache: GasOracleCache,
 }
 
 impl<H: HotKv> StorageRpcCtx<H> {
@@ -88,6 +89,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
         let tracing_semaphore = Arc::new(Semaphore::new(config.max_tracing_requests));
         let filter_manager = FilterManager::new(config.stale_filter_ttl, config.stale_filter_ttl);
         let sub_manager = SubscriptionManager::new(chain.notif_sender(), config.stale_filter_ttl);
+        let gas_cache = GasOracleCache::new();
         Self {
             inner: Arc::new(StorageRpcCtxInner {
                 storage,
@@ -98,6 +100,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
                 tracing_semaphore,
                 filter_manager,
                 sub_manager,
+                gas_cache,
             }),
         }
     }
@@ -161,6 +164,11 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// Access the subscription manager.
     pub(crate) fn sub_manager(&self) -> &SubscriptionManager {
         &self.inner.sub_manager
+    }
+
+    /// Access the gas oracle cache.
+    pub(crate) fn gas_cache(&self) -> &GasOracleCache {
+        &self.inner.gas_cache
     }
 
     /// Resolve a [`BlockNumberOrTag`] to a block number.

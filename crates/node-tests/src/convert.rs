@@ -46,9 +46,15 @@ impl ToRethPrimitive for SealedBlock {
     type RethPrimitive = reth::primitives::SealedBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let (hash, header) = self.header.split();
+        let hash = self.header.hash();
+        let header = self.header.into_inner();
+        let body = reth::primitives::BlockBody {
+            transactions: self.transactions,
+            ommers: vec![],
+            withdrawals: None,
+        };
         reth::primitives::SealedBlock::new_unchecked(
-            reth::primitives::Block::new(header, self.body),
+            reth::primitives::Block::new(header, body),
             hash,
         )
     }
@@ -58,8 +64,13 @@ impl ToRethPrimitive for RecoveredBlock {
     type RethPrimitive = reth::primitives::RecoveredBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let hash = self.block.header.hash();
-        reth::primitives::RecoveredBlock::new(self.block.to_reth().into_block(), self.senders, hash)
+        let hash = self.header.hash();
+        let senders: Vec<_> = self.senders().collect();
+        let header = self.header.into_inner();
+        let transactions = self.transactions.into_iter().map(|r| r.into_inner()).collect();
+        let body = reth::primitives::BlockBody { transactions, ommers: vec![], withdrawals: None };
+        let block = reth::primitives::Block::new(header, body);
+        reth::primitives::RecoveredBlock::new(block, senders, hash)
     }
 }
 
