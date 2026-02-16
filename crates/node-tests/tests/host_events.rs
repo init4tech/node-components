@@ -9,9 +9,7 @@ use alloy::{
     providers::Provider,
     sol_types::SolCall,
 };
-use reth::providers::{BlockNumReader, DBProvider, HeaderProvider};
 use serial_test::serial;
-use signet_db::{DbSignetEvent, SignetEvents};
 use signet_node_tests::{
     HostBlockSpec, SignetTestContext,
     constants::{DEFAULT_REWARD_ADDRESS, TEST_CONSTANTS},
@@ -19,6 +17,7 @@ use signet_node_tests::{
     types::{Counter, TestCounterInstance},
     utils::{adjust_usd_decimals, adjust_usd_decimals_u256},
 };
+use signet_storage_types::DbSignetEvent;
 use signet_test_utils::{chain::USDC_RECORD, contracts::counter::COUNTER_BYTECODE};
 use signet_types::{
     constants::{HostPermitted, RollupPermitted},
@@ -337,8 +336,8 @@ async fn test_transact_underfunded_gas() {
         assert_eq!(contract.count().call().await.unwrap(), U256::ZERO);
 
         // check signet events for the recorded transact and that the gas equals tiny_gas
-        let last = ctx.factory.provider().unwrap().last_block_number().unwrap();
-        let events = ctx.factory.provider().unwrap().get::<SignetEvents>(last..last + 1).unwrap();
+        let last = ctx.last_block_number();
+        let events = ctx.signet_events_in_block(last).await;
 
         // Check that the block has no transactions, i.e. that the transact was
         // discarded
@@ -350,7 +349,7 @@ async fn test_transact_underfunded_gas() {
             .unwrap();
         assert!(last_block.transactions.is_empty());
 
-        let found = events.iter().find(|(_, ev)| match ev {
+        let found = events.iter().find(|ev| match ev {
             DbSignetEvent::Transact(_, Transactor::Transact { sender, to, gas, .. }) => {
                 *sender == user && *to == contract_addr && *gas == U256::from(tiny_gas)
             }
@@ -402,14 +401,8 @@ async fn test_signet_events() {
         ctx.process_block(block.clone()).await.unwrap();
 
         // Check the base fee
-        let base_fee = ctx
-            .factory
-            .header_by_number(1)
-            .unwrap()
-            .unwrap()
-            .base_fee_per_gas
-            .map(U256::from)
-            .unwrap();
+        let header_1 = ctx.header_by_number(1).unwrap();
+        let base_fee = U256::from(header_1.base_fee_per_gas.unwrap());
 
         // NB:
         // user_a should have received 1 USD,
@@ -427,35 +420,59 @@ async fn test_signet_events() {
         ctx.process_block(block).await.unwrap();
 
         // Check the base fee
-        let base_fee = ctx
-            .factory
-            .header_by_number(2)
-            .unwrap()
-            .unwrap()
-            .base_fee_per_gas
-            .map(U256::from)
-            .unwrap();
+        let header_2 = ctx.header_by_number(2).unwrap();
+        let base_fee = U256::from(header_2.base_fee_per_gas.unwrap());
 
         // This time works exactly the same as above.
         user_a_bal.assert_decrease_exact(base_fee * U256::from(100_000));
         user_b_bal.assert_increase_exact(U256::from(expected_usd_minted));
 
-        let events = ctx.factory.provider().unwrap().get::<SignetEvents>(1..3).unwrap();
-        assert_eq!(events.len(), 8);
+        let events_1 = ctx.signet_events_in_block(1).await;
+        let events_2 = ctx.signet_events_in_block(2).await;
+        assert_eq!(events_1.len(), 4);
+        assert_eq!(events_2.len(), 4);
 
-        // The tuple is (block_number, event).
-        // We expect 4 events per block
-        assert_eq!(events[0].0, 1);
-        assert_eq!(events[1].0, 1);
-        assert_eq!(events[2].0, 1);
-        assert_eq!(events[3].0, 1);
-        assert_eq!(events[4].0, 2);
-        assert_eq!(events[5].0, 2);
-        assert_eq!(events[6].0, 2);
-        assert_eq!(events[7].0, 2);
+        // Events are in log_index order
+        assert_eq!(
+            events_1[0],
+            DbSignetEvent::Enter(
+                0,
+                Passage::Enter {
+                    rollupChainId,
+                    rollupRecipient: user_a,
+                    amount: eth_enter_amount_u256,
+                }
+            )
+        );
 
         assert_eq!(
-            events[0].1,
+            events_1[1],
+            DbSignetEvent::EnterToken(
+                1,
+                Passage::EnterToken {
+                    rollupChainId,
+                    rollupRecipient: user_a,
+                    amount: wbtc_enter_amount_u256,
+                    token: wbtc_address,
+                }
+            )
+        );
+
+        assert_eq!(
+            events_1[2],
+            DbSignetEvent::EnterToken(
+                2,
+                Passage::EnterToken {
+                    rollupChainId,
+                    rollupRecipient: user_a,
+                    amount: U256::from(usdc_enter_amount),
+                    token: usdc_address,
+                }
+            )
+        );
+
+        assert_eq!(
+            events_1[3],
             DbSignetEvent::Transact(
                 3,
                 Transactor::Transact {
@@ -470,8 +487,9 @@ async fn test_signet_events() {
             )
         );
 
+        // Events are in log_index order
         assert_eq!(
-            events[1].1,
+            events_2[0],
             DbSignetEvent::Enter(
                 0,
                 Passage::Enter {
@@ -483,7 +501,7 @@ async fn test_signet_events() {
         );
 
         assert_eq!(
-            events[2].1,
+            events_2[1],
             DbSignetEvent::EnterToken(
                 1,
                 Passage::EnterToken {
@@ -496,7 +514,7 @@ async fn test_signet_events() {
         );
 
         assert_eq!(
-            events[3].1,
+            events_2[2],
             DbSignetEvent::EnterToken(
                 2,
                 Passage::EnterToken {
@@ -509,7 +527,7 @@ async fn test_signet_events() {
         );
 
         assert_eq!(
-            events[4].1,
+            events_2[3],
             DbSignetEvent::Transact(
                 3,
                 Transactor::Transact {
@@ -520,44 +538,6 @@ async fn test_signet_events() {
                     value: U256::from(expected_usd_minted),
                     gas: U256::from(100_000),
                     maxFeePerGas: U256::from(GWEI_TO_WEI),
-                }
-            )
-        );
-
-        assert_eq!(
-            events[5].1,
-            DbSignetEvent::Enter(
-                0,
-                Passage::Enter {
-                    rollupChainId,
-                    rollupRecipient: user_a,
-                    amount: eth_enter_amount_u256,
-                }
-            )
-        );
-
-        assert_eq!(
-            events[6].1,
-            DbSignetEvent::EnterToken(
-                1,
-                Passage::EnterToken {
-                    rollupChainId,
-                    rollupRecipient: user_a,
-                    amount: wbtc_enter_amount_u256,
-                    token: wbtc_address,
-                }
-            )
-        );
-
-        assert_eq!(
-            events[7].1,
-            DbSignetEvent::EnterToken(
-                2,
-                Passage::EnterToken {
-                    rollupChainId,
-                    rollupRecipient: user_a,
-                    amount: U256::from(usdc_enter_amount),
-                    token: usdc_address,
                 }
             )
         );

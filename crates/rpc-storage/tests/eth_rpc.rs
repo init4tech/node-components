@@ -686,8 +686,8 @@ async fn test_gas_price_empty_blocks() {
 
     let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
-    // No txs means tip = 0, gasPrice = base_fee = 1e9 = 0x3b9aca00
-    assert_eq!(result, json!("0x3b9aca00"));
+    // No txs → tip defaults to 1 Gwei, gasPrice = base_fee + tip = 2 Gwei
+    assert_eq!(result, json!("0x77359400"));
 }
 
 #[tokio::test]

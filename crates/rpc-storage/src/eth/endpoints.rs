@@ -977,7 +977,9 @@ where
         let resolved_filter = match filter.block_option {
             alloy::rpc::types::FilterBlockOption::AtBlockHash(_) => filter,
             alloy::rpc::types::FilterBlockOption::Range { from_block, to_block } => {
-                let from = from_block.map(|b| ctx.resolve_block_tag(b)).unwrap_or(0);
+                let from = from_block
+                    .map(|b| ctx.resolve_block_tag(b))
+                    .unwrap_or_else(|| ctx.tags().latest());
                 let to = to_block
                     .map(|b| ctx.resolve_block_tag(b))
                     .unwrap_or_else(|| ctx.tags().latest());

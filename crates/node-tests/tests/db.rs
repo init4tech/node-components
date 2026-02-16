@@ -1,9 +1,10 @@
-use alloy::primitives::hex;
-use reth::providers::BlockReader;
 use serial_test::serial;
+use signet_cold::mem::MemColdBackend;
+use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
 use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
-use signet_node_tests::utils::create_test_provider_factory_with_chain_spec;
+use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
+use signet_storage_types::EthereumHardfork;
 use std::sync::Arc;
 
 #[serial]
@@ -16,15 +17,29 @@ async fn test_genesis() {
     let chain_spec: Arc<_> = cfg.chain_spec().clone();
     assert_eq!(chain_spec.genesis().config.chain_id, consts.unwrap().ru_chain_id());
 
-    let factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let cancel_token = CancellationToken::new();
+    let hot = MemKv::new();
+    {
+        let writer = hot.writer().unwrap();
+        writer.load_genesis(cfg.genesis(), &EthereumHardfork::Paris).unwrap();
+        writer.commit().unwrap();
+    }
+
+    let storage = Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
+
     let (_, _) = SignetNodeBuilder::new(cfg.clone())
         .with_ctx(ctx)
-        .with_factory(factory.clone())
+        .with_storage(Arc::clone(&storage))
         .build()
         .unwrap();
 
-    let genesis_block = factory.provider().unwrap().block_by_number(0).unwrap().unwrap();
+    let reader = storage.reader().unwrap();
+    assert!(HistoryRead::has_block(&reader, 0).unwrap());
 
-    let want_hash = hex!("0x0000000000000000000000000000000000000000000000000000000000000000");
-    assert_eq!(genesis_block.parent_hash, want_hash);
+    let header =
+        signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().expect("missing genesis header");
+    let zero_hash = alloy::primitives::B256::ZERO;
+    assert_eq!(header.parent_hash, zero_hash);
+
+    cancel_token.cancel();
 }

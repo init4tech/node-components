@@ -2,6 +2,9 @@
 //!
 //! Reads recent block headers and transactions from cold storage to
 //! compute a suggested tip cap based on recent transaction activity.
+//! Behavior mirrors reth's `GasPriceOracle`: a configurable default
+//! price when no transactions exist, an `ignore_price` floor, and a
+//! `max_price` cap.
 
 use alloy::{consensus::Transaction, primitives::U256};
 use signet_cold::{ColdStorageError, ColdStorageReadHandle, HeaderSpecifier};
@@ -11,10 +14,12 @@ use crate::config::StorageRpcConfig;
 /// Suggest a tip cap based on recent transaction tips.
 ///
 /// Reads the last `gas_oracle_block_count` blocks from cold storage,
-/// computes the effective tip per gas for each transaction, sorts all
-/// tips, and returns the value at `gas_oracle_percentile`.
+/// computes the effective tip per gas for each transaction, filters
+/// tips below `ignore_price`, sorts the remainder, and returns the
+/// value at `gas_oracle_percentile`, clamped to `max_price`.
 ///
-/// Returns `U256::ZERO` if no transactions are found in the range.
+/// Returns `default_gas_price` (default 1 Gwei) when no qualifying
+/// transactions are found.
 pub(crate) async fn suggest_tip_cap(
     cold: &ColdStorageReadHandle,
     latest: u64,
@@ -36,14 +41,16 @@ pub(crate) async fn suggest_tip_cap(
         let txs = cold.get_transactions_in_block(block_num).await?;
 
         for tx in &txs {
-            if let Some(tip) = tx.effective_tip_per_gas(base_fee) {
+            if let Some(tip) = tx.effective_tip_per_gas(base_fee)
+                && config.ignore_price.is_none_or(|floor| tip >= floor)
+            {
                 all_tips.push(tip);
             }
         }
     }
 
     if all_tips.is_empty() {
-        return Ok(U256::ZERO);
+        return Ok(config.default_gas_price.map_or(U256::ZERO, U256::from));
     }
 
     all_tips.sort_unstable();
@@ -51,5 +58,11 @@ pub(crate) async fn suggest_tip_cap(
     let index = ((config.gas_oracle_percentile / 100.0) * (all_tips.len() - 1) as f64) as usize;
     let index = index.min(all_tips.len() - 1);
 
-    Ok(U256::from(all_tips[index]))
+    let mut price = U256::from(all_tips[index]);
+
+    if let Some(max) = config.max_price {
+        price = price.min(U256::from(max));
+    }
+
+    Ok(price)
 }

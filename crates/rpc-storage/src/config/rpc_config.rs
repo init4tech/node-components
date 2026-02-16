@@ -75,6 +75,26 @@ pub struct StorageRpcConfig {
     /// Default: `60.0`.
     pub gas_oracle_percentile: f64,
 
+    /// Default gas price returned when no recent transactions exist.
+    ///
+    /// Reth defaults to 1 Gwei. Set to `None` to return zero.
+    ///
+    /// Default: `Some(1_000_000_000)` (1 Gwei).
+    pub default_gas_price: Option<u128>,
+
+    /// Minimum effective tip to include in the oracle sample.
+    ///
+    /// Tips below this threshold are discarded, matching reth's
+    /// `ignore_price` behavior.
+    ///
+    /// Default: `Some(2)` (2 wei).
+    pub ignore_price: Option<u128>,
+
+    /// Maximum gas price the oracle will ever suggest.
+    ///
+    /// Default: `Some(500_000_000_000)` (500 Gwei).
+    pub max_price: Option<u128>,
+
     /// Maximum header history for `eth_feeHistory` without percentiles.
     ///
     /// Default: `1024`.
@@ -111,6 +131,9 @@ impl Default for StorageRpcConfig {
             stale_filter_ttl: Duration::from_secs(5 * 60),
             gas_oracle_block_count: 20,
             gas_oracle_percentile: 60.0,
+            default_gas_price: Some(1_000_000_000),
+            ignore_price: Some(2),
+            max_price: Some(500_000_000_000),
             max_header_history: 1024,
             max_block_history: 1024,
             default_bundle_timeout_ms: 1000,
