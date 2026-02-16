@@ -15,17 +15,21 @@ use tokio::select;
 use trevm::revm::database::DBErrorMarker;
 
 /// `signet_sendOrder` handler.
+///
+/// Forwards the order to the transaction cache asynchronously. The
+/// response is returned immediately — forwarding errors are logged
+/// but not propagated to the caller (fire-and-forget).
 pub(super) async fn send_order<H>(
     hctx: HandlerCtx,
     order: SignedOrder,
     ctx: StorageRpcCtx<H>,
-) -> Result<(), String>
+) -> ResponsePayload<(), SignetError>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let Some(tx_cache) = ctx.tx_cache().cloned() else {
-        return Err(SignetError::TxCacheNotProvided.to_string());
+        return ResponsePayload(Err(SignetError::TxCacheNotProvided.into()));
     };
 
     let task = |hctx: HandlerCtx| async move {
@@ -34,10 +38,10 @@ where
                 tracing::warn!(error = %e, "failed to forward order");
             }
         });
-        Ok(())
+        ResponsePayload(Ok(()))
     };
 
-    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@response_option hctx.spawn_blocking_with_ctx(task))
 }
 
 /// `signet_callBundle` handler.

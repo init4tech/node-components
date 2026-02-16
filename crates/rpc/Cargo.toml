@@ -22,8 +22,8 @@ signet-bundle.workspace = true
 alloy.workspace = true
 ajj.workspace = true
 tokio.workspace = true
-tokio-stream = "0.1"
-tokio-util = "0.7"
+tokio-stream.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -33,7 +33,7 @@ itertools.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tokio-util = "0.7"
+tokio-util.workspace = true
 signet-cold = { workspace = true, features = ["test-utils"] }
 signet-hot = { workspace = true, features = ["test-utils"] }
 signet-storage.workspace = true

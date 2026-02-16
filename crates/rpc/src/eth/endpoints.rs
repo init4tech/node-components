@@ -37,14 +37,6 @@ use trevm::{
     EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
 };
 
-// ---------------------------------------------------------------------------
-// Not Supported
-// ---------------------------------------------------------------------------
-
-pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
-    ResponsePayload::method_not_found()
-}
-
 /// Response for `eth_syncing`.
 ///
 /// Returns `false` when the node is fully synced, or a sync-status
@@ -245,6 +237,7 @@ where
             );
         }
 
+        // NB: Signet has no blob transactions; zero-filled for client compatibility.
         let base_fee_per_blob_gas = vec![0; base_fee_per_gas.len()];
         let blob_gas_used_ratio = vec![0.; gas_used_ratio.len()];
 

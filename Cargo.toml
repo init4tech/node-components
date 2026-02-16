@@ -87,6 +87,8 @@ foundry-blob-explorers = "0.17"
 
 # Async
 tokio = { version = "1.43.0", features = ["macros"] }
+tokio-stream = "0.1"
+tokio-util = "0.7"
 
 # Misc
 eyre = "0.6.12"

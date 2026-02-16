@@ -23,11 +23,26 @@ use tracing::{Instrument, debug, debug_span, enabled, trace};
 pub(crate) type SubscriptionBuffer = EventBuffer<alloy::rpc::types::Header>;
 
 /// JSON-RPC subscription notification envelope.
-#[derive(serde::Serialize)]
+///
+/// The `jsonrpc` and `method` fields are always `"2.0"` and
+/// `"eth_subscription"` respectively, so they are hardcoded in the
+/// [`serde::Serialize`] impl rather than stored as struct fields.
 struct SubscriptionNotification<'a> {
-    jsonrpc: &'static str,
-    method: &'static str,
     params: SubscriptionParams<'a>,
+}
+
+impl serde::Serialize for SubscriptionNotification<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("SubscriptionNotification", 3)?;
+        s.serialize_field("jsonrpc", "2.0")?;
+        s.serialize_field("method", "eth_subscription")?;
+        s.serialize_field("params", &self.params)?;
+        s.end()
+    }
 }
 
 /// Params field of a subscription notification.
@@ -198,8 +213,6 @@ impl SubscriptionTask {
                     for permit in permits {
                         let Some(item) = notif_buffer.pop_front() else { break };
                         let notification = SubscriptionNotification {
-                            jsonrpc: "2.0",
-                            method: "eth_subscription",
                             params: SubscriptionParams { result: &item, subscription: id },
                         };
                         let _ = permit.send(&notification);

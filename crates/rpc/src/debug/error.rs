@@ -8,14 +8,14 @@ use alloy::eips::BlockId;
 /// API responses — internal storage details are not exposed to callers.
 /// Use [`tracing`] to log the full error chain before constructing the
 /// variant.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum DebugError {
     /// Cold storage error.
     #[error("cold storage error")]
-    Cold(String),
+    Cold(#[from] signet_cold::ColdStorageError),
     /// Hot storage error.
     #[error("hot storage error")]
-    Hot(String),
+    Hot(#[from] signet_storage::StorageError),
     /// Invalid tracer configuration.
     #[error("invalid tracer config")]
     InvalidTracerConfig,
@@ -31,13 +31,6 @@ pub enum DebugError {
     /// Transaction not found.
     #[error("transaction not found")]
     TransactionNotFound,
-}
-
-impl DebugError {
-    /// Convert to a string by value.
-    pub fn into_string(self) -> String {
-        self.to_string()
-    }
 }
 
 impl serde::Serialize for DebugError {

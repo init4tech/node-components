@@ -31,15 +31,29 @@ pub(crate) async fn suggest_tip_cap(
     let specs: Vec<_> = (start..=latest).map(HeaderSpecifier::Number).collect();
     let headers = cold.get_headers(specs).await?;
 
+    // Collect blocks that have headers, then read their transactions
+    // in parallel to avoid sequential cold-storage round-trips.
+    let blocks_with_fees: Vec<_> = headers
+        .into_iter()
+        .enumerate()
+        .filter_map(|(offset, h)| {
+            h.map(|header| (start + offset as u64, header.base_fee_per_gas.unwrap_or_default()))
+        })
+        .collect();
+
+    let mut join_set = tokio::task::JoinSet::new();
+    for (block_num, base_fee) in &blocks_with_fees {
+        let cold = cold.clone();
+        let block_num = *block_num;
+        let base_fee = *base_fee;
+        join_set.spawn(async move {
+            cold.get_transactions_in_block(block_num).await.map(|txs| (txs, base_fee))
+        });
+    }
+
     let mut all_tips: Vec<u128> = Vec::new();
-
-    for (offset, maybe_header) in headers.into_iter().enumerate() {
-        let Some(header) = maybe_header else { continue };
-        let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let block_num = start + offset as u64;
-
-        let txs = cold.get_transactions_in_block(block_num).await?;
-
+    while let Some(result) = join_set.join_next().await {
+        let (txs, base_fee) = result.expect("tx read task panicked")?;
         for tx in &txs {
             if let Some(tip) = tx.effective_tip_per_gas(base_fee)
                 && config.ignore_price.is_none_or(|floor| tip >= floor)

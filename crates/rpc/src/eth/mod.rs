@@ -4,7 +4,7 @@ mod endpoints;
 use endpoints::{
     addr_tx_count, balance, block, block_number, block_receipts, block_tx_count, call, chain_id,
     code_at, create_access_list, estimate_gas, fee_history, gas_price, get_filter_changes,
-    get_logs, header_by, max_priority_fee_per_gas, new_block_filter, new_filter, not_supported,
+    get_logs, header_by, max_priority_fee_per_gas, new_block_filter, new_filter,
     raw_transaction_by_block_and_index, raw_transaction_by_hash, send_raw_transaction, storage_at,
     subscribe, syncing, transaction_by_block_and_index, transaction_by_hash, transaction_receipt,
     uncle_block, uncle_count, uninstall_filter, unsubscribe,
@@ -73,26 +73,15 @@ where
         .route("getFilterLogs", get_filter_changes::<H>)
         .route("subscribe", subscribe::<H>)
         .route("unsubscribe", unsubscribe::<H>)
-        // ---
-        // Unsupported methods
-        // ---
-        .route("protocolVersion", not_supported)
-        .route("coinbase", not_supported)
-        .route("accounts", not_supported)
-        .route("blobBaseFee", not_supported)
+        // Uncle queries return semantically correct values (0 / null)
+        // because Signet has no uncle blocks.
         .route("getUncleCountByBlockHash", uncle_count)
         .route("getUncleCountByBlockNumber", uncle_count)
         .route("getUncleByBlockHashAndIndex", uncle_block)
         .route("getUncleByBlockNumberAndIndex", uncle_block)
-        .route("getWork", not_supported)
-        .route("hashrate", not_supported)
-        .route("mining", not_supported)
-        .route("submitHashrate", not_supported)
-        .route("submitWork", not_supported)
-        .route("sendTransaction", not_supported)
-        .route("sign", not_supported)
-        .route("signTransaction", not_supported)
-        .route("signTypedData", not_supported)
-        .route("getProof", not_supported)
-        .route("newPendingTransactionFilter", not_supported)
+    // Unsupported methods (return method_not_found by default):
+    // - protocolVersion, coinbase, accounts, blobBaseFee
+    // - getWork, hashrate, mining, submitHashrate, submitWork
+    // - sendTransaction, sign, signTransaction, signTypedData
+    // - getProof, newPendingTransactionFilter
 }
