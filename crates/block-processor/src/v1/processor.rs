@@ -169,14 +169,10 @@ where
         let host_height = block_extracts.host_block.number();
         let timestamp = block_extracts.host_block.timestamp();
 
-        // TODO: this opens a second reader (revm_state opens the first). If a write
-        // occurs between the two, they could see different snapshots. Consider
-        // opening one reader at the start and threading it through.
         let parent_header = self
             .hot
             .reader()?
-            .get_header(ru_height.saturating_sub(1))
-            .map_err(Into::<eyre::Report>::into)?
+            .get_header(ru_height.saturating_sub(1))?
             .wrap_err("parent ru block not present in DB")
             .inspect_err(|e| error!(%e))?;
         let parent_header = signet_types::primitives::SealedHeader::new(parent_header.into_inner());

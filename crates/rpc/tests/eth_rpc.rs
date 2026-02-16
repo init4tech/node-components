@@ -17,11 +17,10 @@ use serde_json::{Value, json};
 use signet_cold::{BlockData, ColdStorageHandle, ColdStorageTask, mem::MemColdBackend};
 use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
-use signet_rpc::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
+use signet_rpc::{ChainNotifier, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
 use signet_storage_types::{Account, Receipt, SealedHeader};
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use trevm::revm::bytecode::Bytecode;
@@ -35,9 +34,7 @@ struct TestHarness {
     app: axum::Router,
     cold: ColdStorageHandle,
     hot: MemKv,
-    tags: BlockTags,
-    #[allow(dead_code)]
-    notif_tx: broadcast::Sender<NewBlockNotification>,
+    chain: ChainNotifier,
     #[allow(dead_code)]
     ctx: StorageRpcCtx<MemKv>,
     _cancel: CancellationToken,
@@ -51,19 +48,18 @@ impl TestHarness {
         let cold = ColdStorageTask::spawn(MemColdBackend::new(), cancel.clone());
         let storage = UnifiedStorage::new(hot.clone(), cold.clone());
         let constants = SignetSystemConstants::test();
-        let tags = BlockTags::new(latest, latest.saturating_sub(2), 0);
-        let (notif_tx, _) = broadcast::channel::<NewBlockNotification>(16);
+        let chain = ChainNotifier::new(16);
+        chain.tags().update_all(latest, latest.saturating_sub(2), 0);
         let ctx = StorageRpcCtx::new(
             Arc::new(storage),
             constants,
-            tags.clone(),
+            chain.clone(),
             None,
             StorageRpcConfig::default(),
-            notif_tx.clone(),
         );
         let app = signet_rpc::router::<MemKv>().into_axum("/").with_state(ctx.clone());
 
-        Self { app, cold, hot, tags, notif_tx, ctx, _cancel: cancel }
+        Self { app, cold, hot, chain, ctx, _cancel: cancel }
     }
 
     /// Append a block to both hot and cold storage.
@@ -251,7 +247,7 @@ async fn setup_cold_block(h: &TestHarness) -> (Vec<B256>, Vec<Address>) {
 
     let block = make_block(1, vec![tx0, tx1], 1);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     (vec![hash0, hash1], vec![sender0, sender1])
 }
@@ -524,7 +520,7 @@ async fn test_get_logs_by_block_hash() {
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 2); // 2 logs per receipt
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     // Get the block hash
     let block_result = rpc_call(&h.app, "eth_getBlockByNumber", json!(["0x1", false])).await;
@@ -555,7 +551,7 @@ async fn test_get_logs_by_range() {
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 1);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(
         &h.app,
@@ -580,7 +576,7 @@ async fn test_get_logs_empty() {
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 0); // no logs
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(
         &h.app,
@@ -619,7 +615,7 @@ async fn test_syncing_not_syncing() {
 #[tokio::test]
 async fn test_syncing_in_progress() {
     let h = TestHarness::new(0).await;
-    h.tags.set_sync_status(signet_rpc::SyncStatus {
+    h.chain.tags().set_sync_status(signet_rpc::SyncStatus {
         starting_block: 0,
         current_block: 50,
         highest_block: 100,
@@ -649,7 +645,7 @@ async fn test_gas_price() {
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
@@ -665,7 +661,7 @@ async fn test_max_priority_fee_per_gas() {
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(&h.app, "eth_maxPriorityFeePerGas", json!([])).await;
 
@@ -679,7 +675,7 @@ async fn test_gas_price_empty_blocks() {
 
     let block = make_block(1, vec![], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(&h.app, "eth_gasPrice", json!([])).await;
 
@@ -696,7 +692,7 @@ async fn test_fee_history_basic() {
         let block = make_block(i, vec![tx], 0);
         h.append_block(block).await;
     }
-    h.tags.set_latest(3);
+    h.chain.tags().set_latest(3);
 
     // Request 2 blocks of fee history ending at block 3
     let result = rpc_call(&h.app, "eth_feeHistory", json!(["0x2", "0x3", null])).await;
@@ -720,7 +716,7 @@ async fn test_fee_history_with_rewards() {
     let (tx0, _) = make_signed_tx_with_gas_price(0, 2_000_000_000);
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(&h.app, "eth_feeHistory", json!(["0x1", "0x1", [25.0, 75.0]])).await;
 
@@ -747,7 +743,7 @@ async fn test_new_block_filter_and_changes() {
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     // Poll for changes — should get block hash for block 1
     let changes = rpc_call(&h.app, "eth_getFilterChanges", json!([filter_id_str])).await;
@@ -781,7 +777,7 @@ async fn test_new_log_filter_and_changes() {
     let (tx0, _) = make_signed_tx(0);
     let block = make_block(1, vec![tx0], 2);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     // Poll for changes — should get matching logs
     let changes = rpc_call(&h.app, "eth_getFilterChanges", json!([filter_id_str])).await;
@@ -834,7 +830,7 @@ async fn test_trace_block_by_number_noop() {
 
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result =
         rpc_call(&h.app, "debug_traceBlockByNumber", json!(["0x1", {"tracer": "noopTracer"}]))
@@ -854,7 +850,7 @@ async fn test_trace_transaction_noop() {
 
     let block = make_block(1, vec![tx0], 0);
     h.append_block(block).await;
-    h.tags.set_latest(1);
+    h.chain.tags().set_latest(1);
 
     let result = rpc_call(
         &h.app,

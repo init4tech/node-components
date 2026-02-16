@@ -4,6 +4,8 @@
 //! that wraps [`signet_storage::UnifiedStorage`], gas oracle helpers,
 //! and block tag / block ID resolution logic.
 
+mod chain_notifier;
+pub use chain_notifier::ChainNotifier;
 mod rpc_config;
 pub use rpc_config::StorageRpcConfig;
 

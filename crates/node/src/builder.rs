@@ -121,7 +121,7 @@ where
 
         // Check if genesis is loaded
         let reader = storage.reader()?;
-        let has_genesis = HistoryRead::has_block(&reader, 0)?;
+        let has_genesis = reader.has_block(0)?;
         drop(reader);
 
         if !has_genesis {

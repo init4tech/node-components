@@ -13,11 +13,11 @@ use signet_blobber::ExtractableChainShim;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{BlockTags, NewBlockNotification};
+use signet_rpc::{ChainNotifier, NewBlockNotification};
 use signet_storage::{HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use tracing::{debug, info, instrument};
 use trevm::revm::database::DBErrorMarker;
 
@@ -42,13 +42,9 @@ where
     /// Unified hot + cold storage backend.
     pub(crate) storage: Arc<UnifiedStorage<H>>,
 
-    /// Atomic block tag tracking (latest/safe/finalized).
-    /// Shared with the RPC context via `Clone` (backed by `Arc<AtomicU64>`).
-    pub(crate) tags: BlockTags,
-
-    /// Notification sender for new blocks.
-    /// Shared with the RPC context's `SubscriptionManager` via `Clone`.
-    pub(crate) notif_tx: broadcast::Sender<NewBlockNotification>,
+    /// Shared chain state (block tags + notification sender).
+    /// Cloned to the RPC context on startup.
+    pub(crate) chain: ChainNotifier,
 
     /// The join handle for the RPC server. None if the RPC server is not
     /// yet running.
@@ -110,8 +106,7 @@ where
             config.constants().wrap_err("failed to load signet constants from genesis")?;
 
         let (status, receiver) = watch::channel(NodeStatus::Booting);
-        let tags = BlockTags::new(0, 0, 0);
-        let (notif_tx, _) = broadcast::channel(128);
+        let chain = ChainNotifier::new(128);
 
         let blob_cacher = signet_blobber::BlobFetcher::builder()
             .with_config(config.block_extractor())?
@@ -134,8 +129,7 @@ where
             config: config.into(),
             host: ctx,
             storage,
-            tags,
-            notif_tx,
+            chain,
             rpc_handle: None,
             constants,
             status,
@@ -149,8 +143,24 @@ where
     /// errors.
     #[instrument(skip(self), fields(host = ?self.host.config.chain.chain()))]
     pub async fn start(mut self) -> eyre::Result<()> {
-        if let Some(lag_start) = self.storage.cold_lag().await? {
-            info!(%lag_start, "cold storage behind hot, will catch up asynchronously");
+        // Ensure hot and cold storage are at the same height. If either
+        // is ahead, unwind to the minimum so the host re-delivers blocks.
+        {
+            let reader = self.storage.reader()?;
+            let hot_tip = reader.last_block_number()?.unwrap_or(0);
+            drop(reader);
+            let cold_tip = self.storage.cold_reader().get_latest_block().await?.unwrap_or(0);
+
+            let target = hot_tip.min(cold_tip);
+            if target < hot_tip || target < cold_tip {
+                info!(
+                    hot_tip,
+                    cold_tip,
+                    unwind_to = target,
+                    "storage layers inconsistent, reconciling"
+                );
+                self.storage.unwind_above(target)?;
+            }
         }
 
         // This exists only to bypass the `tracing::instrument(err)` macro to
@@ -160,11 +170,8 @@ where
             // includes cause reporting.
             let err = format!("{err:#}");
 
-            let last_block = self
-                .storage
-                .reader()
-                .ok()
-                .and_then(|r| HistoryRead::last_block_number(&r).ok().flatten());
+            let last_block =
+                self.storage.reader().ok().and_then(|r| r.last_block_number().ok().flatten());
             let exex_head = last_block.and_then(|h| self.set_exex_head(h).ok());
 
             tracing::error!(err, last_block, ?exex_head, "Signet node crashed");
@@ -179,7 +186,7 @@ where
 
         // Determine the last block written to storage for backfill
         let reader = self.storage.reader()?;
-        let last_rollup_block = HistoryRead::last_block_number(&reader)?.unwrap_or(0);
+        let last_rollup_block = reader.last_block_number()?.unwrap_or(0);
         drop(reader);
 
         info!(last_rollup_block, "resuming execution from last rollup block found");
@@ -299,7 +306,7 @@ where
         let extracts: Vec<_> = extractor.extract_signet(&shim).collect();
 
         let reader = self.storage.reader()?;
-        let last_height = HistoryRead::last_block_number(&reader)?.unwrap_or(0);
+        let last_height = reader.last_block_number()?.unwrap_or(0);
         drop(reader);
 
         for block_extracts in extracts.iter().filter(|e| e.ru_height > last_height) {
@@ -318,14 +325,14 @@ where
             receipts: block.receipts.clone(),
         };
         // Ignore send errors — no subscribers is fine.
-        let _ = self.notif_tx.send(notif);
+        let _ = self.chain.send_notification(notif);
     }
 
     /// Update the status channel and block tags. This keeps the RPC node
     /// in sync with the latest block information.
     fn update_status(&self) -> eyre::Result<()> {
         let reader = self.storage.reader()?;
-        let ru_height = HistoryRead::last_block_number(&reader)?.unwrap_or(0);
+        let ru_height = reader.last_block_number()?.unwrap_or(0);
         drop(reader);
 
         self.update_block_tags(ru_height)?;
@@ -350,11 +357,11 @@ where
         );
 
         // Atomically update all three tags
-        self.tags.update_all(ru_height, safe_ru_height, finalized_heights.rollup);
+        self.chain.tags().update_all(ru_height, safe_ru_height, finalized_heights.rollup);
 
         // Notify reth that we've finished processing up to the finalized
-        // height. Skip if finalized is still at genesis.
-        if finalized_heights.host != 0 || finalized_heights.rollup != 0 {
+        // height. Skip if finalized rollup height is still at genesis.
+        if finalized_heights.rollup > 0 {
             self.update_highest_processed_height(finalized_heights.host)?;
         }
 
@@ -376,21 +383,19 @@ where
     /// 3. The safe rollup equivalent is below the current rollup height (normal
     ///    case).
     fn load_safe_block_heights(&self, ru_height: u64) -> eyre::Result<PairedHeights> {
-        let safe_host_height = self.host.provider().safe_block_number()?;
+        let Some(safe_heights) =
+            self.host.provider().safe_block_number()?.and_then(|h| self.constants.pair_host(h))
+        else {
+            // Host safe block is below rollup genesis — use genesis.
+            return Ok(PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 });
+        };
 
-        let safe_heights = safe_host_height
-            .and_then(|safe_host_height| self.constants.pair_host(safe_host_height));
-
-        safe_heights.map_or(Ok(PairedHeights { host: 0, rollup: 0 }), |safe_heights| {
-            if safe_heights.rollup > ru_height {
-                Ok(PairedHeights {
-                    host: self.constants.rollup_block_to_host_block_num(ru_height),
-                    rollup: ru_height,
-                })
-            } else {
-                Ok(safe_heights)
-            }
-        })
+        // Clamp to current rollup height if ahead.
+        if safe_heights.rollup > ru_height {
+            Ok(self.constants.pair_ru(ru_height))
+        } else {
+            Ok(safe_heights)
+        }
     }
 
     /// Load the host chain "finalized" block number and determine the rollup
@@ -402,23 +407,19 @@ where
     /// 3. The finalized rollup equivalent is below the current rollup height
     ///    (normal case).
     fn load_finalized_block_heights(&self, ru_height: u64) -> eyre::Result<PairedHeights> {
-        let finalized_host_block_number = self.host.provider().finalized_block_number()?;
+        let Some(finalized_ru) = self
+            .host
+            .provider()
+            .finalized_block_number()?
+            .and_then(|h| self.constants.host_block_to_rollup_block_num(h))
+        else {
+            // Host finalized block is below rollup genesis — use genesis.
+            return Ok(PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 });
+        };
 
-        let finalized_ru_block_number =
-            finalized_host_block_number.and_then(|finalized_host_block_number| {
-                self.constants.host_block_to_rollup_block_num(finalized_host_block_number)
-            });
-
-        finalized_ru_block_number.map_or(
-            Ok(PairedHeights { host: 0, rollup: 0 }),
-            |finalized_ru_block_number| {
-                if finalized_ru_block_number > ru_height {
-                    Ok(self.constants.pair_ru(ru_height))
-                } else {
-                    Ok(self.constants.pair_ru(finalized_ru_block_number))
-                }
-            },
-        )
+        // Clamp to current rollup height if ahead.
+        let ru = finalized_ru.min(ru_height);
+        Ok(self.constants.pair_ru(ru))
     }
 
     /// Update the host node with the highest processed host height for the

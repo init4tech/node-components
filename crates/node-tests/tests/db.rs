@@ -1,6 +1,9 @@
 use serial_test::serial;
 use signet_cold::mem::MemColdBackend;
-use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
+use signet_hot::{
+    db::{HotDbRead, UnsafeDbWrite},
+    mem::MemKv,
+};
 use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
@@ -34,10 +37,9 @@ async fn test_genesis() {
         .unwrap();
 
     let reader = storage.reader().unwrap();
-    assert!(HistoryRead::has_block(&reader, 0).unwrap());
+    assert!(reader.has_block(0).unwrap());
 
-    let header =
-        signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().expect("missing genesis header");
+    let header = reader.get_header(0).unwrap().expect("missing genesis header");
     let zero_hash = alloy::primitives::B256::ZERO;
     assert_eq!(header.parent_hash, zero_hash);
     assert_eq!(header.base_fee_per_gas, Some(0x3b9aca00));
