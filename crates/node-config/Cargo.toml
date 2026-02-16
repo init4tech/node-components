@@ -18,8 +18,6 @@ reth.workspace = true
 reth-chainspec.workspace = true
 reth-exex.workspace = true
 reth-node-api.workspace = true
-reth-db = { workspace = true, optional = true}
-
 alloy.workspace = true
 
 eyre.workspace = true
@@ -30,5 +28,7 @@ trevm.workspace = true
 signet-genesis.workspace = true
 signet-block-processor.workspace = true
 
+tempfile = { workspace = true, optional = true }
+
 [features]
-test_utils = ["dep:reth-db", "reth-db/test-utils"]
+test_utils = ["dep:tempfile"]

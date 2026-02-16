@@ -1,11 +1,4 @@
-//! Signet RPC.
-//!
-//! This crate provides RPC endpoint definitions for the Signet node, as well
-//! as the glue between the node and the RPC server. This RPC server is deeply
-//! integrated with `reth`, and expects a variety of `reth`-specific types to be
-//! passed in. As such, it is mostly useful within the context of a `signet`
-//! node.
-
+#![doc = include_str!("../README.md")]
 #![warn(
     missing_copy_implementations,
     missing_debug_implementations,
@@ -18,53 +11,30 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod ctx;
-pub use ctx::{LoadState, RpcCtx, SignetCtx};
-
-mod debug;
-pub use debug::{DebugError, debug};
+pub(crate) mod config;
+pub use config::{BlockTags, StorageRpcConfig, StorageRpcCtx, SyncStatus};
 
 mod eth;
-pub use eth::{CallErrorData, EthError, eth};
-
-mod signet;
-pub use signet::{error::SignetError, signet};
-
-mod inspect;
-pub use inspect::inspect;
+pub use eth::EthError;
 
 mod interest;
+pub use interest::NewBlockNotification;
 
-pub mod receipts;
+mod debug;
+pub use debug::DebugError;
 
-mod utils;
+mod signet;
+pub use signet::error::SignetError;
 
-/// Re-exported for convenience
-pub use ::ajj;
-
-use ajj::Router;
-use reth::providers::{ProviderFactory, providers::ProviderNodeTypes};
-use reth_db::mdbx::DatabaseEnv;
-use reth_node_api::FullNodeComponents;
-use signet_node_types::Pnt;
-use std::sync::Arc;
-
-/// Create a new router with the given host and signet types.
-pub fn router<Host, Signet>() -> Router<ctx::RpcCtx<Host, Signet>>
+/// Instantiate a combined router with `eth`, `debug`, and `signet`
+/// namespaces.
+pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: signet_hot::HotKv + Send + Sync + 'static,
+    <H::RoTx as signet_hot::model::HotKvRead>::Error: trevm::revm::database::DBErrorMarker,
 {
     ajj::Router::new()
-        .nest("eth", eth::<Host, Signet>())
-        .nest("signet", signet::<Host, Signet>())
-        .nest("debug", debug::<Host, Signet>())
-}
-
-/// Create a new hazmat router that exposes the `inspect` API.
-pub fn hazmat_router<Signet>() -> Router<ProviderFactory<Signet>>
-where
-    Signet: Pnt + ProviderNodeTypes<DB = Arc<DatabaseEnv>>,
-{
-    ajj::Router::new().nest("inspect", inspect::inspect::<Signet>())
+        .nest("eth", eth::eth())
+        .nest("debug", debug::debug())
+        .nest("signet", signet::signet())
 }

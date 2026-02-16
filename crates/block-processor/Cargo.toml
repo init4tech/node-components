@@ -20,14 +20,12 @@ init4-bin-base.workspace = true
 trevm.workspace = true
 
 signet-blobber.workspace = true
-signet-db.workspace = true
-signet-node-types.workspace = true
+signet-hot.workspace = true
+signet-storage-types.workspace = true
 
 alloy.workspace = true
 
 reth.workspace = true
-reth-exex.workspace = true
-reth-node-api.workspace = true
 reth-chainspec.workspace = true
 
 eyre.workspace = true

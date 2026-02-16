@@ -1,164 +1,198 @@
+//! Debug namespace RPC endpoint implementations.
+
 use crate::{
-    DebugError, RpcCtx,
-    utils::{await_handler, response_tri},
+    config::StorageRpcCtx,
+    debug::{
+        DebugError,
+        types::{TraceBlockParams, TraceTransactionParams},
+    },
+    eth::helpers::{CfgFiller, await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
-use alloy::{consensus::BlockHeader, eips::BlockId, primitives::B256};
-use itertools::Itertools;
-use reth::rpc::{
-    server_types::eth::EthApiError,
-    types::{
-        TransactionInfo,
-        trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
-    },
+use alloy::{
+    consensus::BlockHeader,
+    eips::BlockId,
+    rpc::types::trace::geth::{GethTrace, TraceResult},
 };
-use reth_node_api::FullNodeComponents;
+use itertools::Itertools;
 use signet_evm::EvmErrored;
-use signet_node_types::Pnt;
+use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::MagicSig;
 use tracing::Instrument;
+use trevm::revm::database::DBErrorMarker;
 
-/// Params for the `debug_traceBlockByNumber` and `debug_traceBlockByHash`
-/// endpoints.
-#[derive(Debug, serde::Deserialize)]
-pub(super) struct TraceBlockParams<T>(T, #[serde(default)] Option<GethDebugTracingOptions>);
-
-/// Params type for `debug_traceTransaction`.
-#[derive(Debug, serde::Deserialize)]
-pub(super) struct TraceTransactionParams(B256, #[serde(default)] Option<GethDebugTracingOptions>);
-
-/// `debug_traceBlockByNumber` and `debug_traceBlockByHash` endpoint handler.
-pub(super) async fn trace_block<T, Host, Signet>(
+/// `debug_traceBlockByNumber` and `debug_traceBlockByHash` handler.
+pub(super) async fn trace_block<T, H>(
     hctx: HandlerCtx,
     TraceBlockParams(id, opts): TraceBlockParams<T>,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> ResponsePayload<Vec<TraceResult>, DebugError>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));
+    let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
 
-    let _permit = response_tri!(
-        ctx.acquire_tracing_permit()
-            .await
-            .map_err(|_| DebugError::rpc_error("Failed to acquire tracing permit".into()))
-    );
+    // Acquire a tracing semaphore permit to limit concurrent debug
+    // requests. The permit is held for the entire handler lifetime and
+    // is dropped when the async block completes.
+    let _permit = ctx.acquire_tracing_permit().await;
 
     let id = id.into();
     let span = tracing::debug_span!("traceBlock", ?id, tracer = ?opts.tracer.as_ref());
 
     let fut = async move {
-        // Fetch the block by ID
-        let Some((hash, block)) = response_tri!(ctx.signet().raw_block(id).await) else {
+        let cold = ctx.cold();
+        let block_num = response_tri!(ctx.resolve_block_id(id).map_err(|e| {
+            tracing::warn!(error = %e, ?id, "block resolution failed");
+            DebugError::BlockNotFound(id)
+        }));
+
+        let (header, txs) = response_tri!(
+            tokio::try_join!(
+                cold.get_header_by_number(block_num),
+                cold.get_transactions_in_block(block_num),
+            )
+            .map_err(|e| {
+                tracing::warn!(error = %e, block_num, "cold storage read failed");
+                DebugError::Cold(e.to_string())
+            })
+        );
+
+        let Some(header) = header else {
             return ResponsePayload::internal_error_message(
-                EthApiError::HeaderNotFound(id).to_string().into(),
+                format!("block not found: {id}").into(),
             );
         };
 
-        tracing::debug!(number = block.number(), "Loaded block");
+        let block_hash = header.hash();
+        let header = header.into_inner();
 
-        // Allocate space for the frames
-        let mut frames = Vec::with_capacity(block.transaction_count());
+        tracing::debug!(number = header.number, "Loaded block");
 
-        // Instantiate the EVM with the block
-        let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
+        let mut frames = Vec::with_capacity(txs.len());
 
-        // Apply all transactions in the block up, tracing each one
-        tracing::trace!(?opts, "Tracing block transactions");
+        // State BEFORE this block.
+        let db =
+            response_tri!(ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
+                tracing::warn!(error = %e, block_num, "hot storage read failed");
+                DebugError::Hot(e.to_string())
+            }));
 
-        let mut txns = block.body().transactions().enumerate().peekable();
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
+
+        let mut txns = txs.iter().enumerate().peekable();
         for (idx, tx) in txns
             .by_ref()
             .peeking_take_while(|(_, t)| MagicSig::try_from_signature(t.signature()).is_none())
         {
-            let tx_info = TransactionInfo {
-                hash: Some(*tx.hash()),
+            let tx_info = alloy::rpc::types::TransactionInfo {
+                hash: Some(*tx.tx_hash()),
                 index: Some(idx as u64),
-                block_hash: Some(hash),
-                block_number: Some(block.header().number()),
-                base_fee: block.header().base_fee_per_gas(),
+                block_hash: Some(block_hash),
+                block_number: Some(header.number),
+                base_fee: header.base_fee_per_gas(),
             };
 
             let t = trevm.fill_tx(tx);
-
             let frame;
             (frame, trevm) = response_tri!(crate::debug::tracer::trace(t, &opts, tx_info));
-            frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.hash()) });
+            frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.tx_hash()) });
 
-            tracing::debug!(tx_index = idx, tx_hash = ?tx.hash(), "Traced transaction");
+            tracing::debug!(tx_index = idx, tx_hash = ?tx.tx_hash(), "Traced transaction");
         }
 
         ResponsePayload(Ok(frames))
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn_blocking(fut))
+    await_handler!(@response_option hctx.spawn(fut))
 }
 
-/// Handle for `debug_traceTransaction`.
-pub(super) async fn trace_transaction<Host, Signet>(
+/// `debug_traceTransaction` handler.
+pub(super) async fn trace_transaction<H>(
     hctx: HandlerCtx,
     TraceTransactionParams(tx_hash, opts): TraceTransactionParams,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> ResponsePayload<GethTrace, DebugError>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));
+    let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
 
-    let _permit = response_tri!(
-        ctx.acquire_tracing_permit()
-            .await
-            .map_err(|_| DebugError::rpc_error("Failed to acquire tracing permit".into()))
-    );
+    // Held for the handler duration; dropped when the async block completes.
+    let _permit = ctx.acquire_tracing_permit().await;
 
     let span = tracing::debug_span!("traceTransaction", %tx_hash, tracer = ?opts.tracer.as_ref());
 
     let fut = async move {
-        // Load the transaction by hash
-        let (tx, meta) = response_tri!(
-            response_tri!(ctx.signet().raw_transaction_by_hash(tx_hash))
-                .ok_or(EthApiError::TransactionNotFound)
+        let cold = ctx.cold();
+
+        // Look up the transaction and its containing block.
+        let confirmed = response_tri!(cold.get_tx_by_hash(tx_hash).await.map_err(|e| {
+            tracing::warn!(error = %e, %tx_hash, "cold storage read failed");
+            DebugError::Cold(e.to_string())
+        }));
+
+        let confirmed = response_tri!(confirmed.ok_or(DebugError::TransactionNotFound));
+        let (_tx, meta) = confirmed.into_parts();
+
+        let block_num = meta.block_number();
+        let block_hash = meta.block_hash();
+
+        let (header, txs) = response_tri!(
+            tokio::try_join!(
+                cold.get_header_by_number(block_num),
+                cold.get_transactions_in_block(block_num),
+            )
+            .map_err(|e| {
+                tracing::warn!(error = %e, block_num, "cold storage read failed");
+                DebugError::Cold(e.to_string())
+            })
         );
 
-        tracing::debug!("Loaded transaction metadata");
+        let block_id = BlockId::Number(block_num.into());
+        let header = response_tri!(header.ok_or(DebugError::BlockNotFound(block_id))).into_inner();
 
-        // Load the block containing the transaction
-        let res = response_tri!(ctx.signet().raw_block(meta.block_hash).await);
-        let (_, block) =
-            response_tri!(res.ok_or_else(|| EthApiError::HeaderNotFound(meta.block_hash.into())));
+        tracing::debug!(number = block_num, "Loaded containing block");
 
-        tracing::debug!(number = block.number(), "Loaded containing block");
+        // State BEFORE this block.
+        let db =
+            response_tri!(ctx.revm_state_at_height(block_num.saturating_sub(1)).map_err(|e| {
+                tracing::warn!(error = %e, block_num, "hot storage read failed");
+                DebugError::Hot(e.to_string())
+            }));
 
-        // Load trevm at the start of the block (i.e. before any transactions are applied)
-        let mut trevm = response_tri!(ctx.trevm(crate::LoadState::Before, block.header()));
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
 
-        // Apply all transactions in the block up to (but not including) the
-        // target one
-        let mut txns = block.body().transactions().enumerate().peekable();
-        for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.hash() != tx.hash()) {
+        // Replay all transactions up to (but not including) the target
+        let mut txns = txs.iter().enumerate().peekable();
+        for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.tx_hash() != &tx_hash) {
             if MagicSig::try_from_signature(tx.signature()).is_some() {
                 return ResponsePayload::internal_error_message(
-                    EthApiError::TransactionNotFound.to_string().into(),
+                    DebugError::TransactionNotFound.to_string().into(),
                 );
             }
 
             trevm = response_tri!(trevm.run_tx(tx).map_err(EvmErrored::into_error)).accept_state();
         }
 
-        let (index, tx) = response_tri!(txns.next().ok_or(EthApiError::TransactionNotFound));
+        let (index, tx) = response_tri!(txns.next().ok_or(DebugError::TransactionNotFound));
 
         let trevm = trevm.fill_tx(tx);
 
-        let tx_info = TransactionInfo {
-            hash: Some(*tx.hash()),
+        let tx_info = alloy::rpc::types::TransactionInfo {
+            hash: Some(*tx.tx_hash()),
             index: Some(index as u64),
-            block_hash: Some(block.hash()),
-            block_number: Some(block.header().number()),
-            base_fee: block.header().base_fee_per_gas(),
+            block_hash: Some(block_hash),
+            block_number: Some(header.number),
+            base_fee: header.base_fee_per_gas(),
         };
 
         let res = response_tri!(crate::debug::tracer::trace(trevm, &opts, tx_info)).0;
@@ -167,5 +201,5 @@ where
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn_blocking(fut))
+    await_handler!(@response_option hctx.spawn(fut))
 }

@@ -1,106 +1,86 @@
-use crate::interest::{filters::FilterOutput, subs::SubscriptionBuffer};
-use alloy::{
-    consensus::BlockHeader,
-    rpc::types::{Filter, Header, Log},
-};
-use reth::{providers::CanonStateNotification, rpc::types::FilteredParams};
+//! Filter kinds for subscriptions and polling filters.
+
+use crate::interest::{NewBlockNotification, filters::FilterOutput, subs::SubscriptionBuffer};
+use alloy::rpc::types::{Filter, Header, Log};
 use std::collections::VecDeque;
 
 /// The different kinds of filters that can be created.
 ///
 /// Pending tx filters are not supported by Signet.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InterestKind {
+pub(crate) enum InterestKind {
+    /// Log filter with a user-supplied [`Filter`].
     Log(Box<Filter>),
+    /// New-block filter.
     Block,
 }
 
 impl InterestKind {
-    /// True if this is a log filter.
-    pub const fn is_filter(&self) -> bool {
-        matches!(self, Self::Log(_))
-    }
-
     /// True if this is a block filter.
-    pub const fn is_block(&self) -> bool {
+    pub(crate) const fn is_block(&self) -> bool {
         matches!(self, Self::Block)
     }
 
     /// Fallible cast to a filter.
-    pub const fn as_filter(&self) -> Option<&Filter> {
+    pub(crate) const fn as_filter(&self) -> Option<&Filter> {
         match self {
             Self::Log(f) => Some(f),
             _ => None,
         }
     }
 
-    fn apply_block(&self, notif: &CanonStateNotification) -> SubscriptionBuffer {
-        notif
-            .committed()
-            .blocks_iter()
-            .map(|b| Header {
-                hash: b.hash(),
-                inner: b.clone_header(),
-                total_difficulty: None,
-                size: None,
-            })
-            .collect()
+    fn apply_block(notif: &NewBlockNotification) -> SubscriptionBuffer {
+        let header = Header {
+            hash: notif.header.hash_slow(),
+            inner: notif.header.clone(),
+            total_difficulty: None,
+            size: None,
+        };
+        SubscriptionBuffer::Block(VecDeque::from([header]))
     }
 
-    fn apply_filter(&self, notif: &CanonStateNotification) -> SubscriptionBuffer {
-        // NB: borrowing OUTSIDE the top-level closure prevents this value from
-        // being moved into the closure, which would result in the inner
-        // closures violating borrowing rules.
+    fn apply_filter(&self, notif: &NewBlockNotification) -> SubscriptionBuffer {
         let filter = self.as_filter().unwrap();
+        let block_hash = notif.header.hash_slow();
+        let block_number = notif.header.number;
+        let block_timestamp = notif.header.timestamp;
 
-        let address_filter = FilteredParams::address_filter(&filter.address);
-        let topics_filter = FilteredParams::topics_filter(&filter.topics);
-
-        notif
-            .committed()
-            .blocks_and_receipts()
-            .filter(|(block, _)| {
-                let bloom = block.header().logs_bloom();
-                FilteredParams::matches_address(bloom, &address_filter)
-                    && FilteredParams::matches_topics(bloom, &topics_filter)
+        let logs: VecDeque<Log> = notif
+            .receipts
+            .iter()
+            .enumerate()
+            .flat_map(|(tx_idx, receipt)| {
+                let tx_hash = *notif.transactions[tx_idx].tx_hash();
+                receipt.inner.logs.iter().map(move |log| (tx_idx, tx_hash, log))
             })
-            .flat_map(move |(block, receipts)| {
-                let block_num_hash = block.num_hash();
-
-                receipts.iter().enumerate().flat_map(move |(transaction_index, receipt)| {
-                    let transaction_hash = *block.body().transactions[transaction_index].hash();
-
-                    receipt.logs.iter().enumerate().filter_map(move |(log_index, log)| {
-                        if filter.matches(log) {
-                            Some(Log {
-                                inner: log.clone(),
-                                block_hash: Some(block_num_hash.hash),
-                                block_number: Some(block_num_hash.number),
-                                block_timestamp: Some(block.header().timestamp()),
-                                transaction_hash: Some(transaction_hash),
-                                transaction_index: Some(transaction_index as u64),
-                                log_index: Some(log_index as u64),
-                                removed: false,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                })
+            .enumerate()
+            .filter(|(_, (_, _, log))| filter.matches(log))
+            .map(|(log_idx, (tx_idx, tx_hash, log))| Log {
+                inner: log.clone(),
+                block_hash: Some(block_hash),
+                block_number: Some(block_number),
+                block_timestamp: Some(block_timestamp),
+                transaction_hash: Some(tx_hash),
+                transaction_index: Some(tx_idx as u64),
+                log_index: Some(log_idx as u64),
+                removed: false,
             })
-            .collect()
+            .collect();
+
+        SubscriptionBuffer::Log(logs)
     }
 
-    /// Apply the filter to a [`CanonStateNotification`]
-    pub fn filter_notification_for_sub(
+    /// Apply the filter to a [`NewBlockNotification`], producing a
+    /// subscription buffer.
+    pub(crate) fn filter_notification_for_sub(
         &self,
-        notif: &CanonStateNotification,
+        notif: &NewBlockNotification,
     ) -> SubscriptionBuffer {
-        if self.is_block() { self.apply_block(notif) } else { self.apply_filter(notif) }
+        if self.is_block() { Self::apply_block(notif) } else { self.apply_filter(notif) }
     }
 
     /// Return an empty output of the same kind as this filter.
-    pub const fn empty_output(&self) -> FilterOutput {
+    pub(crate) const fn empty_output(&self) -> FilterOutput {
         match self {
             Self::Log(_) => FilterOutput::Log(VecDeque::new()),
             Self::Block => FilterOutput::Block(VecDeque::new()),
@@ -108,7 +88,7 @@ impl InterestKind {
     }
 
     /// Return an empty subscription buffer of the same kind as this filter.
-    pub const fn empty_sub_buffer(&self) -> SubscriptionBuffer {
+    pub(crate) const fn empty_sub_buffer(&self) -> SubscriptionBuffer {
         match self {
             Self::Log(_) => SubscriptionBuffer::Log(VecDeque::new()),
             Self::Block => SubscriptionBuffer::Block(VecDeque::new()),

@@ -2,52 +2,45 @@
 
 use crate::{NodeStatus, SignetNode};
 use eyre::OptionExt;
-use reth::{
-    primitives::EthPrimitives,
-    providers::{BlockHashReader, ProviderFactory, StateProviderFactory},
-};
-use reth_db::transaction::DbTxMut;
-use reth_db_common::init;
+use reth::{primitives::EthPrimitives, providers::StateProviderFactory};
 use reth_exex::ExExContext;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
-use signet_db::DbProviderExt;
+use signet_hot::db::UnsafeDbWrite;
 use signet_node_config::SignetNodeConfig;
-use signet_node_types::{NodeTypesDbTrait, SignetNodeTypes};
+use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
+use signet_storage_types::EthereumHardfork;
 use std::sync::Arc;
+use tracing::info;
+use trevm::revm::database::DBErrorMarker;
 
 /// A type that does not implement [`AliasOracleFactory`].
 #[derive(Debug, Clone, Copy)]
 pub struct NotAnAof;
 
-/// A type that does not implement [`NodeTypesDbTrait`].
+/// Sentinel indicating no storage has been provided.
 #[derive(Debug, Clone, Copy)]
-pub struct NotADb;
+pub struct NotAStorage;
 
 /// Builder for [`SignetNode`]. This is the main way to create a signet node.
 ///
 /// The builder requires the following components to be set before building:
 /// - An [`ExExContext`], via [`Self::with_ctx`].
-/// - A [`ProviderFactory`] for the signet node's database.
-///     - This can be provided directly via [`Self::with_factory`].
-///     - Or created from a database implementing [`NodeTypesDbTrait`] via
-///       [`Self::with_db`].
-///     - If not set directly, can be created from the config via
-///       [`Self::with_config_db`].
+/// - An [`Arc<UnifiedStorage<H>>`], via [`Self::with_storage`].
 /// - An [`AliasOracleFactory`], via [`Self::with_alias_oracle`].
 ///     - If not set, a default one will be created from the [`ExExContext`]'s
 ///       provider.
 /// - A `reqwest::Client`, via [`Self::with_client`].
 ///   - If not set, a default client will be created.
-pub struct SignetNodeBuilder<Host = (), Db = NotADb, Aof = NotAnAof> {
+pub struct SignetNodeBuilder<Host = (), Storage = NotAStorage, Aof = NotAnAof> {
     config: SignetNodeConfig,
     alias_oracle: Option<Aof>,
     ctx: Option<Host>,
-    factory: Option<Db>,
+    storage: Option<Storage>,
     client: Option<reqwest::Client>,
 }
 
-impl<Host, Db, Aof> core::fmt::Debug for SignetNodeBuilder<Host, Db, Aof> {
+impl<Host, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Host, Storage, Aof> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SignetNodeBuilder").finish_non_exhaustive()
     }
@@ -56,70 +49,21 @@ impl<Host, Db, Aof> core::fmt::Debug for SignetNodeBuilder<Host, Db, Aof> {
 impl SignetNodeBuilder {
     /// Create a new SignetNodeBuilder instance.
     pub const fn new(config: SignetNodeConfig) -> Self {
-        Self { config, alias_oracle: None, ctx: None, factory: None, client: None }
+        Self { config, alias_oracle: None, ctx: None, storage: None, client: None }
     }
 }
 
-impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
-    /// Set the DB for the signet node.
-    pub fn with_db<NewDb: NodeTypesDbTrait>(
+impl<Host, Storage, Aof> SignetNodeBuilder<Host, Storage, Aof> {
+    /// Set the [`UnifiedStorage`] backend for the signet node.
+    pub fn with_storage<H: HotKv>(
         self,
-        db: NewDb,
-    ) -> eyre::Result<SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<NewDb>>, Aof>> {
-        let factory = ProviderFactory::new(
-            db,
-            self.config.chain_spec().clone(),
-            self.config.static_file_rw()?,
-            self.config.open_rocks_db()?,
-        )?;
-
-        Ok(SignetNodeBuilder {
-            config: self.config,
-            alias_oracle: self.alias_oracle,
-            ctx: self.ctx,
-            factory: Some(factory),
-            client: self.client,
-        })
-    }
-
-    /// Set the DB for the signet node from config, opening the mdbx database.
-    pub fn with_config_db(
-        self,
-    ) -> eyre::Result<
-        SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<Arc<reth_db::DatabaseEnv>>>, Aof>,
-    > {
-        let factory = ProviderFactory::new_with_database_path(
-            self.config.database_path(),
-            self.config.chain_spec().clone(),
-            reth_db::mdbx::DatabaseArguments::default(),
-            self.config.static_file_rw()?,
-            self.config.open_rocks_db()?,
-        )?;
-        Ok(SignetNodeBuilder {
-            config: self.config,
-            alias_oracle: self.alias_oracle,
-            ctx: self.ctx,
-            factory: Some(factory),
-            client: self.client,
-        })
-    }
-
-    /// Set the provider factory for the signet node.
-    ///
-    /// This is an alternative to [`Self::with_db`] and
-    /// [`Self::with_config_db`].
-    pub fn with_factory<NewDb>(
-        self,
-        factory: ProviderFactory<SignetNodeTypes<NewDb>>,
-    ) -> SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<NewDb>>, Aof>
-    where
-        NewDb: NodeTypesDbTrait,
-    {
+        storage: Arc<UnifiedStorage<H>>,
+    ) -> SignetNodeBuilder<Host, Arc<UnifiedStorage<H>>, Aof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
             ctx: self.ctx,
-            factory: Some(factory),
+            storage: Some(storage),
             client: self.client,
         }
     }
@@ -128,7 +72,7 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
     pub fn with_ctx<NewHost>(
         self,
         ctx: ExExContext<NewHost>,
-    ) -> SignetNodeBuilder<ExExContext<NewHost>, Db, Aof>
+    ) -> SignetNodeBuilder<ExExContext<NewHost>, Storage, Aof>
     where
         NewHost: FullNodeComponents,
         NewHost::Types: NodeTypes<Primitives = EthPrimitives>,
@@ -137,7 +81,7 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
             config: self.config,
             alias_oracle: self.alias_oracle,
             ctx: Some(ctx),
-            factory: self.factory,
+            storage: self.storage,
             client: self.client,
         }
     }
@@ -146,126 +90,64 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
     pub fn with_alias_oracle<NewAof: AliasOracleFactory>(
         self,
         alias_oracle: NewAof,
-    ) -> SignetNodeBuilder<Host, Db, NewAof> {
+    ) -> SignetNodeBuilder<Host, Storage, NewAof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: Some(alias_oracle),
             ctx: self.ctx,
-            factory: self.factory,
+            storage: self.storage,
             client: self.client,
         }
     }
 
     /// Set the reqwest client for the signet node.
-    pub fn with_client(mut self, client: reqwest::Client) -> SignetNodeBuilder<Host, Db, Aof> {
+    pub fn with_client(mut self, client: reqwest::Client) -> Self {
         self.client = Some(client);
         self
     }
 }
 
-impl<Host, Db, Aof> SignetNodeBuilder<ExExContext<Host>, ProviderFactory<SignetNodeTypes<Db>>, Aof>
+impl<Host, H, Aof> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, Aof>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    Db: NodeTypesDbTrait,
+    H: HotKv,
 {
     /// Prebuild checks for the signet node builder. Shared by all build
     /// commands.
     fn prebuild(&mut self) -> eyre::Result<()> {
         self.client.get_or_insert_default();
         self.ctx.as_ref().ok_or_eyre("Launch context must be set")?;
-        let factory = self.factory.as_ref().ok_or_eyre("Provider factory must be set")?;
+        let storage = self.storage.as_ref().ok_or_eyre("Storage must be set")?;
 
-        // This check appears redundant with the same check made in
-        // `init_genesis`, but is not. We init the genesis DB state but then we
-        // drop some of it, and reuse those tables for our own nefarious
-        // purposes. If we attempt to drop those tables AFTER we have reused
-        // them, we will get a key deser error (as the tables will contain keys
-        // the old schema does not permit). This check ensures we only attempt
-        // to drop the tables once.
-        if matches!(
-            factory.block_hash(0),
-            Ok(None)
-                | Err(reth::providers::ProviderError::MissingStaticFileBlock(
-                    reth::primitives::StaticFileSegment::Headers,
-                    0
-                ))
-        ) {
-            init::init_genesis(factory)?;
+        // Check if genesis is loaded
+        let reader = storage.reader()?;
+        let has_genesis = HistoryRead::has_block(&reader, 0)?;
+        drop(reader);
 
-            factory.provider_rw()?.update(
-                |writer: &mut reth::providers::DatabaseProviderRW<Db, SignetNodeTypes<Db>>| {
-                    writer.tx_mut().clear::<reth_db::tables::HashedAccounts>()?;
-                    writer.tx_mut().clear::<reth_db::tables::HashedStorages>()?;
-                    writer.tx_mut().clear::<reth_db::tables::AccountsTrie>()?;
-
-                    Ok(())
-                },
-            )?;
+        if !has_genesis {
+            let genesis = self.config.genesis();
+            let writer = storage.hot().writer()?;
+            writer.load_genesis(genesis, &EthereumHardfork::Paris)?;
+            writer.commit()?;
+            info!("loaded genesis into hot storage");
         }
 
         Ok(())
     }
 }
 
-impl<Host> SignetNodeBuilder<ExExContext<Host>, NotADb, NotAnAof>
-where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
-{
-    /// Build the node. This performs the following steps:
-    ///
-    /// - Runs prebuild checks.
-    /// - Inits the rollup DB from genesis if needed.
-    /// - Creates a default `AliasOracleFactory` from the host DB.
-    ///
-    /// # Panics
-    ///
-    /// If called outside a tokio runtime.
-    pub fn build(
-        self,
-    ) -> eyre::Result<(
-        SignetNode<Host, Arc<reth_db::DatabaseEnv>, Box<dyn StateProviderFactory>>,
-        tokio::sync::watch::Receiver<NodeStatus>,
-    )> {
-        self.with_config_db()?.build()
-    }
-}
-
-impl<Host, Aof> SignetNodeBuilder<ExExContext<Host>, NotADb, Aof>
-where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    Aof: AliasOracleFactory,
-{
-    /// Build the node. This performs the following steps:
-    ///
-    /// - Runs prebuild checks.
-    /// - Inits the rollup DB from genesis if needed.
-    ///
-    /// # Panics
-    ///
-    /// If called outside a tokio runtime.
-    pub fn build(
-        self,
-    ) -> eyre::Result<(
-        SignetNode<Host, Arc<reth_db::DatabaseEnv>, Aof>,
-        tokio::sync::watch::Receiver<NodeStatus>,
-    )> {
-        self.with_config_db()?.build()
-    }
-}
-
-impl<Host, Db> SignetNodeBuilder<ExExContext<Host>, ProviderFactory<SignetNodeTypes<Db>>, NotAnAof>
+impl<Host, H> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, NotAnAof>
 where
     Host: FullNodeComponents<Provider: StateProviderFactory>,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    Db: NodeTypesDbTrait,
+    H: HotKv + Clone + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     /// Build the node. This performs the following steps:
     ///
     /// - Runs prebuild checks.
-    /// - Inits the rollup DB from genesis if needed.
+    /// - Inits storage from genesis if needed.
     /// - Creates a default `AliasOracleFactory` from the host DB.
     ///
     /// # Panics
@@ -273,9 +155,8 @@ where
     /// If called outside a tokio runtime.
     pub fn build(
         mut self,
-    ) -> eyre::Result<(SignetNode<Host, Db>, tokio::sync::watch::Receiver<NodeStatus>)> {
+    ) -> eyre::Result<(SignetNode<Host, H>, tokio::sync::watch::Receiver<NodeStatus>)> {
         self.prebuild()?;
-        // This allows the node to look up contract status.
         let ctx = self.ctx.unwrap();
         let provider = ctx.provider().clone();
         let alias_oracle: Box<dyn StateProviderFactory> = Box::new(provider);
@@ -283,36 +164,37 @@ where
         SignetNode::new_unsafe(
             ctx,
             self.config,
-            self.factory.unwrap(),
+            self.storage.unwrap(),
             alias_oracle,
             self.client.unwrap(),
         )
     }
 }
 
-impl<Host, Db, Aof> SignetNodeBuilder<ExExContext<Host>, ProviderFactory<SignetNodeTypes<Db>>, Aof>
+impl<Host, H, Aof> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, Aof>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    Db: NodeTypesDbTrait,
+    H: HotKv + Clone + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     Aof: AliasOracleFactory,
 {
     /// Build the node. This performs the following steps:
     ///
     /// - Runs prebuild checks.
-    /// - Inits the rollup DB from genesis if needed.
+    /// - Inits storage from genesis if needed.
     ///
     /// # Panics
     ///
     /// If called outside a tokio runtime.
     pub fn build(
         mut self,
-    ) -> eyre::Result<(SignetNode<Host, Db, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
+    ) -> eyre::Result<(SignetNode<Host, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
         self.prebuild()?;
         SignetNode::new_unsafe(
             self.ctx.unwrap(),
             self.config,
-            self.factory.unwrap(),
+            self.storage.unwrap(),
             self.alias_oracle.unwrap(),
             self.client.unwrap(),
         )

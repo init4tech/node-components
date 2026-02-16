@@ -12,7 +12,7 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::error;
 
 /// Guard to shutdown the RPC servers. When dropped, this will shutdown all
-/// running servers
+/// running servers.
 #[derive(Default)]
 pub(crate) struct RpcServerGuard {
     http: Option<tokio::task::JoinHandle<()>>,
@@ -77,7 +77,7 @@ impl From<RpcServerArgs> for ServeConfig {
 }
 
 impl ServeConfig {
-    /// Serve the router on the given addresses.
+    /// Serve the router via HTTP.
     async fn serve_http(
         &self,
         tasks: &TaskExecutor,
@@ -89,7 +89,7 @@ impl ServeConfig {
         serve_axum(tasks, router, &self.http, self.http_cors.as_deref()).await.map(Some)
     }
 
-    /// Serve the router on the given addresses.
+    /// Serve the router via WebSocket.
     async fn serve_ws(
         &self,
         tasks: &TaskExecutor,
@@ -156,7 +156,7 @@ async fn serve(
     tasks: &TaskExecutor,
     addrs: &[SocketAddr],
     service: axum::Router,
-) -> Result<JoinHandle<()>, eyre::Error> {
+) -> eyre::Result<JoinHandle<()>> {
     let listener = tokio::net::TcpListener::bind(addrs).await?;
 
     let fut = async move {
@@ -214,7 +214,7 @@ async fn serve_ipc(
     endpoint: &str,
 ) -> eyre::Result<ServerShutdown> {
     let name = std::ffi::OsStr::new(endpoint);
-    let name = to_name(name).expect("invalid name");
+    let name = to_name(name)?;
     ls::ListenerOptions::new()
         .name(name)
         .serve_with_handle(router.clone(), tasks.handle().clone())

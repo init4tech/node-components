@@ -10,16 +10,17 @@ use crate::{
 };
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use signet_cold::ColdStorageReadHandle;
-use signet_hot::HotKv;
-use signet_hot::db::HotDbRead;
-use signet_hot::model::{HotKvRead, RevmRead};
+use signet_hot::{
+    HotKv,
+    db::HotDbRead,
+    model::{HotKvRead, RevmRead},
+};
 use signet_storage::UnifiedStorage;
 use signet_tx_cache::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, broadcast};
-use trevm::revm::database::DBErrorMarker;
-use trevm::revm::database::StateBuilder;
+use trevm::revm::database::{DBErrorMarker, StateBuilder};
 
 /// Resolved block context for EVM execution.
 ///
@@ -56,7 +57,7 @@ impl<H: HotKv> Clone for StorageRpcCtx<H> {
 
 #[derive(Debug)]
 struct StorageRpcCtxInner<H: HotKv> {
-    storage: UnifiedStorage<H>,
+    storage: Arc<UnifiedStorage<H>>,
     constants: SignetSystemConstants,
     tags: BlockTags,
     tx_cache: Option<TxCache>,
@@ -73,7 +74,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// new block notifications. Callers send [`NewBlockNotification`]s on
     /// this channel as blocks are appended to storage.
     pub fn new(
-        storage: UnifiedStorage<H>,
+        storage: Arc<UnifiedStorage<H>>,
         constants: SignetSystemConstants,
         tags: BlockTags,
         tx_cache: Option<TxCache>,

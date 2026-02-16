@@ -1,19 +1,18 @@
 //! Signet RPC methods and related code.
 
 mod endpoints;
-use endpoints::*;
-
+use endpoints::{call_bundle, send_order};
 pub(crate) mod error;
 
-use crate::ctx::RpcCtx;
-use reth_node_api::FullNodeComponents;
-use signet_node_types::Pnt;
+use crate::config::StorageRpcCtx;
+use signet_hot::{HotKv, model::HotKvRead};
+use trevm::revm::database::DBErrorMarker;
 
-/// Instantiate a `signet` API router.
-pub fn signet<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>
+/// Instantiate a `signet` API router backed by storage.
+pub(crate) fn signet<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    ajj::Router::new().route("sendOrder", send_order).route("callBundle", call_bundle)
+    ajj::Router::new().route("sendOrder", send_order::<H>).route("callBundle", call_bundle::<H>)
 }

@@ -2,31 +2,29 @@ use crate::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
     convert::ToRethPrimitive,
     types::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
-    utils::create_test_provider_factory_with_chain_spec,
 };
 use alloy::{
     consensus::{BlockHeader, TxEnvelope, constants::ETH_TO_WEI},
     genesis::{Genesis, GenesisAccount},
     network::{Ethereum, EthereumWallet, TransactionBuilder as _},
-    primitives::{Address, I256, Sign, U256, keccak256, map::HashSet},
+    primitives::{Address, B256, I256, Sign, U256, keccak256, map::HashSet},
     providers::{
         Provider as _, ProviderBuilder, SendableTx,
         fillers::{BlobGasFiller, SimpleNonceManager},
     },
     rpc::types::eth::{TransactionReceipt, TransactionRequest},
 };
-use reth::{
-    primitives::Account,
-    providers::{AccountReader, BlockNumReader, ProviderFactory},
-    transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction},
-};
-use reth_db::{PlainAccountState, transaction::DbTxMut};
-use reth_exex_test_utils::{Adapter, TestExExHandle, TmpDB as TmpDb};
+use reth::transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction};
+use reth_exex_test_utils::{Adapter, TestExExHandle};
 use reth_node_api::FullNodeComponents;
-use signet_db::DbProviderExt;
+use signet_cold::{BlockData, ColdStorageReadHandle, mem::MemColdBackend};
+use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
 use signet_node::{NodeStatus, SignetNodeBuilder};
 use signet_node_config::test_utils::test_config;
-use signet_node_types::SignetNodeTypes;
+use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
+use signet_storage_types::{
+    Account, BlockNumberList, DbSignetEvent, EthereumHardfork, RecoveredTx, SealedHeader,
+};
 use signet_test_utils::contracts::counter::COUNTER_DEPLOY_CODE;
 use signet_types::constants::{HostPermitted, RollupPermitted, SignetSystemConstants};
 use signet_zenith::{HostOrders::OrdersInstance, RollupPassage::RollupPassageInstance};
@@ -46,7 +44,7 @@ use tracing::instrument;
 ///       instance.
 ///     - The components for the Signet Node instance
 /// - A receiver for the node status (latest block processed)
-/// - A DB provider factory
+/// - Unified storage backed by in-memory hot and cold storage
 /// - An alloy provider connected to the Signet Node RPC,
 ///     - Configured with standard fillers
 /// - A height, used to fill in block numbers for host block notifications
@@ -62,8 +60,8 @@ pub struct SignetTestContext {
     /// The Signet Node status receiver
     pub node_status: watch::Receiver<NodeStatus>,
 
-    /// The provider factory for the Signet Node instance
-    pub factory: ProviderFactory<SignetNodeTypes<TmpDb>>,
+    /// Unified hot + cold storage for the rollup.
+    pub storage: Arc<UnifiedStorage<MemKv>>,
 
     /// An alloy provider connected to the Signet Node RPC.
     pub alloy_provider: CtxProvider,
@@ -80,11 +78,20 @@ pub struct SignetTestContext {
     /// Test addresses, copied from [`signet_test_utils::users::TEST_USERS`] for
     /// convenience
     pub addresses: [Address; 10],
+
+    /// Cancellation token for the cold storage task.
+    cancel_token: CancellationToken,
 }
 
 impl core::fmt::Debug for SignetTestContext {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SignetTestContext").finish()
+    }
+}
+
+impl Drop for SignetTestContext {
+    fn drop(&mut self) {
+        self.cancel_token.cancel();
     }
 }
 
@@ -96,17 +103,81 @@ impl SignetTestContext {
         let (ctx, handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
         let components = ctx.components.clone();
 
-        // set up Signet Node db
+        // set up Signet Node storage
         let constants = cfg.constants().unwrap();
-        let chain_spec: Arc<_> = cfg.chain_spec().clone();
 
-        let factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+        let cancel_token = CancellationToken::new();
+        let hot = MemKv::new();
+
+        // Load genesis into hot storage
+        {
+            let writer = hot.writer().unwrap();
+            writer.load_genesis(cfg.genesis(), &EthereumHardfork::Paris).unwrap();
+            writer.commit().unwrap();
+        }
+
+        // Patch genesis header to include base_fee_per_gas from the genesis
+        // config. `load_genesis()` doesn't copy this field to the stored
+        // header, which breaks EIP-1559 gas estimation via the RPC.
+        if let Some(base_fee) = cfg.genesis().base_fee_per_gas {
+            let sealed = {
+                let reader = hot.reader().unwrap();
+                signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().unwrap()
+            };
+            let mut header = sealed.into_inner();
+            header.base_fee_per_gas = Some(base_fee as u64);
+            let writer = hot.writer().unwrap();
+            writer.put_header(&SealedHeader::new(header)).unwrap();
+            writer.commit().unwrap();
+        }
+
+        // set up some keys and addresses
+        let keys = &signet_test_utils::users::TEST_SIGNERS;
+        let addresses = *signet_test_utils::users::TEST_USERS;
+
+        // Mint balances for test addresses
+        let mint_amnt = U256::from(1_000) * U256::from(ETH_TO_WEI);
+        {
+            // Read existing accounts before acquiring write lock
+            let existing_accounts: Vec<_> = {
+                let reader = hot.reader().unwrap();
+                addresses
+                    .iter()
+                    .map(|addr| {
+                        signet_hot::db::HotDbRead::get_account(&reader, addr)
+                            .unwrap()
+                            .unwrap_or_default()
+                    })
+                    .collect()
+            };
+            let writer = hot.writer().unwrap();
+            for (address, existing) in addresses.iter().zip(existing_accounts) {
+                let updated =
+                    Account { balance: existing.balance.saturating_add(mint_amnt), ..existing };
+                writer.put_account(address, &updated).unwrap();
+            }
+            writer.commit().unwrap();
+        }
+
+        // Create UnifiedStorage
+        let storage =
+            Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
+
+        // Write genesis block to cold storage so fee_history and other
+        // cold-backed RPC endpoints can find block 0.
+        {
+            let reader = storage.reader().unwrap();
+            let genesis_header =
+                signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().unwrap();
+            let genesis_block = BlockData::new(genesis_header, vec![], vec![], vec![], None);
+            storage.cold().append_block(genesis_block).await.unwrap();
+        }
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
             .with_ctx(ctx)
-            .with_factory(factory.clone())
+            .with_storage(Arc::clone(&storage))
             .with_alias_oracle(Arc::clone(&alias_oracle))
             .build()
             .unwrap();
@@ -115,29 +186,11 @@ impl SignetTestContext {
         let node = tokio::spawn(node.start());
         node_status.changed().await.unwrap();
 
-        // set up some keys and addresses
-        let keys = &signet_test_utils::users::TEST_SIGNERS;
-        let addresses = *signet_test_utils::users::TEST_USERS;
-
-        // register the signers on the alloy proider
+        // register the signers on the alloy provider
         let mut wallet = EthereumWallet::new(keys[0].clone());
         for key in keys.iter().skip(1) {
             wallet.register_signer(key.clone());
         }
-
-        let mint_amnt = U256::from(1_000) * U256::from(ETH_TO_WEI);
-        factory
-            .provider_rw()
-            .unwrap()
-            .update(|rw| {
-                for address in addresses.into_iter() {
-                    let mut account = rw.basic_account(&address)?.unwrap_or_default();
-                    account.balance = account.balance.saturating_add(mint_amnt);
-                    rw.tx_ref().put::<PlainAccountState>(address, account)?;
-                }
-                Ok(())
-            })
-            .unwrap();
 
         // after RPC booted, we can create the alloy provider
         let alloy_provider = ProviderBuilder::new_with_network()
@@ -155,13 +208,13 @@ impl SignetTestContext {
             handle,
             components,
             node_status,
-            factory,
+            storage,
             alloy_provider,
             constants,
             height: AtomicU64::new(cfg.constants().unwrap().host_deploy_height()),
-
             alias_oracle,
             addresses,
+            cancel_token,
         };
 
         (this, node)
@@ -191,6 +244,58 @@ impl SignetTestContext {
     /// Clone the Signet system constants
     pub fn constants(&self) -> SignetSystemConstants {
         self.constants.clone()
+    }
+
+    /// Get a cold storage read handle.
+    pub fn cold(&self) -> ColdStorageReadHandle {
+        self.storage.cold_reader()
+    }
+
+    /// Get a header by block number from hot storage.
+    pub fn header_by_number(&self, number: u64) -> Option<SealedHeader> {
+        let reader = self.storage.reader().unwrap();
+        signet_hot::db::HotDbRead::get_header(&reader, number).unwrap()
+    }
+
+    /// Get the last block number from hot storage.
+    pub fn last_block_number(&self) -> u64 {
+        let reader = self.storage.reader().unwrap();
+        HistoryRead::last_block_number(&reader).unwrap().unwrap_or(0)
+    }
+
+    /// Get all transactions in a block from cold storage.
+    pub async fn transactions_in_block(
+        &self,
+        block: u64,
+    ) -> Vec<signet_storage_types::RecoveredTx> {
+        self.cold().get_transactions_in_block(block).await.unwrap()
+    }
+
+    /// Get signet events in a single block from cold storage.
+    pub async fn signet_events_in_block(&self, block: u64) -> Vec<DbSignetEvent> {
+        self.cold().get_signet_events_in_block(block).await.unwrap()
+    }
+
+    /// Look up a transaction by hash from cold storage.
+    pub async fn transaction_by_hash(&self, hash: B256) -> Option<RecoveredTx> {
+        self.cold().get_tx_by_hash(hash).await.unwrap().map(|c| c.into_inner())
+    }
+
+    /// Get the account history (block number list) for an address.
+    pub fn account_history(&self, address: Address) -> Option<BlockNumberList> {
+        let reader = self.storage.reader().unwrap();
+        HistoryRead::last_account_history(&reader, address).unwrap().map(|(_, list)| list)
+    }
+
+    /// Get an account's state at a specific block height.
+    ///
+    /// Returns `None` if the account did not exist at the given height
+    /// (i.e. balance, nonce, and bytecode are all zero/empty).
+    pub fn account_at_height(&self, address: Address, height: u64) -> Option<Account> {
+        let reader = self.storage.reader().unwrap();
+        HistoryRead::get_account_at_height(&reader, &address, Some(height))
+            .unwrap()
+            .filter(|a| !a.is_empty())
     }
 
     /// Send a notification to the Signet Node instance
@@ -235,6 +340,21 @@ impl SignetTestContext {
             recv.mark_unchanged();
             self.send_notification(notification).await;
             recv.changed().await?;
+
+            // Wait for cold storage to finish processing dispatched blocks.
+            // `append_blocks()` dispatches to cold asynchronously, so we
+            // poll until cold storage has the expected block.
+            let cold = self.storage.cold_reader();
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    match cold.get_latest_block().await {
+                        Ok(Some(latest)) if latest >= expected_height => break,
+                        _ => tokio::task::yield_now().await,
+                    }
+                }
+            })
+            .await
+            .expect("cold storage did not reach expected height within 30s");
 
             // cheeky little check that the RPC is correct :)
             assert_eq!(self.alloy_provider.get_block_number().await.unwrap(), expected_height);
@@ -286,7 +406,8 @@ impl SignetTestContext {
 
     /// Get the account for an address.
     pub fn account(&self, address: Address) -> Option<Account> {
-        self.factory.provider().unwrap().basic_account(&address).unwrap()
+        let reader = self.storage.reader().unwrap();
+        signet_hot::db::HotDbRead::get_account(&reader, &address).unwrap()
     }
 
     /// Get the nonce off an addresss.
@@ -381,7 +502,7 @@ impl SignetTestContext {
     /// assertions if run on the genesis block. If any other blocks have been
     /// processed it will do nothing.
     pub fn verify_allocs(&self, genesis: &Genesis) {
-        if self.factory.provider().unwrap().last_block_number().unwrap() != 0 {
+        if self.last_block_number() != 0 {
             return;
         }
 
@@ -403,10 +524,12 @@ impl SignetTestContext {
         }
 
         if let Some(ref storage) = alloc.storage {
+            let reader = self.storage.reader().unwrap();
             for (key, value) in storage {
+                let slot = U256::from_be_bytes(key.0);
                 assert_eq!(
-                    self.factory.latest().unwrap().storage(address, *key).unwrap(),
-                    Some((*value).into())
+                    signet_hot::db::HotDbRead::get_storage(&reader, &address, &slot).unwrap(),
+                    Some(U256::from_be_bytes(value.0))
                 );
             }
         }

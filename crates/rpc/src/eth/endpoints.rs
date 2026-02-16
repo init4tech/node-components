@@ -1,503 +1,780 @@
+//! ETH namespace RPC endpoint implementations.
+
 use crate::{
-    ctx::RpcCtx,
-    eth::{CallErrorData, EthError},
+    config::{EvmBlockContext, StorageRpcCtx, gas_oracle},
+    eth::{
+        error::{CallErrorData, EthError},
+        helpers::{
+            AddrWithBlock, BlockParams, CfgFiller, FeeHistoryArgs, StorageAtArgs, SubscribeArgs,
+            TxParams, await_handler, build_receipt, build_rpc_transaction, hot_reader_at_block,
+            normalize_gas_stateless, response_tri,
+        },
+        types::{
+            BlockTransactions, EmptyArray, LazyReceipts, RpcBlock, RpcHeader, RpcReceipt,
+            RpcTransaction,
+        },
+    },
     interest::{FilterOutput, InterestKind},
-    receipts::build_signet_receipt,
-    utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::{
-    consensus::{BlockHeader, TxEnvelope},
+    consensus::Transaction,
     eips::{
         BlockId, BlockNumberOrTag,
+        eip1559::BaseFeeParams,
         eip2718::{Decodable2718, Encodable2718},
+        eip2930::AccessListResult,
     },
-    network::Ethereum,
-    primitives::{Address, B256, U64, U256},
-    rpc::types::{
-        BlockOverrides, Filter, TransactionRequest, pubsub::SubscriptionKind, state::StateOverride,
-    },
+    primitives::{B256, U64, U256},
+    rpc::types::{FeeHistory, Filter, Log},
 };
-use reth::{
-    network::NetworkInfo,
-    primitives::TransactionMeta,
-    providers::{BlockNumReader, StateProviderFactory, TransactionsProvider},
-};
-use reth_node_api::FullNodeComponents;
-use reth_rpc_eth_api::{RpcBlock, RpcHeader, RpcReceipt, RpcTransaction};
-use serde::Deserialize;
-use signet_evm::EvmErrored;
-use signet_node_types::Pnt;
-use std::borrow::Cow;
+use revm_inspectors::access_list::AccessListInspector;
+use serde::Serialize;
+use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
+use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
 use tracing::{Instrument, debug, trace_span};
-use trevm::{EstimationResult, MIN_TRANSACTION_GAS, revm::context::result::ExecutionResult};
+use trevm::{
+    EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
+};
 
-/// Args for `eth_estimateGas` and `eth_call`.
-#[derive(Debug, Deserialize)]
-pub(super) struct TxParams(
-    TransactionRequest,
-    #[serde(default)] Option<BlockId>,
-    #[serde(default)] Option<StateOverride>,
-    #[serde(default)] Option<Box<BlockOverrides>>,
-);
+// ---------------------------------------------------------------------------
+// Not Supported
+// ---------------------------------------------------------------------------
 
-/// Args for `eth_getBlockByHash` and `eth_getBlockByNumber`.
-#[derive(Debug, Deserialize)]
-pub(super) struct BlockParams<T>(T, #[serde(default)] Option<bool>);
+pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
+    ResponsePayload::method_not_found()
+}
 
-/// Args for `eth_feeHistory`.
-#[derive(Debug, Deserialize)]
-pub(super) struct FeeHistoryArgs(U64, BlockNumberOrTag, #[serde(default)] Option<Vec<f64>>);
+/// Response for `eth_syncing`.
+///
+/// Returns `false` when the node is fully synced, or a sync-status
+/// object when it is still catching up.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(crate) enum SyncingResponse {
+    /// Node is fully synced.
+    NotSyncing(bool),
+    /// Node is still syncing.
+    Syncing {
+        /// Block number the node started syncing from.
+        starting_block: U64,
+        /// Current block the node has synced to.
+        current_block: U64,
+        /// Highest known block number on the network.
+        highest_block: U64,
+    },
+}
 
-/// Args for `eth_getStorageAt`.
-#[derive(Debug, Deserialize)]
-pub(super) struct StorageAtArgs(Address, U256, #[serde(default)] Option<BlockId>);
-
-/// Args for `eth_getBalance`, `eth_getTransactionCount`, and `eth_getCode`.
-#[derive(Debug, Deserialize)]
-pub(super) struct AddrWithBlock(Address, #[serde(default)] Option<BlockId>);
-
-/// Args for `eth_subscribe`.
-#[derive(Debug, Deserialize)]
-pub struct SubscribeArgs(pub SubscriptionKind, #[serde(default)] pub Option<Box<Filter>>);
-
-impl TryFrom<SubscribeArgs> for InterestKind {
-    type Error = String;
-
-    fn try_from(args: SubscribeArgs) -> Result<Self, Self::Error> {
-        match args.0 {
-            SubscriptionKind::Logs => {
-                if let Some(filter) = args.1 {
-                    Ok(InterestKind::Log(filter))
-                } else {
-                    Err("missing filter for Logs subscription".to_string())
-                }
-            }
-            SubscriptionKind::NewHeads => {
-                if args.1.is_some() {
-                    Err("filter not supported for NewHeads subscription".to_string())
-                } else {
-                    Ok(InterestKind::Block)
-                }
-            }
-
-            _ => Err(format!("unsupported subscription kind: {:?}", args.0)),
-        }
+/// `eth_syncing` — returns sync status or `false` when fully synced.
+pub(crate) async fn syncing<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<SyncingResponse, ()> {
+    match ctx.tags().sync_status() {
+        Some(status) => Ok(SyncingResponse::Syncing {
+            starting_block: U64::from(status.starting_block),
+            current_block: U64::from(status.current_block),
+            highest_block: U64::from(status.highest_block),
+        }),
+        None => Ok(SyncingResponse::NotSyncing(false)),
     }
 }
 
-pub(super) async fn not_supported() -> ResponsePayload<(), ()> {
-    ResponsePayload::internal_error_message(Cow::Borrowed(
-        "Method not supported. See signet documentation for a list of unsupported methods: https://signet.sh/docs",
-    ))
-}
-
 /// Uncle count is always zero — Signet has no uncle blocks.
-pub(super) async fn uncle_count() -> Result<U64, ()> {
+pub(crate) async fn uncle_count() -> Result<U64, ()> {
     Ok(U64::ZERO)
 }
 
 /// Uncle block is always absent — Signet has no uncle blocks.
-pub(super) async fn uncle_block() -> Result<Option<()>, ()> {
+pub(crate) async fn uncle_block() -> Result<Option<()>, ()> {
     Ok(None)
 }
 
-pub(super) async fn protocol_version<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    ctx.host()
-        .network()
-        .network_status()
-        .await
-        .map(|info| info.protocol_version)
-        .map(U64::from)
-        .map_err(|s| s.to_string())
+// ---------------------------------------------------------------------------
+// Simple Queries
+// ---------------------------------------------------------------------------
+
+/// `eth_blockNumber` — returns the latest block number from block tags.
+pub(crate) async fn block_number<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, String> {
+    Ok(U64::from(ctx.tags().latest()))
 }
 
-pub(super) async fn syncing<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<bool, ()>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    Ok(ctx.host().network().is_syncing())
+/// `eth_chainId` — returns the configured chain ID.
+pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()> {
+    Ok(U64::from(ctx.chain_id()))
 }
 
-pub(super) async fn block_number<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, String>
+// ---------------------------------------------------------------------------
+// Gas & Fee Queries
+// ---------------------------------------------------------------------------
+
+/// `eth_gasPrice` — suggests gas price based on recent block tips + base fee.
+pub(crate) async fn gas_price<H>(hctx: HandlerCtx, ctx: StorageRpcCtx<H>) -> Result<U256, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    ctx.signet().provider().last_block_number().map(U64::from).map_err(|s| s.to_string())
-}
-
-pub(super) async fn chain_id<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, ()>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    Ok(U64::from(ctx.signet().constants().ru_chain_id()))
-}
-
-pub(super) async fn block<T, Host, Signet>(
-    hctx: HandlerCtx,
-    BlockParams(t, full): BlockParams<T>,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<RpcBlock<Ethereum>>, String>
-where
-    T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let id = t.into();
-    let task = async move { ctx.signet().block(id, full).await.map_err(|e| e.to_string()) };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn block_tx_count<T, Host, Signet>(
-    hctx: HandlerCtx,
-    (t,): (T,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<U64>, String>
-where
-    T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let id = t.into();
-    let task = async move { ctx.signet().tx_count(id).await.map_err(|e| e.to_string()) };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn block_receipts<Host, Signet>(
-    hctx: HandlerCtx,
-    (id,): (BlockId,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<Vec<RpcReceipt<Ethereum>>>, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
-        let Some(receipts) = ctx.signet().raw_receipts(id).await.map_err(|e| e.to_string())? else {
-            return Ok(None);
-        };
+        let latest = ctx.tags().latest();
+        let cold = ctx.cold();
 
-        let Some((block_hash, block)) =
-            ctx.signet().raw_block(id).await.map_err(|e| e.to_string())?
-        else {
-            return Ok(None);
-        };
+        let tip = gas_oracle::suggest_tip_cap(&cold, latest, ctx.config())
+            .await
+            .map_err(|e| e.to_string())?;
 
-        let header = block.header();
-        let block_number = header.number;
-        let base_fee = header.base_fee_per_gas;
-        let excess_blob_gas = None;
-        let timestamp = header.timestamp;
+        let base_fee = cold
+            .get_header_by_number(latest)
+            .await
+            .map_err(|e| e.to_string())?
+            .and_then(|h| h.base_fee_per_gas)
+            .unwrap_or_default();
 
-        block
-            .body()
-            .transactions()
-            .zip(receipts.iter())
-            .enumerate()
-            .map(|(idx, (tx, receipt))| {
-                let meta = TransactionMeta {
-                    tx_hash: *tx.hash(),
-                    index: idx as u64,
-                    block_hash,
-                    block_number,
-                    base_fee,
-                    excess_blob_gas,
-                    timestamp,
-                };
-                build_signet_receipt(tx.to_owned(), meta, receipt.to_owned(), receipts.to_vec())
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
-            .map_err(|e| e.to_string())
+        Ok(tip + U256::from(base_fee))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
-pub(super) async fn raw_transaction_by_hash<Host, Signet>(
+/// `eth_maxPriorityFeePerGas` — suggests priority fee from recent block tips.
+pub(crate) async fn max_priority_fee_per_gas<H>(
     hctx: HandlerCtx,
-    (hash,): (B256,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<alloy::primitives::Bytes>, String>
+    ctx: StorageRpcCtx<H>,
+) -> Result<U256, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
-        ctx.signet()
-            .provider()
-            .transaction_by_hash(hash)
-            .map_err(|e| e.to_string())
-            .map(|tx| tx.as_ref().map(Encodable2718::encoded_2718).map(Into::into))
-    };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn transaction_by_hash<Host, Signet>(
-    hctx: HandlerCtx,
-    (hash,): (B256,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<RpcTransaction<Ethereum>>, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move { ctx.signet().rpc_transaction_by_hash(hash).map_err(|e| e.to_string()) };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn raw_transaction_by_block_and_index<T, Host, Signet>(
-    hctx: HandlerCtx,
-    (t, index): (T, U64),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<alloy::primitives::Bytes>, String>
-where
-    T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let id: BlockId = t.into();
-    let task = async move {
-        let Some((_, block)) = ctx.signet().raw_block(id).await.map_err(|e| e.to_string())? else {
-            return Ok(None);
-        };
-
-        Ok(block.body().transactions.get(index.to::<usize>()).map(|tx| tx.encoded_2718().into()))
-    };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn transaction_by_block_and_index<T, Host, Signet>(
-    hctx: HandlerCtx,
-    (t, index): (T, U64),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<RpcTransaction<Ethereum>>, String>
-where
-    T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let id = t.into();
-
-    let task = async move {
-        ctx.signet()
-            .rpc_transaction_by_block_idx(id, index.to::<usize>())
+        let latest = ctx.tags().latest();
+        gas_oracle::suggest_tip_cap(&ctx.cold(), latest, ctx.config())
             .await
             .map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
-pub(super) async fn transaction_receipt<Host, Signet>(
+/// `eth_feeHistory` — returns base fee and reward percentile data.
+pub(crate) async fn fee_history<H>(
     hctx: HandlerCtx,
-    (hash,): (B256,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<RpcReceipt<Ethereum>>, String>
+    FeeHistoryArgs(block_count, newest, reward_percentiles): FeeHistoryArgs,
+    ctx: StorageRpcCtx<H>,
+) -> Result<FeeHistory, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let task =
-        async move { ctx.signet().rpc_receipt_by_hash(hash).await.map_err(|e| e.to_string()) };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn balance<Host, Signet>(
-    hctx: HandlerCtx,
-    AddrWithBlock(address, block): AddrWithBlock,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U256, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let block = block.unwrap_or(BlockId::latest());
     let task = async move {
-        let state = ctx.signet().provider().state_by_block_id(block).map_err(|e| e.to_string())?;
-        let bal = state.account_balance(&address).map_err(|e| e.to_string())?;
-        Ok(bal.unwrap_or_default())
+        let mut block_count = block_count.to::<u64>();
+
+        if block_count == 0 {
+            return Ok(FeeHistory::default());
+        }
+
+        let max_fee_history = if reward_percentiles.is_none() {
+            ctx.config().max_header_history
+        } else {
+            ctx.config().max_block_history
+        };
+
+        block_count = block_count.min(max_fee_history);
+
+        let newest = if newest.is_pending() {
+            block_count = block_count.saturating_sub(1);
+            BlockNumberOrTag::Latest
+        } else {
+            newest
+        };
+
+        let end_block = ctx.resolve_block_tag(newest);
+        let end_block_plus = end_block + 1;
+
+        block_count = block_count.min(end_block_plus);
+
+        // Validate percentiles
+        if let Some(percentiles) = &reward_percentiles
+            && percentiles.windows(2).any(|w| w[0] > w[1] || w[0] > 100.)
+        {
+            return Err("invalid reward percentiles".to_string());
+        }
+
+        let start_block = end_block_plus - block_count;
+        let cold = ctx.cold();
+
+        let specs: Vec<_> = (start_block..=end_block).map(HeaderSpecifier::Number).collect();
+        let headers = cold.get_headers(specs).await.map_err(|e| e.to_string())?;
+
+        let mut base_fee_per_gas: Vec<u128> = Vec::with_capacity(headers.len() + 1);
+        let mut gas_used_ratio: Vec<f64> = Vec::with_capacity(headers.len());
+        let mut rewards: Vec<Vec<u128>> = Vec::new();
+
+        for (offset, maybe_header) in headers.iter().enumerate() {
+            let Some(header) = maybe_header else {
+                return Err(format!("missing header at block {}", start_block + offset as u64));
+            };
+
+            base_fee_per_gas.push(header.base_fee_per_gas.unwrap_or_default() as u128);
+            gas_used_ratio.push(if header.gas_limit > 0 {
+                header.gas_used as f64 / header.gas_limit as f64
+            } else {
+                0.0
+            });
+
+            if let Some(percentiles) = &reward_percentiles {
+                let block_num = start_block + offset as u64;
+
+                let (txs, receipts) = tokio::try_join!(
+                    cold.get_transactions_in_block(block_num),
+                    cold.get_receipts_in_block(block_num),
+                )
+                .map_err(|e| e.to_string())?;
+
+                let block_rewards = calculate_reward_percentiles(
+                    percentiles,
+                    header.gas_used,
+                    header.base_fee_per_gas.unwrap_or_default(),
+                    &txs,
+                    &receipts,
+                );
+                rewards.push(block_rewards);
+            }
+        }
+
+        // Next block base fee
+        if let Some(last_header) = headers.last().and_then(|h| h.as_ref()) {
+            base_fee_per_gas.push(
+                last_header.next_block_base_fee(BaseFeeParams::ethereum()).unwrap_or_default()
+                    as u128,
+            );
+        }
+
+        let base_fee_per_blob_gas = vec![0; base_fee_per_gas.len()];
+        let blob_gas_used_ratio = vec![0.; gas_used_ratio.len()];
+
+        Ok(FeeHistory {
+            base_fee_per_gas,
+            gas_used_ratio,
+            base_fee_per_blob_gas,
+            blob_gas_used_ratio,
+            oldest_block: start_block,
+            reward: reward_percentiles.map(|_| rewards),
+        })
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// Calculate reward percentiles for a single block.
+///
+/// Sorts transactions by effective tip ascending, then walks
+/// cumulative gas used to find the tip value at each percentile.
+fn calculate_reward_percentiles(
+    percentiles: &[f64],
+    gas_used: u64,
+    base_fee: u64,
+    txs: &[signet_storage_types::RecoveredTx],
+    receipts: &[signet_cold::ColdReceipt],
+) -> Vec<u128> {
+    if gas_used == 0 || txs.is_empty() {
+        return vec![0; percentiles.len()];
+    }
+
+    // Pair each tx's effective tip with its gas used.
+    let mut tx_gas_and_tip: Vec<(u64, u128)> = txs
+        .iter()
+        .zip(receipts.iter())
+        .map(|(tx, receipt)| {
+            let tip = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
+            (receipt.gas_used, tip)
+        })
+        .collect();
+
+    // Sort by tip ascending
+    tx_gas_and_tip.sort_by_key(|&(_, tip)| tip);
+
+    let mut result = Vec::with_capacity(percentiles.len());
+    let mut cumulative_gas: u64 = 0;
+    let mut tx_idx = 0;
+
+    for &percentile in percentiles {
+        let threshold = (gas_used as f64 * percentile / 100.0) as u64;
+
+        while tx_idx < tx_gas_and_tip.len() - 1 {
+            cumulative_gas += tx_gas_and_tip[tx_idx].0;
+            if cumulative_gas >= threshold {
+                break;
+            }
+            tx_idx += 1;
+        }
+
+        result.push(tx_gas_and_tip[tx_idx].1);
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Block Queries
+// ---------------------------------------------------------------------------
+
+/// `eth_getBlockByHash` / `eth_getBlockByNumber` — resolve block, fetch
+/// header + transactions from cold storage, assemble RPC block response.
+pub(crate) async fn block<T, H>(
+    hctx: HandlerCtx,
+    BlockParams(t, full): BlockParams<T>,
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<RpcBlock>, String>
+where
+    T: Into<BlockId>,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = t.into();
+    let full = full.unwrap_or(false);
+
+    let task = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+
+        let (header, txs) = tokio::try_join!(
+            cold.get_header_by_number(block_num),
+            cold.get_transactions_in_block(block_num),
+        )
+        .map_err(|e| e.to_string())?;
+
+        let Some(header) = header else {
+            return Ok(None);
+        };
+
+        let block_hash = header.hash();
+        let base_fee = header.base_fee_per_gas;
+
+        let transactions = if full {
+            BlockTransactions::Full { txs, block_num, block_hash, base_fee }
+        } else {
+            BlockTransactions::Hashes(txs)
+        };
+
+        Ok(Some(RpcBlock {
+            header: alloy::rpc::types::Header {
+                inner: header.into_inner(),
+                hash: block_hash,
+                total_difficulty: None,
+                size: None,
+            },
+            transactions,
+            uncles: EmptyArray,
+        }))
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getBlockTransactionCount*` — transaction count in a block.
+pub(crate) async fn block_tx_count<T, H>(
+    hctx: HandlerCtx,
+    (t,): (T,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<U64>, String>
+where
+    T: Into<BlockId>,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = t.into();
+
+    let task = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+
+        cold.get_transaction_count(block_num)
+            .await
+            .map(|c| Some(U64::from(c)))
+            .map_err(|e| e.to_string())
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getBlockReceipts` — all receipts in a block.
+pub(crate) async fn block_receipts<H>(
+    hctx: HandlerCtx,
+    (id,): (BlockId,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<LazyReceipts>, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+
+        let (header, txs, receipts) = tokio::try_join!(
+            cold.get_header_by_number(block_num),
+            cold.get_transactions_in_block(block_num),
+            cold.get_receipts_in_block(block_num),
+        )
+        .map_err(|e| e.to_string())?;
+
+        let Some(header) = header else {
+            return Ok(None);
+        };
+
+        let base_fee = header.base_fee_per_gas;
+
+        Ok(Some(LazyReceipts { txs, receipts, base_fee }))
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getBlockHeaderByHash` / `eth_getBlockHeaderByNumber`.
+pub(crate) async fn header_by<T, H>(
+    hctx: HandlerCtx,
+    (t,): (T,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<RpcHeader>, String>
+where
+    T: Into<BlockId>,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = t.into();
+
+    let task = async move {
+        ctx.resolve_header(id)
+            .map(|opt| {
+                opt.map(|sh| {
+                    let hash = sh.hash();
+                    alloy::rpc::types::Header {
+                        inner: sh.into_inner(),
+                        hash,
+                        total_difficulty: None,
+                        size: None,
+                    }
+                })
+            })
+            .map_err(|e| e.to_string())
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
-pub(super) async fn storage_at<Host, Signet>(
+// ---------------------------------------------------------------------------
+// Transaction Queries
+// ---------------------------------------------------------------------------
+
+/// `eth_getTransactionByHash` — look up transaction by hash from cold storage.
+pub(crate) async fn transaction_by_hash<H>(
+    hctx: HandlerCtx,
+    (hash,): (B256,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<RpcTransaction>, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let cold = ctx.cold();
+        let Some(confirmed) = cold.get_tx_by_hash(hash).await.map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+
+        let (tx, meta) = confirmed.into_parts();
+
+        // Fetch header for base_fee
+        let header =
+            cold.get_header_by_number(meta.block_number()).await.map_err(|e| e.to_string())?;
+        let base_fee = header.and_then(|h| h.base_fee_per_gas);
+
+        Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getRawTransactionByHash` — RLP-encoded transaction bytes.
+pub(crate) async fn raw_transaction_by_hash<H>(
+    hctx: HandlerCtx,
+    (hash,): (B256,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<alloy::primitives::Bytes>, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        ctx.cold()
+            .get_tx_by_hash(hash)
+            .await
+            .map(|opt| opt.map(|c| c.into_inner().encoded_2718().into()))
+            .map_err(|e| e.to_string())
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getTransactionByBlock*AndIndex` — transaction by position in block.
+pub(crate) async fn transaction_by_block_and_index<T, H>(
+    hctx: HandlerCtx,
+    (t, index): (T, U64),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<RpcTransaction>, String>
+where
+    T: Into<BlockId>,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = t.into();
+
+    let task = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+
+        let Some(confirmed) = cold
+            .get_tx_by_block_and_index(block_num, index.to::<u64>())
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(None);
+        };
+
+        let (tx, meta) = confirmed.into_parts();
+        let header =
+            cold.get_header_by_number(meta.block_number()).await.map_err(|e| e.to_string())?;
+        let base_fee = header.and_then(|h| h.base_fee_per_gas);
+
+        Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getRawTransactionByBlock*AndIndex` — raw RLP bytes by position.
+pub(crate) async fn raw_transaction_by_block_and_index<T, H>(
+    hctx: HandlerCtx,
+    (t, index): (T, U64),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<alloy::primitives::Bytes>, String>
+where
+    T: Into<BlockId>,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = t.into();
+
+    let task = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
+
+        cold.get_tx_by_block_and_index(block_num, index.to::<u64>())
+            .await
+            .map(|opt| opt.map(|c| c.into_inner().encoded_2718().into()))
+            .map_err(|e| e.to_string())
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+/// `eth_getTransactionReceipt` — receipt by tx hash. Fetches the receipt,
+/// then the associated transaction and header for derived fields.
+pub(crate) async fn transaction_receipt<H>(
+    hctx: HandlerCtx,
+    (hash,): (B256,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Option<RpcReceipt>, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let cold = ctx.cold();
+
+        let Some(cr) =
+            cold.get_receipt(ReceiptSpecifier::TxHash(hash)).await.map_err(|e| e.to_string())?
+        else {
+            return Ok(None);
+        };
+
+        let (tx, header) = tokio::try_join!(
+            cold.get_tx_by_hash(cr.tx_hash),
+            cold.get_header_by_number(cr.block_number),
+        )
+        .map_err(|e| e.to_string())?;
+
+        let tx = tx.ok_or(EthError::TransactionMissing).map_err(|e| e.to_string())?.into_inner();
+        let base_fee = header.and_then(|h| h.base_fee_per_gas);
+
+        Ok(Some(build_receipt(&cr, &tx, base_fee)))
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+// ---------------------------------------------------------------------------
+// Account State (Hot Storage)
+// ---------------------------------------------------------------------------
+
+/// `eth_getBalance` — account balance at a given block from hot storage.
+pub(crate) async fn balance<H>(
+    hctx: HandlerCtx,
+    AddrWithBlock(address, block): AddrWithBlock,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U256, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = block.unwrap_or(BlockId::latest());
+
+    let task = async move {
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
+        let acct =
+            reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
+
+        Ok(acct.map(|a| a.balance).unwrap_or_default())
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+/// `eth_getStorageAt` — contract storage slot at a given block.
+pub(crate) async fn storage_at<H>(
     hctx: HandlerCtx,
     StorageAtArgs(address, key, block): StorageAtArgs,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<B256, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let block = block.unwrap_or(BlockId::latest());
+    let id = block.unwrap_or(BlockId::latest());
+
     let task = async move {
-        let state = ctx.signet().provider().state_by_block_id(block).map_err(|e| e.to_string())?;
-        let val = state.storage(address, key.into()).map_err(|e| e.to_string())?;
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
+        let val = reader
+            .get_storage_at_height(&address, &key, Some(height))
+            .map_err(|e| e.to_string())?;
+
         Ok(val.unwrap_or_default().to_be_bytes().into())
     };
 
     await_handler!(@option hctx.spawn_blocking(task))
 }
 
-pub(super) async fn addr_tx_count<Host, Signet>(
+/// `eth_getTransactionCount` — account nonce at a given block.
+pub(crate) async fn addr_tx_count<H>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let block = block.unwrap_or(BlockId::latest());
-    let task = async move {
-        let state = ctx.signet().provider().state_by_block_id(block).map_err(|e| e.to_string())?;
-        let count = state.account_nonce(&address).map_err(|e| e.to_string())?;
-        Ok(U64::from(count.unwrap_or_default()))
-    };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn code_at<Host, Signet>(
-    hctx: HandlerCtx,
-    AddrWithBlock(address, block): AddrWithBlock,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<alloy::primitives::Bytes, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let block = block.unwrap_or(BlockId::latest());
-    let task = async move {
-        let state = ctx.signet().provider().state_by_block_id(block).map_err(|e| e.to_string())?;
-        let code = state.account_code(&address).map_err(|e| e.to_string())?;
-        Ok(code.unwrap_or_default().original_bytes())
-    };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn header_by<T, Host, Signet>(
-    hctx: HandlerCtx,
-    (t,): (T,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Option<RpcHeader<Ethereum>>, String>
-where
-    T: Into<BlockId>,
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let id = t.into();
-
-    await_handler!(@option hctx.spawn_blocking_with_ctx(|hctx| async move {
-        Ok(block(hctx, BlockParams(id, None), ctx).await?.map(|block| block.header))
-    }))
-}
-
-/// Normalize transaction request gas, without making DB reads
-///
-/// Does the following:
-/// - If the gas is below `MIN_TRANSACTION_GAS`, set it to `None`
-/// - If the gas is above the `rpc_gas_cap`, set it to the `rpc_gas_cap`
-/// - Otherwise, do nothing
-const fn normalize_gas_stateless(request: &mut TransactionRequest, max_gas: u64) {
-    match request.gas {
-        Some(..MIN_TRANSACTION_GAS) => request.gas = None,
-        Some(val) if val > max_gas => request.gas = Some(max_gas),
-        _ => {}
-    }
-}
-
-/// We want to ensure that req.gas is not less than `MIN_TRANSACTION_GAS`
-/// coming into this.
-pub(super) async fn run_call<Host, Signet>(
-    hctx: HandlerCtx,
-    TxParams(request, block, state_overrides, block_overrides): TxParams,
-    ctx: RpcCtx<Host, Signet>,
-) -> ResponsePayload<ExecutionResult, CallErrorData>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
 
-    // this span is verbose yo.
-    let span = trace_span!(
-        "run_call",
-        ?request,
-        block_id = %id,
-        state_overrides = ?state_overrides.as_ref().map(StateOverride::len).unwrap_or_default(),
-        block_overrides = ?block_overrides.is_some(),
-        block_cfg = tracing::field::Empty,
-    );
+    let task = async move {
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
+        let acct =
+            reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
+
+        Ok(U64::from(acct.map(|a| a.nonce).unwrap_or_default()))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+/// `eth_getCode` — contract bytecode at a given block.
+pub(crate) async fn code_at<H>(
+    hctx: HandlerCtx,
+    AddrWithBlock(address, block): AddrWithBlock,
+    ctx: StorageRpcCtx<H>,
+) -> Result<alloy::primitives::Bytes, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = block.unwrap_or(BlockId::latest());
 
     let task = async move {
-        let block_cfg = match ctx.signet().block_cfg(id).await {
-            Ok(block_cfg) => block_cfg,
-            Err(e) => {
-                return ResponsePayload::internal_error_with_message_and_obj(
-                    "error while loading block cfg".into(),
-                    e.to_string().into(),
-                );
-            }
+        let (reader, height) = hot_reader_at_block(&ctx, id)?;
+        let acct =
+            reader.get_account_at_height(&address, Some(height)).map_err(|e| e.to_string())?;
+
+        let Some(acct) = acct else {
+            return Ok(alloy::primitives::Bytes::new());
         };
 
-        // Set up trevm
-        let trevm = response_tri!(ctx.trevm(id.into(), &block_cfg));
+        let Some(code_hash) = acct.bytecode_hash else {
+            return Ok(alloy::primitives::Bytes::new());
+        };
 
-        let mut trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
+        let code = reader.get_bytecode(&code_hash).map_err(|e| e.to_string())?;
+
+        Ok(code.map(|c| c.original_bytes()).unwrap_or_default())
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+// ---------------------------------------------------------------------------
+// EVM Execution
+// ---------------------------------------------------------------------------
+
+/// Shared EVM call execution used by `eth_call` and `eth_estimateGas`.
+///
+/// Resolves the block, builds a revm instance with the requested state
+/// and block overrides, then executes the transaction request.
+pub(crate) async fn run_call<H>(
+    hctx: HandlerCtx,
+    TxParams(request, block, state_overrides, block_overrides): TxParams,
+    ctx: StorageRpcCtx<H>,
+) -> ResponsePayload<ExecutionResult, CallErrorData>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let id = block.unwrap_or(BlockId::latest());
+    let span = trace_span!("run_call", block_id = %id);
+
+    let task = async move {
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
+
+        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
+
+        let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())
             .fill_tx(&request);
 
-        // AFTER applying overrides and filling the tx, we want to statefully
-        // modify the gas cap.
+        let mut trevm = trevm;
         let new_gas = response_tri!(trevm.cap_tx_gas());
         if Some(new_gas) != request.gas {
-            debug!(
-                req_gas = ?request.gas,
-                new_gas,
-                "capping gas for call",
-            );
+            debug!(req_gas = ?request.gas, new_gas, "capping gas for call");
         }
 
-        let execution_result = response_tri!(trevm.call().map_err(EvmErrored::into_error)).0;
-
-        ResponsePayload(Ok(execution_result))
+        let result = response_tri!(trevm.call().map_err(signet_evm::EvmErrored::into_error));
+        ResponsePayload(Ok(result.0))
     }
     .instrument(span);
 
     await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
-pub(super) async fn call<Host, Signet>(
+/// `eth_call` — execute a call and return the output bytes.
+///
+/// Delegates to [`run_call`], then maps the execution result to raw
+/// output bytes, revert data, or halt reason.
+pub(crate) async fn call<H>(
     hctx: HandlerCtx,
     mut params: TxParams,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> ResponsePayload<alloy::primitives::Bytes, CallErrorData>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    // Stateless gas normalization. We will do stateful gas normalization later
-    // in [`run_call`].
-    //
-    // This check is done greedily, as it is a simple comparison.
-    let max_gas = ctx.signet().config().rpc_gas_cap;
+    let max_gas = ctx.config().rpc_gas_cap;
     normalize_gas_stateless(&mut params.0, max_gas);
 
     await_handler!(@response_option hctx.spawn_with_ctx(|hctx| async move {
@@ -526,56 +803,35 @@ where
     }))
 }
 
-/// Estimate the gas cost of a transaction.
-pub(super) async fn estimate_gas<Host, Signet>(
+/// `eth_estimateGas` — estimate gas required for a transaction.
+pub(crate) async fn estimate_gas<H>(
     hctx: HandlerCtx,
     TxParams(mut request, block, state_overrides, block_overrides): TxParams,
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> ResponsePayload<U64, CallErrorData>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let id = block.unwrap_or(BlockId::pending());
-
-    // this span is verbose yo.
-    let span = trace_span!(
-        "estimate_gas",
-        ?request,
-        block_id = %id,
-        state_overrides = ?state_overrides.as_ref().map(StateOverride::len).unwrap_or_default(),
-        block_overrides = ?block_overrides.is_some(),
-        block_cfg = tracing::field::Empty,
-    );
-
-    // Stateless gas normalization.
-    let max_gas = ctx.signet().config().rpc_gas_cap;
+    let max_gas = ctx.config().rpc_gas_cap;
     normalize_gas_stateless(&mut request, max_gas);
 
+    let id = block.unwrap_or(BlockId::pending());
+    let span = trace_span!("eth_estimateGas", block_id = %id);
+
     let task = async move {
-        // Get the block cfg from backend, erroring if it fails
-        let block_cfg = match ctx.signet().block_cfg(id).await {
-            Ok(block_cfg) => block_cfg,
-            Err(e) => {
-                return ResponsePayload::internal_error_with_message_and_obj(
-                    "error while loading block cfg".into(),
-                    e.to_string().into(),
-                );
-            }
-        };
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
 
-        let trevm = response_tri!(ctx.trevm(id.into(), &block_cfg));
+        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
 
-        // Apply state and block overrides (state overrides are fallible as
-        // they require DB access)
         let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())
             .fill_tx(&request);
 
-        // in eth_call we cap gas here. in eth_estimate gas it is done by
-        // trevm
-
-        let (estimate, _) = response_tri!(trevm.estimate_gas().map_err(EvmErrored::into_error));
+        let (estimate, _) =
+            response_tri!(trevm.estimate_gas().map_err(signet_evm::EvmErrored::into_error));
 
         match estimate {
             EstimationResult::Success { limit, .. } => ResponsePayload(Ok(U64::from(limit))),
@@ -598,83 +854,84 @@ where
     await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
-pub(super) async fn gas_price<Host, Signet>(
+/// `eth_createAccessList` — generate an access list for a transaction.
+pub(crate) async fn create_access_list<H>(
     hctx: HandlerCtx,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U256, String>
+    TxParams(mut request, block, state_overrides, block_overrides): TxParams,
+    ctx: StorageRpcCtx<H>,
+) -> ResponsePayload<AccessListResult, CallErrorData>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
+    let max_gas = ctx.config().rpc_gas_cap;
+    normalize_gas_stateless(&mut request, max_gas);
+
+    let id = block.unwrap_or(BlockId::pending());
+    let span = trace_span!("eth_createAccessList", block_id = %id);
+
     let task = async move {
-        let (header, suggested) = tokio::try_join!(
-            ctx.signet().raw_header(BlockId::latest()),
-            ctx.signet().gas_oracle().suggest_tip_cap(),
-        )
-        .map_err(|e| e.to_string())?;
+        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
 
-        let base_fee = header.and_then(|h| h.1.base_fee_per_gas()).unwrap_or_default();
-        Ok(suggested + U256::from(base_fee))
-    };
+        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
+            .fill_cfg(&CfgFiller(ctx.chain_id()))
+            .fill_block(&header);
 
-    await_handler!(@option hctx.spawn_blocking(task))
+        let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
+            .maybe_apply_block_overrides(block_overrides.as_deref())
+            .fill_tx(&request);
+
+        let initial = request.access_list.clone().unwrap_or_default();
+        let mut inspector = AccessListInspector::new(initial);
+
+        let result = trevm
+            .try_with_inspector(&mut inspector, |trevm| trevm.run())
+            .map_err(signet_evm::EvmErrored::into_error);
+
+        let (gas_used, error) = match result {
+            Ok(ref trevm) => (U256::from(trevm.gas_used()), None),
+            Err(ref e) => (U256::ZERO, Some(e.to_string())),
+        };
+
+        let access_list = inspector.into_access_list();
+
+        ResponsePayload(Ok(AccessListResult { access_list, gas_used, error }))
+    }
+    .instrument(span);
+
+    await_handler!(@response_option hctx.spawn_blocking(task))
 }
 
-pub(super) async fn max_priority_fee_per_gas<Host, Signet>(
-    hctx: HandlerCtx,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U256, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task =
-        async move { ctx.signet().gas_oracle().suggest_tip_cap().await.map_err(|e| e.to_string()) };
+// ---------------------------------------------------------------------------
+// Transaction Submission
+// ---------------------------------------------------------------------------
 
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn fee_history<Host, Signet>(
-    hctx: HandlerCtx,
-    FeeHistoryArgs(block_count, newest, reward_percentiles): FeeHistoryArgs,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<alloy::rpc::types::FeeHistory, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move {
-        ctx.signet()
-            .fee_history(block_count.to::<u64>(), newest, reward_percentiles)
-            .await
-            .map_err(|e| e.to_string())
-    };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn send_raw_transaction<Host, Signet>(
+/// `eth_sendRawTransaction` — decode and forward a signed transaction.
+///
+/// The transaction is forwarded to the tx cache in a fire-and-forget
+/// task; the hash is returned immediately.
+pub(crate) async fn send_raw_transaction<H>(
     hctx: HandlerCtx,
     (tx,): (alloy::primitives::Bytes,),
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<B256, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let task = |hctx: HandlerCtx| async move {
-        let Some(tx_cache) = ctx.signet().tx_cache() else {
-            return Err("tx-cache URL not provided".to_string());
-        };
+    let Some(tx_cache) = ctx.tx_cache().cloned() else {
+        return Err("tx-cache URL not provided".to_string());
+    };
 
-        let envelope = match TxEnvelope::decode_2718(&mut tx.as_ref()) {
-            Ok(envelope) => envelope,
-            Err(e) => return Err(e.to_string()),
-        };
+    let task = |hctx: HandlerCtx| async move {
+        let envelope = alloy::consensus::TxEnvelope::decode_2718(&mut tx.as_ref())
+            .map_err(|e| e.to_string())?;
 
         let hash = *envelope.tx_hash();
         hctx.spawn(async move {
-            tx_cache.forward_raw_transaction(envelope).await.map_err(|e| e.to_string())
+            if let Err(e) = tx_cache.forward_raw_transaction(envelope).await {
+                tracing::warn!(error = %e, %hash, "failed to forward raw transaction");
+            }
         });
 
         Ok(hash)
@@ -683,107 +940,223 @@ where
     await_handler!(@option hctx.spawn_blocking_with_ctx(task))
 }
 
-pub(super) async fn get_logs<Host, Signet>(
-    hctx: HandlerCtx,
-    (filter,): (alloy::rpc::types::Filter,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<Vec<alloy::rpc::types::Log>, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move { ctx.signet().logs(&filter).await.map_err(EthError::into_string) };
+// ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
 
-    await_handler!(@option hctx.spawn_blocking(task))
+/// Drain a [`signet_cold::LogStream`] into a `Vec<Log>`.
+///
+/// Errors from the stream (deadline exceeded, too many logs, reorg) are
+/// propagated as the first encountered error.
+async fn collect_log_stream(stream: signet_cold::LogStream) -> signet_cold::ColdResult<Vec<Log>> {
+    use tokio_stream::StreamExt;
+    let mut logs = Vec::new();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(log) = stream.next().await {
+        logs.push(log?);
+    }
+    Ok(logs)
 }
 
-pub(super) async fn new_filter<Host, Signet>(
+/// `eth_getLogs` — query logs from cold storage with filter criteria.
+///
+/// Uses `stream_logs` for deadline enforcement and dedicated concurrency
+/// control. The stream is collected into a `Vec` for the JSON-RPC response.
+pub(crate) async fn get_logs<H>(
     hctx: HandlerCtx,
-    (filter,): (alloy::rpc::types::Filter,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U64, String>
+    (filter,): (Filter,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Vec<Log>, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let task =
-        async move { ctx.signet().install_log_filter(filter).map_err(EthError::into_string) };
+    let task = async move {
+        let cold = ctx.cold();
 
-    await_handler!(@option hctx.spawn_blocking(task))
-}
+        let resolved_filter = match filter.block_option {
+            alloy::rpc::types::FilterBlockOption::AtBlockHash(_) => filter,
+            alloy::rpc::types::FilterBlockOption::Range { from_block, to_block } => {
+                let from = from_block
+                    .map(|b| ctx.resolve_block_tag(b))
+                    .unwrap_or_else(|| ctx.tags().latest());
+                let to = to_block
+                    .map(|b| ctx.resolve_block_tag(b))
+                    .unwrap_or_else(|| ctx.tags().latest());
 
-pub(super) async fn new_block_filter<Host, Signet>(
-    hctx: HandlerCtx,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U64, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move { ctx.signet().install_block_filter().map_err(EthError::into_string) };
+                if from > to {
+                    return Err("fromBlock must not exceed toBlock".to_string());
+                }
+                let max_blocks = ctx.config().max_blocks_per_filter;
+                if to - from > max_blocks {
+                    return Err(format!("query exceeds max block range ({max_blocks})"));
+                }
 
-    await_handler!(@option hctx.spawn_blocking(task))
-}
+                Filter {
+                    block_option: alloy::rpc::types::FilterBlockOption::Range {
+                        from_block: Some(BlockNumberOrTag::Number(from)),
+                        to_block: Some(BlockNumberOrTag::Number(to)),
+                    },
+                    ..filter
+                }
+            }
+        };
 
-pub(super) async fn uninstall_filter<Host, Signet>(
-    hctx: HandlerCtx,
-    (id,): (U64,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<bool, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move { Ok(ctx.signet().uninstall_filter(id)) };
+        let max_logs = ctx.config().max_logs_per_response;
+        let deadline = ctx.config().max_log_query_deadline;
 
-    await_handler!(@option hctx.spawn_blocking(task))
-}
+        let stream = cold
+            .stream_logs(resolved_filter, max_logs, deadline)
+            .await
+            .map_err(|e| e.to_string())?;
 
-pub(super) async fn get_filter_changes<Host, Signet>(
-    hctx: HandlerCtx,
-    (id,): (U64,),
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<FilterOutput, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let task = async move { ctx.signet().filter_changes(id).await.map_err(EthError::into_string) };
-
-    await_handler!(@option hctx.spawn_blocking(task))
-}
-
-pub(super) async fn subscribe<Host, Signet>(
-    hctx: HandlerCtx,
-    sub: SubscribeArgs,
-    ctx: RpcCtx<Host, Signet>,
-) -> Result<U64, String>
-where
-    Host: FullNodeComponents,
-    Signet: Pnt,
-{
-    let kind = sub.try_into()?;
-
-    let task = |hctx| async move {
-        ctx.signet()
-            .subscriptions()
-            .subscribe(&hctx, kind)
-            .ok_or_else(|| "pubsub not enabled".to_string())
+        collect_log_stream(stream).await.map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
-pub(super) async fn unsubscribe<Host, Signet>(
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+/// `eth_newFilter` — install a log filter for polling.
+pub(crate) async fn new_filter<H>(
+    hctx: HandlerCtx,
+    (filter,): (Filter,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        Ok(ctx.filter_manager().install_log_filter(latest, filter))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+/// `eth_newBlockFilter` — install a block hash filter for polling.
+pub(crate) async fn new_block_filter<H>(
+    hctx: HandlerCtx,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let latest = ctx.tags().latest();
+        Ok(ctx.filter_manager().install_block_filter(latest))
+    };
+
+    await_handler!(@option hctx.spawn_blocking(task))
+}
+
+/// `eth_uninstallFilter` — remove a filter.
+pub(crate) async fn uninstall_filter<H>(
     hctx: HandlerCtx,
     (id,): (U64,),
-    ctx: RpcCtx<Host, Signet>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<bool, String>
 where
-    Host: FullNodeComponents,
-    Signet: Pnt,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let task = async move { Ok(ctx.signet().subscriptions().unsubscribe(id)) };
+    let task = async move { Ok(ctx.filter_manager().uninstall(id).is_some()) };
+    await_handler!(@option hctx.spawn_blocking(task))
+}
 
+/// `eth_getFilterChanges` / `eth_getFilterLogs` — poll a filter for new
+/// results since the last poll. Fetches matching data from cold storage.
+pub(crate) async fn get_filter_changes<H>(
+    hctx: HandlerCtx,
+    (id,): (U64,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<FilterOutput, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move {
+        let fm = ctx.filter_manager();
+        let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
+
+        let latest = ctx.tags().latest();
+        let start = entry.next_start_block();
+
+        if start > latest {
+            entry.mark_polled(latest);
+            return Ok(entry.empty_output());
+        }
+
+        let cold = ctx.cold();
+
+        if entry.is_block() {
+            let specs: Vec<_> = (start..=latest).map(HeaderSpecifier::Number).collect();
+            let headers = cold.get_headers(specs).await.map_err(|e| e.to_string())?;
+            let hashes: Vec<B256> = headers.into_iter().flatten().map(|h| h.hash()).collect();
+            entry.mark_polled(latest);
+            Ok(FilterOutput::from(hashes))
+        } else {
+            let stored = entry.as_filter().cloned().unwrap();
+            let resolved = Filter {
+                block_option: alloy::rpc::types::FilterBlockOption::Range {
+                    from_block: Some(BlockNumberOrTag::Number(start)),
+                    to_block: Some(BlockNumberOrTag::Number(latest)),
+                },
+                ..stored
+            };
+
+            let max_logs = ctx.config().max_logs_per_response;
+            let deadline = ctx.config().max_log_query_deadline;
+
+            let stream =
+                cold.stream_logs(resolved, max_logs, deadline).await.map_err(|e| e.to_string())?;
+
+            let logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
+
+            entry.mark_polled(latest);
+            Ok(FilterOutput::from(logs))
+        }
+    };
+
+    await_handler!(@option hctx.spawn(task))
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+/// `eth_subscribe` — register a push-based subscription (WebSocket/SSE).
+pub(crate) async fn subscribe<H>(
+    hctx: HandlerCtx,
+    sub: SubscribeArgs,
+    ctx: StorageRpcCtx<H>,
+) -> Result<U64, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let interest: InterestKind = sub.try_into()?;
+
+    ctx.sub_manager()
+        .subscribe(&hctx, interest)
+        .ok_or_else(|| "notifications not enabled on this transport".to_string())
+}
+
+/// `eth_unsubscribe` — cancel a push-based subscription.
+pub(crate) async fn unsubscribe<H>(
+    hctx: HandlerCtx,
+    (id,): (U64,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<bool, String>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let task = async move { Ok(ctx.sub_manager().unsubscribe(id)) };
     await_handler!(@option hctx.spawn_blocking(task))
 }

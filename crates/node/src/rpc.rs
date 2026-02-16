@@ -2,19 +2,21 @@ use crate::{
     SignetNode,
     serve::{RpcServerGuard, ServeConfig},
 };
-use reth::{primitives::EthPrimitives, rpc::builder::config::RethRpcServerConfig};
+use reth::primitives::EthPrimitives;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
-use signet_node_types::NodeTypesDbTrait;
-use signet_rpc::RpcCtx;
+use signet_rpc::{StorageRpcConfig, StorageRpcCtx};
+use signet_storage::HotKv;
 use signet_tx_cache::TxCache;
+use std::sync::Arc;
 use tracing::info;
 
-impl<Host, Db, AliasOracle> SignetNode<Host, Db, AliasOracle>
+impl<Host, H, AliasOracle> SignetNode<Host, H, AliasOracle>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    Db: NodeTypesDbTrait,
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as signet_storage::HotKvRead>::Error: trevm::revm::database::DBErrorMarker,
     AliasOracle: AliasOracleFactory,
 {
     /// Start the RPC server.
@@ -27,17 +29,17 @@ where
 
     async fn launch_rpc(&self) -> eyre::Result<RpcServerGuard> {
         let tasks = self.host.task_executor();
-        let forwarder =
+        let tx_cache =
             self.config.forward_url().map(|url| TxCache::new_with_client(url, self.client.clone()));
-        let eth_config = self.host.config.rpc.eth_config();
-        let router = signet_rpc::router().with_state(RpcCtx::new(
-            self.host.components.clone(),
+        let rpc_ctx = StorageRpcCtx::new(
+            Arc::clone(&self.storage),
             self.constants.clone(),
-            self.bp.clone(),
-            eth_config,
-            forwarder,
-            tasks.clone(),
-        )?);
+            self.tags.clone(),
+            tx_cache,
+            StorageRpcConfig::default(),
+            self.notif_tx.clone(),
+        );
+        let router = signet_rpc::router::<H>().with_state(rpc_ctx);
         let serve_config: ServeConfig = self.config.merge_rpc_configs(&self.host)?.into();
         serve_config.serve(tasks, router).await
     }
