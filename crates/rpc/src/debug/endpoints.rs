@@ -49,25 +49,25 @@ where
             DebugError::BlockNotFound(id)
         }));
 
-        let (header, txs) = response_tri!(
-            tokio::try_join!(
-                cold.get_header_by_number(block_num),
-                cold.get_transactions_in_block(block_num),
-            )
-            .map_err(|e| {
-                tracing::warn!(error = %e, block_num, "cold storage read failed");
-                DebugError::Cold(e.to_string())
-            })
-        );
+        let sealed =
+            response_tri!(ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
+                tracing::warn!(error = %e, block_num, "header resolution failed");
+                DebugError::BlockNotFound(id)
+            }));
 
-        let Some(header) = header else {
+        let Some(sealed) = sealed else {
             return ResponsePayload::internal_error_message(
                 format!("block not found: {id}").into(),
             );
         };
 
-        let block_hash = header.hash();
-        let header = header.into_inner();
+        let block_hash = sealed.hash();
+        let header = sealed.into_inner();
+
+        let txs = response_tri!(cold.get_transactions_in_block(block_num).await.map_err(|e| {
+            tracing::warn!(error = %e, block_num, "cold storage read failed");
+            DebugError::from(e)
+        }));
 
         tracing::debug!(number = header.number, "Loaded block");
 
@@ -77,7 +77,7 @@ where
         let db =
             response_tri!(ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
                 tracing::warn!(error = %e, block_num, "hot storage read failed");
-                DebugError::Hot(e.to_string())
+                DebugError::from(e)
             }));
 
         let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
@@ -135,7 +135,7 @@ where
         // Look up the transaction and its containing block.
         let confirmed = response_tri!(cold.get_tx_by_hash(tx_hash).await.map_err(|e| {
             tracing::warn!(error = %e, %tx_hash, "cold storage read failed");
-            DebugError::Cold(e.to_string())
+            DebugError::from(e)
         }));
 
         let confirmed = response_tri!(confirmed.ok_or(DebugError::TransactionNotFound));
@@ -144,19 +144,17 @@ where
         let block_num = meta.block_number();
         let block_hash = meta.block_hash();
 
-        let (header, txs) = response_tri!(
-            tokio::try_join!(
-                cold.get_header_by_number(block_num),
-                cold.get_transactions_in_block(block_num),
-            )
-            .map_err(|e| {
-                tracing::warn!(error = %e, block_num, "cold storage read failed");
-                DebugError::Cold(e.to_string())
-            })
-        );
-
         let block_id = BlockId::Number(block_num.into());
-        let header = response_tri!(header.ok_or(DebugError::BlockNotFound(block_id))).into_inner();
+        let sealed = response_tri!(ctx.resolve_header(block_id).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "header resolution failed");
+            DebugError::BlockNotFound(block_id)
+        }));
+        let header = response_tri!(sealed.ok_or(DebugError::BlockNotFound(block_id))).into_inner();
+
+        let txs = response_tri!(cold.get_transactions_in_block(block_num).await.map_err(|e| {
+            tracing::warn!(error = %e, block_num, "cold storage read failed");
+            DebugError::from(e)
+        }));
 
         tracing::debug!(number = block_num, "Loaded containing block");
 
@@ -164,7 +162,7 @@ where
         let db =
             response_tri!(ctx.revm_state_at_height(block_num.saturating_sub(1)).map_err(|e| {
                 tracing::warn!(error = %e, block_num, "hot storage read failed");
-                DebugError::Hot(e.to_string())
+                DebugError::from(e)
             }));
 
         let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())

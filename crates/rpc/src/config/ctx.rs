@@ -30,7 +30,13 @@ use trevm::revm::database::{DBErrorMarker, StateBuilder};
 pub(crate) struct EvmBlockContext<Db> {
     /// The resolved block header.
     pub header: alloy::consensus::Header,
-    /// The revm database at the resolved height.
+    /// The revm database at the resolved height, wrapped in [`State`] to
+    /// provide [`DatabaseCommit`] support required by `eth_estimateGas`
+    /// (binary-search commits), `eth_createAccessList`, `signet_callBundle`,
+    /// and debug tracing.
+    ///
+    /// [`State`]: trevm::revm::database::State
+    /// [`DatabaseCommit`]: trevm::revm::database::DatabaseCommit
     pub db: trevm::revm::database::State<Db>,
 }
 
@@ -225,8 +231,13 @@ impl<H: HotKv> StorageRpcCtx<H> {
 
     /// Create a revm-compatible database at a specific block height.
     ///
-    /// The returned `State<RevmRead<...>>` implements both `Database` and
-    /// `DatabaseCommit`, making it suitable for use with `signet_evm`.
+    /// Wraps the underlying `RevmRead` in [`State`] so that the returned
+    /// database implements both `Database` and `DatabaseCommit`. This is
+    /// needed by EVM operations that mutate intermediate state (gas
+    /// estimation, access-list generation, bundle simulation, debug
+    /// tracing).
+    ///
+    /// [`State`]: trevm::revm::database::State
     pub fn revm_state_at_height(
         &self,
         height: u64,
