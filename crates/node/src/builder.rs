@@ -9,7 +9,6 @@ use signet_block_processor::AliasOracleFactory;
 use signet_hot::db::UnsafeDbWrite;
 use signet_node_config::SignetNodeConfig;
 use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
-use signet_storage_types::EthereumHardfork;
 use std::sync::Arc;
 use tracing::info;
 use trevm::revm::database::DBErrorMarker;
@@ -127,8 +126,9 @@ where
 
         if !has_genesis {
             let genesis = self.config.genesis();
+            let hardforks = signet_genesis::genesis_hardforks(genesis);
             let writer = storage.hot().writer()?;
-            writer.load_genesis(genesis, &EthereumHardfork::Paris)?;
+            writer.load_genesis(genesis, &hardforks)?;
             writer.commit()?;
             info!("loaded genesis into hot storage");
         }

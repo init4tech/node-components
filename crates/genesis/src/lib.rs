@@ -16,6 +16,7 @@ use init4_bin_base::utils::from_env::{
     EnvItemInfo, FromEnv, FromEnvErr, FromEnvVar, parse_env_if_present,
 };
 use signet_constants::KnownChains;
+use signet_evm::EthereumHardfork;
 use std::{borrow::Cow, path::PathBuf, str::FromStr, sync::LazyLock};
 
 /// Signet mainnet genesis file.
@@ -77,6 +78,62 @@ pub static TEST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
 pub static TEST_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(TEST_HOST_GENESIS_JSON).expect("Failed to parse test host genesis")
 });
+
+/// Derive the [`EthereumHardfork`] flags active at the genesis block.
+///
+/// Inspects the chain config in `genesis` and returns the set of hardforks
+/// whose activation block or timestamp is at or before the genesis
+/// block/timestamp.
+pub fn genesis_hardforks(genesis: &Genesis) -> EthereumHardfork {
+    let block = genesis.number.unwrap_or(0);
+    let timestamp = genesis.timestamp;
+    let c = &genesis.config;
+
+    let at_block = |b: Option<u64>| b.is_some_and(|b| b <= block);
+    let at_time = |t: Option<u64>| t.is_some_and(|t| t <= timestamp);
+
+    [
+        (true, EthereumHardfork::Frontier),
+        (at_block(c.homestead_block), EthereumHardfork::Homestead),
+        (at_block(c.dao_fork_block), EthereumHardfork::Dao),
+        (at_block(c.eip150_block), EthereumHardfork::Tangerine),
+        (at_block(c.eip155_block), EthereumHardfork::SpuriousDragon),
+        (at_block(c.byzantium_block), EthereumHardfork::Byzantium),
+        (at_block(c.constantinople_block), EthereumHardfork::Constantinople),
+        (at_block(c.petersburg_block), EthereumHardfork::Petersburg),
+        (at_block(c.istanbul_block), EthereumHardfork::Istanbul),
+        (at_block(c.muir_glacier_block), EthereumHardfork::MuirGlacier),
+        (at_block(c.berlin_block), EthereumHardfork::Berlin),
+        (at_block(c.london_block), EthereumHardfork::London),
+        (at_block(c.arrow_glacier_block), EthereumHardfork::ArrowGlacier),
+        (at_block(c.gray_glacier_block), EthereumHardfork::GrayGlacier),
+        (at_block(c.merge_netsplit_block), EthereumHardfork::Paris),
+        (at_time(c.shanghai_time), EthereumHardfork::Shanghai),
+        (at_time(c.cancun_time), EthereumHardfork::Cancun),
+        (at_time(c.prague_time), EthereumHardfork::Prague),
+        (at_time(c.osaka_time), EthereumHardfork::Osaka),
+    ]
+    .into_iter()
+    .filter(|(active, _)| *active)
+    .map(|(_, fork)| fork)
+    .fold(EthereumHardfork::empty(), |acc, fork| acc | fork)
+}
+
+/// Mainnet genesis hardforks.
+pub static MAINNET_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
+    LazyLock::new(|| genesis_hardforks(&MAINNET_GENESIS));
+
+/// Parmigiana testnet genesis hardforks.
+pub static PARMIGIANA_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
+    LazyLock::new(|| genesis_hardforks(&PARMIGIANA_GENESIS));
+
+/// Pecorino testnet genesis hardforks.
+pub static PECORINO_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
+    LazyLock::new(|| genesis_hardforks(&PECORINO_GENESIS));
+
+/// Test genesis hardforks.
+pub static TEST_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
+    LazyLock::new(|| genesis_hardforks(&TEST_GENESIS));
 
 /// Environment variable for specifying the rollup genesis JSON file path.
 const ROLLUP_GENESIS_JSON_PATH: &str = "ROLLUP_GENESIS_JSON_PATH";
@@ -140,6 +197,21 @@ where
 }
 
 impl GenesisSpec {
+    /// Get the [`EthereumHardfork`] flags active at the rollup genesis block.
+    pub fn genesis_hardforks(&self) -> EthereumHardfork {
+        match self {
+            Self::Known(KnownChains::Mainnet) => *MAINNET_GENESIS_HARDFORKS,
+            Self::Known(KnownChains::Parmigiana) => *PARMIGIANA_GENESIS_HARDFORKS,
+            #[allow(deprecated)]
+            Self::Known(KnownChains::Pecorino) => *PECORINO_GENESIS_HARDFORKS,
+            Self::Known(KnownChains::Test) => *TEST_GENESIS_HARDFORKS,
+            Self::Custom { .. } => {
+                let network = self.load_genesis().expect("failed to load custom genesis");
+                genesis_hardforks(&network.rollup)
+            }
+        }
+    }
+
     /// Load the raw genesis JSON strings from the specified source.
     ///
     /// Returns both rollup and host genesis JSON strings.
