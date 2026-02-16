@@ -1,14 +1,14 @@
 use crate::SignetNodeConfig;
 use init4_bin_base::utils::calc::SlotCalculator;
-use reth_db::test_utils::tempdir_path;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
 use signet_types::constants::KnownChains;
 use std::borrow::Cow;
+use tempfile::tempdir;
 
 /// Make a test config
 pub fn test_config() -> SignetNodeConfig {
-    let mut tempdir = tempdir_path();
+    let mut tempdir = tempdir().unwrap().keep();
     tempdir.push("signet.ipc");
 
     // Make a new test config with the IPC endpoint set to the tempdir.

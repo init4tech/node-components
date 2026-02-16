@@ -36,13 +36,10 @@ incremental = false
 [workspace.dependencies]
 signet-blobber = { version = "0.16.0-rc.7", path = "crates/blobber" }
 signet-block-processor = { version = "0.16.0-rc.7", path = "crates/block-processor" }
-signet-db = { version = "0.16.0-rc.7", path = "crates/db" }
 signet-genesis = { version = "0.16.0-rc.7", path = "crates/genesis" }
 signet-node = { version = "0.16.0-rc.7", path = "crates/node" }
 signet-node-config = { version = "0.16.0-rc.7", path = "crates/node-config" }
 signet-node-tests = { version = "0.16.0-rc.7", path = "crates/node-tests" }
-signet-node-types = { version = "0.16.0-rc.7", path = "crates/node-types" }
-signet-rpc = { version = "0.16.0-rc.7", path = "crates/rpc" }
 signet-rpc-storage = { version = "0.16.0-rc.7", path = "crates/rpc-storage" }
 
 init4-bin-base = { version = "0.18.0-rc.8", features = ["alloy"] }
@@ -76,28 +73,13 @@ alloy = { version = "1.4.0", features = [
     "genesis",
     "arbitrary",
 ] }
-alloy-contract = { version = "1.4.0", features = ["pubsub"] }
 
 # Reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-network-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-prune-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-stages-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 
 # Foundry periphery
@@ -105,14 +87,8 @@ foundry-blob-explorers = "0.17"
 
 # Async
 tokio = { version = "1.43.0", features = ["macros"] }
-async-trait = "0.1.87"
-
-# Pinned for compatibility with reth
-parking_lot = "0.12"
 
 # Misc
-chrono = "0.4.38"
-clap = "4"
 eyre = "0.6.12"
 futures-util = "0.3.31"
 hex = { package = "const-hex", version = "1.10", default-features = false, features = [
@@ -121,19 +97,15 @@ hex = { package = "const-hex", version = "1.10", default-features = false, featu
 itertools = "0.14.0"
 metrics = "0.24.2"
 openssl = { version = "0.10", features = ["vendored"] }
-proptest = "1.6.0"
 reqwest = "0.12.9"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.137"
-smallvec = "1.15.1"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 thiserror = "2.0.12"
 url = "2.5.4"
-uuid = "1.16.0"
 
 # Test Utils
-alloy-rlp = "0.3.11"
 tempfile = "3.17.0"
 
 # [patch.crates-io]
