@@ -18,7 +18,10 @@ use reth::transaction_pool::{TransactionOrigin, TransactionPool, test_utils::Moc
 use reth_exex_test_utils::{Adapter, TestExExHandle};
 use reth_node_api::FullNodeComponents;
 use signet_cold::{BlockData, ColdStorageReadHandle, mem::MemColdBackend};
-use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
+use signet_hot::{
+    db::{HotDbRead, UnsafeDbWrite},
+    mem::MemKv,
+};
 use signet_node::{NodeStatus, SignetNodeBuilder};
 use signet_node_config::test_utils::test_config;
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
@@ -127,11 +130,7 @@ impl SignetTestContext {
                 let reader = hot.reader().unwrap();
                 addresses
                     .iter()
-                    .map(|addr| {
-                        signet_hot::db::HotDbRead::get_account(&reader, addr)
-                            .unwrap()
-                            .unwrap_or_default()
-                    })
+                    .map(|addr| reader.get_account(addr).unwrap().unwrap_or_default())
                     .collect()
             };
             let writer = hot.writer().unwrap();
@@ -151,8 +150,7 @@ impl SignetTestContext {
         // cold-backed RPC endpoints can find block 0.
         {
             let reader = storage.reader().unwrap();
-            let genesis_header =
-                signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().unwrap();
+            let genesis_header = reader.get_header(0).unwrap().unwrap();
             let genesis_block = BlockData::new(genesis_header, vec![], vec![], vec![], None);
             storage.cold().append_block(genesis_block).await.unwrap();
         }
@@ -238,13 +236,13 @@ impl SignetTestContext {
     /// Get a header by block number from hot storage.
     pub fn header_by_number(&self, number: u64) -> Option<SealedHeader> {
         let reader = self.storage.reader().unwrap();
-        signet_hot::db::HotDbRead::get_header(&reader, number).unwrap()
+        reader.get_header(number).unwrap()
     }
 
     /// Get the last block number from hot storage.
     pub fn last_block_number(&self) -> u64 {
         let reader = self.storage.reader().unwrap();
-        HistoryRead::last_block_number(&reader).unwrap().unwrap_or(0)
+        reader.last_block_number().unwrap().unwrap_or(0)
     }
 
     /// Get all transactions in a block from cold storage.
@@ -268,7 +266,7 @@ impl SignetTestContext {
     /// Get the account history (block number list) for an address.
     pub fn account_history(&self, address: Address) -> Option<BlockNumberList> {
         let reader = self.storage.reader().unwrap();
-        HistoryRead::last_account_history(&reader, address).unwrap().map(|(_, list)| list)
+        reader.last_account_history(address).unwrap().map(|(_, list)| list)
     }
 
     /// Get an account's state at a specific block height.
@@ -277,9 +275,7 @@ impl SignetTestContext {
     /// (i.e. balance, nonce, and bytecode are all zero/empty).
     pub fn account_at_height(&self, address: Address, height: u64) -> Option<Account> {
         let reader = self.storage.reader().unwrap();
-        HistoryRead::get_account_at_height(&reader, &address, Some(height))
-            .unwrap()
-            .filter(|a| !a.is_empty())
+        reader.get_account_at_height(&address, Some(height)).unwrap().filter(|a| !a.is_empty())
     }
 
     /// Send a notification to the Signet Node instance
@@ -391,7 +387,7 @@ impl SignetTestContext {
     /// Get the account for an address.
     pub fn account(&self, address: Address) -> Option<Account> {
         let reader = self.storage.reader().unwrap();
-        signet_hot::db::HotDbRead::get_account(&reader, &address).unwrap()
+        reader.get_account(&address).unwrap()
     }
 
     /// Get the nonce off an addresss.
@@ -512,7 +508,7 @@ impl SignetTestContext {
             for (key, value) in storage {
                 let slot = U256::from_be_bytes(key.0);
                 assert_eq!(
-                    signet_hot::db::HotDbRead::get_storage(&reader, &address, &slot).unwrap(),
+                    reader.get_storage(&address, &slot).unwrap(),
                     Some(U256::from_be_bytes(value.0))
                 );
             }

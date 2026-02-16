@@ -2,11 +2,11 @@
 
 use crate::{
     config::{
-        StorageRpcConfig,
+        ChainNotifier, StorageRpcConfig,
         resolve::{BlockTags, ResolveError},
     },
     eth::EthError,
-    interest::{FilterManager, NewBlockNotification, SubscriptionManager},
+    interest::{FilterManager, SubscriptionManager},
 };
 use alloy::eips::{BlockId, BlockNumberOrTag};
 use signet_cold::ColdStorageReadHandle;
@@ -19,7 +19,7 @@ use signet_storage::UnifiedStorage;
 use signet_tx_cache::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
-use tokio::sync::{Semaphore, broadcast};
+use tokio::sync::Semaphore;
 use trevm::revm::database::{DBErrorMarker, StateBuilder};
 
 /// Resolved block context for EVM execution.
@@ -48,8 +48,7 @@ pub(crate) struct EvmBlockContext<Db> {
 /// # Construction
 ///
 /// Call [`StorageRpcCtx::new`] with unified storage, system constants,
-/// block tags, an optional [`TxCache`], [`StorageRpcConfig`], and a
-/// broadcast sender for [`NewBlockNotification`]s.
+/// a [`ChainNotifier`], an optional [`TxCache`], and [`StorageRpcConfig`].
 #[derive(Debug)]
 pub struct StorageRpcCtx<H: HotKv> {
     inner: Arc<StorageRpcCtxInner<H>>,
@@ -65,7 +64,7 @@ impl<H: HotKv> Clone for StorageRpcCtx<H> {
 struct StorageRpcCtxInner<H: HotKv> {
     storage: Arc<UnifiedStorage<H>>,
     constants: SignetSystemConstants,
-    tags: BlockTags,
+    chain: ChainNotifier,
     tx_cache: Option<TxCache>,
     config: StorageRpcConfig,
     tracing_semaphore: Arc<Semaphore>,
@@ -76,25 +75,24 @@ struct StorageRpcCtxInner<H: HotKv> {
 impl<H: HotKv> StorageRpcCtx<H> {
     /// Create a new storage-backed RPC context.
     ///
-    /// The `notif_sender` is used by the subscription manager to receive
-    /// new block notifications. Callers send [`NewBlockNotification`]s on
-    /// this channel as blocks are appended to storage.
+    /// The [`ChainNotifier`] provides block tag tracking and a broadcast
+    /// sender for new block notifications. The subscription manager
+    /// subscribes to this channel to push updates to WebSocket clients.
     pub fn new(
         storage: Arc<UnifiedStorage<H>>,
         constants: SignetSystemConstants,
-        tags: BlockTags,
+        chain: ChainNotifier,
         tx_cache: Option<TxCache>,
         config: StorageRpcConfig,
-        notif_sender: broadcast::Sender<NewBlockNotification>,
     ) -> Self {
         let tracing_semaphore = Arc::new(Semaphore::new(config.max_tracing_requests));
         let filter_manager = FilterManager::new(config.stale_filter_ttl, config.stale_filter_ttl);
-        let sub_manager = SubscriptionManager::new(notif_sender, config.stale_filter_ttl);
+        let sub_manager = SubscriptionManager::new(chain.notif_sender(), config.stale_filter_ttl);
         Self {
             inner: Arc::new(StorageRpcCtxInner {
                 storage,
                 constants,
-                tags,
+                chain,
                 tx_cache,
                 config,
                 tracing_semaphore,
@@ -121,7 +119,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
 
     /// Access the block tags.
     pub fn tags(&self) -> &BlockTags {
-        &self.inner.tags
+        self.inner.chain.tags()
     }
 
     /// Access the system constants.

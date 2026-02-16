@@ -12,7 +12,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub(crate) mod config;
-pub use config::{BlockTags, StorageRpcConfig, StorageRpcCtx, SyncStatus};
+pub use config::{BlockTags, ChainNotifier, StorageRpcConfig, StorageRpcCtx, SyncStatus};
 
 mod eth;
 pub use eth::EthError;

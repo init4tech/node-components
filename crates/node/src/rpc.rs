@@ -34,10 +34,9 @@ where
         let rpc_ctx = StorageRpcCtx::new(
             Arc::clone(&self.storage),
             self.constants.clone(),
-            self.tags.clone(),
+            self.chain.clone(),
             tx_cache,
             StorageRpcConfig::default(),
-            self.notif_tx.clone(),
         );
         let router = signet_rpc::router::<H>().with_state(rpc_ctx);
         let serve_config: ServeConfig = self.config.merge_rpc_configs(&self.host)?.into();
