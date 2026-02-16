@@ -26,7 +26,6 @@ signet-storage-types.workspace = true
 alloy.workspace = true
 
 reth.workspace = true
-reth-chainspec.workspace = true
 
 eyre.workspace = true
 metrics.workspace = true

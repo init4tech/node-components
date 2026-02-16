@@ -230,8 +230,9 @@ impl SignetNodeConfig {
     }
 
     /// Get the current spec id for the Signet Node chain.
-    pub fn spec_id(&self, timestamp: u64) -> SpecId {
-        signet_block_processor::revm_spec(self.chain_spec(), timestamp)
+    pub fn spec_id(&self, block: u64, timestamp: u64) -> SpecId {
+        signet_evm::EthereumHardfork::active_hardforks(&self.genesis().config, block, timestamp)
+            .spec_id()
     }
 }
 
