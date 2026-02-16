@@ -3,7 +3,7 @@
 use crate::{
     config::{EvmBlockContext, StorageRpcCtx, gas_oracle},
     eth::{
-        error::CallErrorData,
+        error::{CallErrorData, EthError},
         helpers::{
             AddrWithBlock, BlockParams, CfgFiller, FeeHistoryArgs, StorageAtArgs, SubscribeArgs,
             TxParams, await_handler, build_receipt, build_rpc_transaction, hot_reader_at_block,
@@ -29,6 +29,7 @@ use alloy::{
     rpc::types::{FeeHistory, Filter, Log},
 };
 use revm_inspectors::access_list::AccessListInspector;
+use serde::Serialize;
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
 use tracing::{Instrument, debug, trace_span};
@@ -42,6 +43,38 @@ use trevm::{
 
 pub(crate) async fn not_supported() -> ResponsePayload<(), ()> {
     ResponsePayload::method_not_found()
+}
+
+/// Response for `eth_syncing`.
+///
+/// Returns `false` when the node is fully synced, or a sync-status
+/// object when it is still catching up.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(crate) enum SyncingResponse {
+    /// Node is fully synced.
+    NotSyncing(bool),
+    /// Node is still syncing.
+    Syncing {
+        /// Block number the node started syncing from.
+        starting_block: U64,
+        /// Current block the node has synced to.
+        current_block: U64,
+        /// Highest known block number on the network.
+        highest_block: U64,
+    },
+}
+
+/// `eth_syncing` — returns sync status or `false` when fully synced.
+pub(crate) async fn syncing<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<SyncingResponse, ()> {
+    match ctx.tags().sync_status() {
+        Some(status) => Ok(SyncingResponse::Syncing {
+            starting_block: U64::from(status.starting_block),
+            current_block: U64::from(status.current_block),
+            highest_block: U64::from(status.highest_block),
+        }),
+        None => Ok(SyncingResponse::NotSyncing(false)),
+    }
 }
 
 /// Uncle count is always zero — Signet has no uncle blocks.
@@ -96,7 +129,7 @@ where
         Ok(tip + U256::from(base_fee))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_maxPriorityFeePerGas` — suggests priority fee from recent block tips.
@@ -115,7 +148,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_feeHistory` — returns base fee and reward percentile data.
@@ -143,11 +176,12 @@ where
 
         block_count = block_count.min(max_fee_history);
 
-        let mut newest = newest;
-        if newest.is_pending() {
-            newest = BlockNumberOrTag::Latest;
+        let newest = if newest.is_pending() {
             block_count = block_count.saturating_sub(1);
-        }
+            BlockNumberOrTag::Latest
+        } else {
+            newest
+        };
 
         let end_block = ctx.resolve_block_tag(newest);
         let end_block_plus = end_block + 1;
@@ -224,7 +258,7 @@ where
         })
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// Calculate reward percentiles for a single block.
@@ -262,7 +296,7 @@ fn calculate_reward_percentiles(
     for &percentile in percentiles {
         let threshold = (gas_used as f64 * percentile / 100.0) as u64;
 
-        while tx_idx < tx_gas_and_tip.len() {
+        while tx_idx < tx_gas_and_tip.len() - 1 {
             cumulative_gas += tx_gas_and_tip[tx_idx].0;
             if cumulative_gas >= threshold {
                 break;
@@ -270,7 +304,7 @@ fn calculate_reward_percentiles(
             tx_idx += 1;
         }
 
-        result.push(tx_gas_and_tip.get(tx_idx).map(|&(_, tip)| tip).unwrap_or_default());
+        result.push(tx_gas_and_tip[tx_idx].1);
     }
 
     result
@@ -330,7 +364,7 @@ where
         }))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getBlockTransactionCount*` — transaction count in a block.
@@ -356,7 +390,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getBlockReceipts` — all receipts in a block.
@@ -389,7 +423,7 @@ where
         Ok(Some(LazyReceipts { txs, receipts, base_fee }))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getBlockHeaderByHash` / `eth_getBlockHeaderByNumber`.
@@ -454,7 +488,7 @@ where
         Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getRawTransactionByHash` — RLP-encoded transaction bytes.
@@ -475,7 +509,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getTransactionByBlock*AndIndex` — transaction by position in block.
@@ -511,7 +545,7 @@ where
         Ok(Some(build_rpc_transaction(&tx, &meta, base_fee)))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getRawTransactionByBlock*AndIndex` — raw RLP bytes by position.
@@ -537,7 +571,7 @@ where
             .map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 /// `eth_getTransactionReceipt` — receipt by tx hash. Fetches the receipt,
@@ -566,13 +600,13 @@ where
         )
         .map_err(|e| e.to_string())?;
 
-        let tx = tx.ok_or("receipt found but transaction missing")?.into_inner();
+        let tx = tx.ok_or(EthError::TransactionMissing).map_err(|e| e.to_string())?.into_inner();
         let base_fee = header.and_then(|h| h.base_fee_per_gas);
 
         Ok(Some(build_receipt(&cr, &tx, base_fee)))
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 // ---------------------------------------------------------------------------
@@ -977,7 +1011,7 @@ where
         collect_log_stream(stream).await.map_err(|e| e.to_string())
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,7 +1121,7 @@ where
         }
     };
 
-    await_handler!(@option hctx.spawn_blocking(task))
+    await_handler!(@option hctx.spawn(task))
 }
 
 // ---------------------------------------------------------------------------

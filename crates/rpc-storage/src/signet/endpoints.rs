@@ -91,5 +91,5 @@ where
         }
     };
 
-    await_handler!(@response_option hctx.spawn_blocking(task))
+    await_handler!(@response_option hctx.spawn(task))
 }

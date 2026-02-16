@@ -6,7 +6,7 @@ use endpoints::{
     code_at, create_access_list, estimate_gas, fee_history, gas_price, get_filter_changes,
     get_logs, header_by, max_priority_fee_per_gas, new_block_filter, new_filter, not_supported,
     raw_transaction_by_block_and_index, raw_transaction_by_hash, send_raw_transaction, storage_at,
-    subscribe, transaction_by_block_and_index, transaction_by_hash, transaction_receipt,
+    subscribe, syncing, transaction_by_block_and_index, transaction_by_hash, transaction_receipt,
     uncle_block, uncle_count, uninstall_filter, unsubscribe,
 };
 
@@ -66,7 +66,7 @@ where
         // Unsupported methods
         // ---
         .route("protocolVersion", not_supported)
-        .route("syncing", not_supported)
+        .route("syncing", syncing::<H>)
         .route("gasPrice", gas_price::<H>)
         .route("maxPriorityFeePerGas", max_priority_fee_per_gas::<H>)
         .route("feeHistory", fee_history::<H>)

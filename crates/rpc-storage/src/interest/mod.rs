@@ -35,6 +35,7 @@
 //! [`DashMap`]: dashmap::DashMap
 //! [`DashMap::retain`]: dashmap::DashMap::retain
 
+mod buffer;
 mod filters;
 pub(crate) use filters::{FilterManager, FilterOutput};
 mod kind;
