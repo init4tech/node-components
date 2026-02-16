@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 signet-block-processor.workspace = true
+signet-cold.workspace = true
 signet-extract.workspace = true
 signet-genesis.workspace = true
 signet-node-config.workspace = true

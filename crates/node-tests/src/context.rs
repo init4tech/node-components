@@ -17,7 +17,7 @@ use alloy::{
 use reth::transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction};
 use reth_exex_test_utils::{Adapter, TestExExHandle};
 use reth_node_api::FullNodeComponents;
-use signet_cold::{BlockData, ColdStorageReadHandle, mem::MemColdBackend};
+use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
@@ -146,15 +146,6 @@ impl SignetTestContext {
         let storage =
             Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
 
-        // Write genesis block to cold storage so fee_history and other
-        // cold-backed RPC endpoints can find block 0.
-        {
-            let reader = storage.reader().unwrap();
-            let genesis_header = reader.get_header(0).unwrap().unwrap();
-            let genesis_block = BlockData::new(genesis_header, vec![], vec![], vec![], None);
-            storage.cold().append_block(genesis_block).await.unwrap();
-        }
-
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
@@ -162,6 +153,7 @@ impl SignetTestContext {
             .with_storage(Arc::clone(&storage))
             .with_alias_oracle(Arc::clone(&alias_oracle))
             .build()
+            .await
             .unwrap();
 
         // Spawn the node, and wait for it to indicate RPC readiness.

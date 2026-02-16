@@ -6,7 +6,8 @@ use reth::{primitives::EthPrimitives, providers::StateProviderFactory};
 use reth_exex::ExExContext;
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use signet_block_processor::AliasOracleFactory;
-use signet_hot::db::UnsafeDbWrite;
+use signet_cold::BlockData;
+use signet_hot::db::{HotDbRead, UnsafeDbWrite};
 use signet_node_config::SignetNodeConfig;
 use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
 use std::sync::Arc;
@@ -114,23 +115,37 @@ where
 {
     /// Prebuild checks for the signet node builder. Shared by all build
     /// commands.
-    fn prebuild(&mut self) -> eyre::Result<()> {
+    async fn prebuild(&mut self) -> eyre::Result<()> {
         self.client.get_or_insert_default();
         self.ctx.as_ref().ok_or_eyre("Launch context must be set")?;
         let storage = self.storage.as_ref().ok_or_eyre("Storage must be set")?;
 
-        // Check if genesis is loaded
+        // Load genesis into hot storage if absent.
         let reader = storage.reader()?;
-        let has_genesis = reader.has_block(0)?;
+        let has_hot_genesis = reader.has_block(0)?;
         drop(reader);
 
-        if !has_genesis {
+        if !has_hot_genesis {
             let genesis = self.config.genesis();
             let hardforks = signet_genesis::genesis_hardforks(genesis);
             let writer = storage.hot().writer()?;
             writer.load_genesis(genesis, &hardforks)?;
             writer.commit()?;
             info!("loaded genesis into hot storage");
+        }
+
+        // Load genesis into cold storage if absent. Hot genesis may have
+        // been loaded externally (e.g. test harness with custom allocs),
+        // so we check cold independently.
+        let has_cold_genesis = storage.cold_reader().get_latest_block().await?.is_some();
+        if !has_cold_genesis {
+            let reader = storage.reader()?;
+            let genesis_header =
+                reader.get_header(0)?.ok_or_eyre("genesis header missing from hot storage")?;
+            drop(reader);
+            let genesis_block = BlockData::new(genesis_header, vec![], vec![], vec![], None);
+            storage.cold().append_block(genesis_block).await?;
+            info!("loaded genesis into cold storage");
         }
 
         Ok(())
@@ -149,14 +164,10 @@ where
     /// - Runs prebuild checks.
     /// - Inits storage from genesis if needed.
     /// - Creates a default `AliasOracleFactory` from the host DB.
-    ///
-    /// # Panics
-    ///
-    /// If called outside a tokio runtime.
-    pub fn build(
+    pub async fn build(
         mut self,
     ) -> eyre::Result<(SignetNode<Host, H>, tokio::sync::watch::Receiver<NodeStatus>)> {
-        self.prebuild()?;
+        self.prebuild().await?;
         let ctx = self.ctx.unwrap();
         let provider = ctx.provider().clone();
         let alias_oracle: Box<dyn StateProviderFactory> = Box::new(provider);
@@ -183,14 +194,10 @@ where
     ///
     /// - Runs prebuild checks.
     /// - Inits storage from genesis if needed.
-    ///
-    /// # Panics
-    ///
-    /// If called outside a tokio runtime.
-    pub fn build(
+    pub async fn build(
         mut self,
     ) -> eyre::Result<(SignetNode<Host, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
-        self.prebuild()?;
+        self.prebuild().await?;
         SignetNode::new_unsafe(
             self.ctx.unwrap(),
             self.config,
