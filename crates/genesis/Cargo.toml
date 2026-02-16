@@ -14,4 +14,5 @@ init4-bin-base.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 signet-constants.workspace = true
+signet-evm.workspace = true
 thiserror.workspace = true

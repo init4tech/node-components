@@ -22,9 +22,7 @@ use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
 use signet_node::{NodeStatus, SignetNodeBuilder};
 use signet_node_config::test_utils::test_config;
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
-use signet_storage_types::{
-    Account, BlockNumberList, DbSignetEvent, EthereumHardfork, RecoveredTx, SealedHeader,
-};
+use signet_storage_types::{Account, BlockNumberList, DbSignetEvent, RecoveredTx, SealedHeader};
 use signet_test_utils::contracts::counter::COUNTER_DEPLOY_CODE;
 use signet_types::constants::{HostPermitted, RollupPermitted, SignetSystemConstants};
 use signet_zenith::{HostOrders::OrdersInstance, RollupPassage::RollupPassageInstance};
@@ -111,23 +109,9 @@ impl SignetTestContext {
 
         // Load genesis into hot storage
         {
+            let hardforks = signet_genesis::genesis_hardforks(cfg.genesis());
             let writer = hot.writer().unwrap();
-            writer.load_genesis(cfg.genesis(), &EthereumHardfork::Paris).unwrap();
-            writer.commit().unwrap();
-        }
-
-        // Patch genesis header to include base_fee_per_gas from the genesis
-        // config. `load_genesis()` doesn't copy this field to the stored
-        // header, which breaks EIP-1559 gas estimation via the RPC.
-        if let Some(base_fee) = cfg.genesis().base_fee_per_gas {
-            let sealed = {
-                let reader = hot.reader().unwrap();
-                signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().unwrap()
-            };
-            let mut header = sealed.into_inner();
-            header.base_fee_per_gas = Some(base_fee as u64);
-            let writer = hot.writer().unwrap();
-            writer.put_header(&SealedHeader::new(header)).unwrap();
+            writer.load_genesis(cfg.genesis(), &hardforks).unwrap();
             writer.commit().unwrap();
         }
 

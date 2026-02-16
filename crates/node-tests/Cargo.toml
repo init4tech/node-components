@@ -15,6 +15,7 @@ signet-node-config = { workspace = true, features = ["test_utils"] }
 signet-cold = { workspace = true, features = ["in-memory"] }
 signet-constants.workspace = true
 signet-evm.workspace = true
+signet-genesis.workspace = true
 signet-hot = { workspace = true, features = ["in-memory"] }
 signet-storage.workspace = true
 signet-storage-types.workspace = true
@@ -35,7 +36,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-signet-genesis.workspace = true
-
 serde_json.workspace = true
 serial_test = "3.2.0"

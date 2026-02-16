@@ -11,11 +11,11 @@ repository.workspace = true
 [dependencies]
 signet-block-processor.workspace = true
 signet-extract.workspace = true
+signet-genesis.workspace = true
 signet-node-config.workspace = true
 signet-rpc.workspace = true
 signet-hot.workspace = true
 signet-storage.workspace = true
-signet-storage-types.workspace = true
 
 signet-blobber.workspace = true
 signet-tx-cache.workspace = true

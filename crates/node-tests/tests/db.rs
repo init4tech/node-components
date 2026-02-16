@@ -4,7 +4,6 @@ use signet_hot::{db::UnsafeDbWrite, mem::MemKv};
 use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
-use signet_storage_types::EthereumHardfork;
 use std::sync::Arc;
 
 #[serial]
@@ -20,8 +19,9 @@ async fn test_genesis() {
     let cancel_token = CancellationToken::new();
     let hot = MemKv::new();
     {
+        let hardforks = signet_genesis::genesis_hardforks(cfg.genesis());
         let writer = hot.writer().unwrap();
-        writer.load_genesis(cfg.genesis(), &EthereumHardfork::Paris).unwrap();
+        writer.load_genesis(cfg.genesis(), &hardforks).unwrap();
         writer.commit().unwrap();
     }
 
@@ -40,6 +40,7 @@ async fn test_genesis() {
         signet_hot::db::HotDbRead::get_header(&reader, 0).unwrap().expect("missing genesis header");
     let zero_hash = alloy::primitives::B256::ZERO;
     assert_eq!(header.parent_hash, zero_hash);
+    assert_eq!(header.base_fee_per_gas, Some(0x3b9aca00));
 
     cancel_token.cancel();
 }
