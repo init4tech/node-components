@@ -34,6 +34,7 @@ async fn test_genesis() {
         .with_ctx(ctx)
         .with_storage(Arc::clone(&storage))
         .build()
+        .await
         .unwrap();
 
     let reader = storage.reader().unwrap();
