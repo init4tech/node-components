@@ -16,12 +16,6 @@ pub(crate) enum InterestKind {
 }
 
 impl InterestKind {
-    /// True if this is a log filter.
-    #[allow(dead_code)]
-    pub(crate) const fn is_filter(&self) -> bool {
-        matches!(self, Self::Log(_))
-    }
-
     /// True if this is a block filter.
     pub(crate) const fn is_block(&self) -> bool {
         matches!(self, Self::Block)

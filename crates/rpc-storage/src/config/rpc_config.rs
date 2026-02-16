@@ -15,6 +15,16 @@ use std::time::Duration;
 /// // Use defaults (matches reth defaults).
 /// let config = StorageRpcConfig::default();
 /// assert_eq!(config.rpc_gas_cap, 30_000_000);
+///
+/// // Use the builder to customise individual fields.
+/// let config = StorageRpcConfig::builder()
+///     .rpc_gas_cap(50_000_000)
+///     .max_blocks_per_filter(5_000)
+///     .build();
+/// assert_eq!(config.rpc_gas_cap, 50_000_000);
+/// assert_eq!(config.max_blocks_per_filter, 5_000);
+/// // Other fields retain their defaults.
+/// assert_eq!(config.max_logs_per_response, 20_000);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct StorageRpcConfig {
@@ -83,6 +93,13 @@ pub struct StorageRpcConfig {
     pub default_bundle_timeout_ms: u64,
 }
 
+impl StorageRpcConfig {
+    /// Create a new builder with all fields set to their defaults.
+    pub fn builder() -> StorageRpcConfigBuilder {
+        StorageRpcConfigBuilder::default()
+    }
+}
+
 impl Default for StorageRpcConfig {
     fn default() -> Self {
         Self {
@@ -98,5 +115,86 @@ impl Default for StorageRpcConfig {
             max_block_history: 1024,
             default_bundle_timeout_ms: 1000,
         }
+    }
+}
+
+/// Builder for [`StorageRpcConfig`].
+///
+/// All fields default to the same values as [`StorageRpcConfig::default`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StorageRpcConfigBuilder {
+    inner: StorageRpcConfig,
+}
+
+impl StorageRpcConfigBuilder {
+    /// Set the maximum gas for `eth_call` and `eth_estimateGas`.
+    pub const fn rpc_gas_cap(mut self, cap: u64) -> Self {
+        self.inner.rpc_gas_cap = cap;
+        self
+    }
+
+    /// Set the maximum block range per `eth_getLogs` query.
+    pub const fn max_blocks_per_filter(mut self, max: u64) -> Self {
+        self.inner.max_blocks_per_filter = max;
+        self
+    }
+
+    /// Set the maximum number of logs returned per response.
+    pub const fn max_logs_per_response(mut self, max: usize) -> Self {
+        self.inner.max_logs_per_response = max;
+        self
+    }
+
+    /// Set the maximum wall-clock time for a single log query.
+    pub const fn max_log_query_deadline(mut self, deadline: Duration) -> Self {
+        self.inner.max_log_query_deadline = deadline;
+        self
+    }
+
+    /// Set the maximum concurrent tracing/debug requests.
+    pub const fn max_tracing_requests(mut self, max: usize) -> Self {
+        self.inner.max_tracing_requests = max;
+        self
+    }
+
+    /// Set the time-to-live for stale filters and subscriptions.
+    pub const fn stale_filter_ttl(mut self, ttl: Duration) -> Self {
+        self.inner.stale_filter_ttl = ttl;
+        self
+    }
+
+    /// Set the number of recent blocks for gas price suggestions.
+    pub const fn gas_oracle_block_count(mut self, count: u64) -> Self {
+        self.inner.gas_oracle_block_count = count;
+        self
+    }
+
+    /// Set the percentile of effective tips for gas price suggestions.
+    pub const fn gas_oracle_percentile(mut self, percentile: f64) -> Self {
+        self.inner.gas_oracle_percentile = percentile;
+        self
+    }
+
+    /// Set the maximum header history for `eth_feeHistory`.
+    pub const fn max_header_history(mut self, max: u64) -> Self {
+        self.inner.max_header_history = max;
+        self
+    }
+
+    /// Set the maximum block history for `eth_feeHistory`.
+    pub const fn max_block_history(mut self, max: u64) -> Self {
+        self.inner.max_block_history = max;
+        self
+    }
+
+    /// Set the default bundle simulation timeout in milliseconds.
+    pub const fn default_bundle_timeout_ms(mut self, ms: u64) -> Self {
+        self.inner.default_bundle_timeout_ms = ms;
+        self
+    }
+
+    /// Build the configuration.
+    pub const fn build(self) -> StorageRpcConfig {
+        self.inner
     }
 }

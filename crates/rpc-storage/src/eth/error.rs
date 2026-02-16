@@ -21,6 +21,9 @@ pub enum EthError {
     /// Block not found.
     #[error("block not found: {0}")]
     BlockNotFound(BlockId),
+    /// Receipt found but the corresponding transaction is missing.
+    #[error("receipt found but transaction missing")]
+    TransactionMissing,
     /// EVM execution error.
     #[error("evm: {0}")]
     Evm(String),

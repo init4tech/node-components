@@ -605,10 +605,31 @@ async fn test_get_logs_empty() {
 #[tokio::test]
 async fn test_not_supported() {
     let h = TestHarness::new(0).await;
-    let resp = rpc_call_raw(&h.app, "eth_syncing", json!([])).await;
+    let resp = rpc_call_raw(&h.app, "eth_protocolVersion", json!([])).await;
     assert!(resp.get("error").is_some());
     let msg = resp["error"]["message"].as_str().unwrap();
     assert!(msg.contains("not found"), "unexpected error: {msg}");
+}
+
+#[tokio::test]
+async fn test_syncing_not_syncing() {
+    let h = TestHarness::new(0).await;
+    let result = rpc_call(&h.app, "eth_syncing", json!([])).await;
+    assert_eq!(result, json!(false));
+}
+
+#[tokio::test]
+async fn test_syncing_in_progress() {
+    let h = TestHarness::new(0).await;
+    h.tags.set_sync_status(signet_rpc_storage::SyncStatus {
+        starting_block: 0,
+        current_block: 50,
+        highest_block: 100,
+    });
+    let result = rpc_call(&h.app, "eth_syncing", json!([])).await;
+    assert_eq!(result["starting_block"], json!("0x0"));
+    assert_eq!(result["current_block"], json!("0x32"));
+    assert_eq!(result["highest_block"], json!("0x64"));
 }
 
 #[tokio::test]

@@ -110,7 +110,7 @@ where
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn_blocking(fut))
+    await_handler!(@response_option hctx.spawn(fut))
 }
 
 /// `debug_traceTransaction` handler.
@@ -202,5 +202,5 @@ where
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn_blocking(fut))
+    await_handler!(@response_option hctx.spawn(fut))
 }

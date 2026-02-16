@@ -1,12 +1,13 @@
 //! Subscription management for `eth_subscribe` / `eth_unsubscribe`.
 
-use crate::interest::{InterestKind, NewBlockNotification};
+use crate::interest::{
+    InterestKind, NewBlockNotification,
+    buffer::{EventBuffer, EventItem},
+};
 use ajj::HandlerCtx;
-use alloy::{primitives::U64, rpc::types::Log};
+use alloy::primitives::U64;
 use dashmap::DashMap;
 use std::{
-    cmp::min,
-    collections::VecDeque,
     future::pending,
     sync::{
         Arc, Weak,
@@ -18,15 +19,8 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 use tracing::{Instrument, debug, debug_span, enabled, trace};
 
-/// Either type for subscription outputs.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(untagged)]
-pub(crate) enum Either {
-    /// A log entry.
-    Log(Box<Log>),
-    /// A block header.
-    Block(Box<alloy::rpc::types::Header>),
-}
+/// Buffer for subscription outputs: log entries or block headers.
+pub(crate) type SubscriptionBuffer = EventBuffer<alloy::rpc::types::Header>;
 
 /// JSON-RPC subscription notification envelope.
 #[derive(serde::Serialize)]
@@ -39,77 +33,8 @@ struct SubscriptionNotification<'a> {
 /// Params field of a subscription notification.
 #[derive(serde::Serialize)]
 struct SubscriptionParams<'a> {
-    result: &'a Either,
+    result: &'a EventItem<alloy::rpc::types::Header>,
     subscription: U64,
-}
-
-/// Buffer for subscription outputs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SubscriptionBuffer {
-    /// Log buffer.
-    Log(VecDeque<Log>),
-    /// Block header buffer.
-    Block(VecDeque<alloy::rpc::types::Header>),
-}
-
-impl SubscriptionBuffer {
-    /// True if the buffer is empty.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Get the number of items in the buffer.
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Self::Log(buf) => buf.len(),
-            Self::Block(buf) => buf.len(),
-        }
-    }
-
-    /// Extend this buffer with another buffer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the buffers are of different types.
-    pub(crate) fn extend(&mut self, other: Self) {
-        match (self, other) {
-            (Self::Log(buf), Self::Log(other)) => buf.extend(other),
-            (Self::Block(buf), Self::Block(other)) => buf.extend(other),
-            _ => panic!("mismatched buffer types"),
-        }
-    }
-
-    /// Pop the front of the buffer.
-    pub(crate) fn pop_front(&mut self) -> Option<Either> {
-        match self {
-            Self::Log(buf) => buf.pop_front().map(|log| Either::Log(Box::new(log))),
-            Self::Block(buf) => buf.pop_front().map(|header| Either::Block(Box::new(header))),
-        }
-    }
-}
-
-impl From<Vec<Log>> for SubscriptionBuffer {
-    fn from(logs: Vec<Log>) -> Self {
-        Self::Log(logs.into())
-    }
-}
-
-impl FromIterator<Log> for SubscriptionBuffer {
-    fn from_iter<T: IntoIterator<Item = Log>>(iter: T) -> Self {
-        Self::Log(iter.into_iter().collect())
-    }
-}
-
-impl From<Vec<alloy::rpc::types::Header>> for SubscriptionBuffer {
-    fn from(headers: Vec<alloy::rpc::types::Header>) -> Self {
-        Self::Block(headers.into())
-    }
-}
-
-impl FromIterator<alloy::rpc::types::Header> for SubscriptionBuffer {
-    fn from_iter<T: IntoIterator<Item = alloy::rpc::types::Header>>(iter: T) -> Self {
-        Self::Block(iter.into_iter().collect())
-    }
 }
 
 /// Tracks ongoing subscription tasks.
@@ -193,6 +118,7 @@ impl SubscriptionManagerInner {
 
         let id = self.next_id();
         let token = CancellationToken::new();
+        self.tasks.insert(id, token.clone());
         let task = SubscriptionTask {
             id,
             filter,
@@ -240,7 +166,7 @@ impl SubscriptionTask {
             let permit_fut = async {
                 if !notif_buffer.is_empty() {
                     ajj_ctx
-                        .permit_many(min(ajj_ctx.notification_capacity() / 2, notif_buffer.len()))
+                        .permit_many((ajj_ctx.notification_capacity() / 2).min(notif_buffer.len()))
                         .await
                 } else {
                     pending().await
@@ -330,8 +256,9 @@ impl SubCleanerTask {
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(self.interval);
-                if let Some(inner) = self.inner.upgrade() {
-                    inner.tasks.retain(|_, task| !task.is_cancelled());
+                match self.inner.upgrade() {
+                    Some(inner) => inner.tasks.retain(|_, task| !task.is_cancelled()),
+                    None => break,
                 }
             }
         });

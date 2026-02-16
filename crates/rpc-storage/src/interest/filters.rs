@@ -1,13 +1,12 @@
 //! Filter management for `eth_newFilter` / `eth_getFilterChanges`.
 
-use crate::interest::InterestKind;
+use crate::interest::{InterestKind, buffer::EventBuffer};
 use alloy::{
     primitives::{B256, U64},
-    rpc::types::{Filter, Log},
+    rpc::types::Filter,
 };
 use dashmap::{DashMap, mapref::one::RefMut};
 use std::{
-    collections::VecDeque,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -18,105 +17,8 @@ use tracing::trace;
 
 type FilterId = U64;
 
-/// Either type for filter outputs.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(untagged)]
-#[allow(dead_code)]
-pub(crate) enum Either {
-    /// Log
-    Log(Log),
-    /// Block hash
-    Block(B256),
-}
-
-/// The output of a filter.
-///
-/// This will be either a list of logs or a list of block hashes. Pending tx
-/// filters are not supported by Signet. For convenience, there is a special
-/// variant for empty results.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(untagged)]
-pub(crate) enum FilterOutput {
-    /// Empty output. Holds a `[(); 0]` to make sure it serializes as an empty
-    /// array.
-    Empty([(); 0]),
-    /// Logs
-    Log(VecDeque<Log>),
-    /// Block hashes
-    Block(VecDeque<B256>),
-}
-
-#[allow(dead_code)]
-impl FilterOutput {
-    /// Create an empty filter output.
-    pub(crate) const fn empty() -> Self {
-        Self::Empty([])
-    }
-
-    /// True if this is an empty filter output.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// The length of this filter output.
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Self::Empty(_) => 0,
-            Self::Log(logs) => logs.len(),
-            Self::Block(blocks) => blocks.len(),
-        }
-    }
-
-    /// Extend this filter output with another.
-    ///
-    /// # Panics
-    ///
-    /// If the two filter outputs are of different types.
-    pub(crate) fn extend(&mut self, other: Self) {
-        match (self, other) {
-            (Self::Log(logs), Self::Log(other_logs)) => logs.extend(other_logs),
-            (Self::Block(blocks), Self::Block(other_blocks)) => blocks.extend(other_blocks),
-            (_, Self::Empty(_)) => (),
-            (this @ Self::Empty(_), other) => *this = other,
-            _ => panic!("attempted to mix log and block outputs"),
-        }
-    }
-
-    /// Pop a value from the front of the filter output.
-    pub(crate) fn pop_front(&mut self) -> Option<Either> {
-        match self {
-            Self::Log(logs) => logs.pop_front().map(Either::Log),
-            Self::Block(blocks) => blocks.pop_front().map(Either::Block),
-            Self::Empty(_) => None,
-        }
-    }
-}
-
-impl From<Vec<B256>> for FilterOutput {
-    fn from(block_hashes: Vec<B256>) -> Self {
-        Self::Block(block_hashes.into())
-    }
-}
-
-impl From<Vec<Log>> for FilterOutput {
-    fn from(logs: Vec<Log>) -> Self {
-        Self::Log(logs.into())
-    }
-}
-
-impl FromIterator<Log> for FilterOutput {
-    fn from_iter<T: IntoIterator<Item = Log>>(iter: T) -> Self {
-        let inner: VecDeque<_> = iter.into_iter().collect();
-        if inner.is_empty() { Self::empty() } else { Self::Log(inner) }
-    }
-}
-
-impl FromIterator<B256> for FilterOutput {
-    fn from_iter<T: IntoIterator<Item = B256>>(iter: T) -> Self {
-        let inner: VecDeque<_> = iter.into_iter().collect();
-        if inner.is_empty() { Self::empty() } else { Self::Block(inner) }
-    }
-}
+/// Output of a polled filter: log entries or block hashes.
+pub(crate) type FilterOutput = EventBuffer<B256>;
 
 /// An active filter.
 ///
@@ -142,12 +44,6 @@ impl core::fmt::Display for ActiveFilter {
 }
 
 impl ActiveFilter {
-    /// True if this is a log filter.
-    #[allow(dead_code)]
-    pub(crate) const fn is_filter(&self) -> bool {
-        self.kind.is_filter()
-    }
-
     /// True if this is a block filter.
     pub(crate) const fn is_block(&self) -> bool {
         self.kind.is_block()
@@ -313,7 +209,7 @@ impl FilterCleanTask {
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-//.
+//
 // The above copyright notice and this permission notice shall be included in
 // all copies or substantial portions of the Software.
 //

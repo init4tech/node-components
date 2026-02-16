@@ -40,9 +40,9 @@ pub(crate) struct EvmBlockContext<Db> {
 ///
 /// # Construction
 ///
-/// ```ignore
-/// let ctx = StorageRpcCtx::new(storage, constants, tags, Some(tx_cache), StorageRpcConfig::default());
-/// ```
+/// Call [`StorageRpcCtx::new`] with unified storage, system constants,
+/// block tags, an optional [`TxCache`], [`StorageRpcConfig`], and a
+/// broadcast sender for [`NewBlockNotification`]s.
 #[derive(Debug)]
 pub struct StorageRpcCtx<H: HotKv> {
     inner: Arc<StorageRpcCtxInner<H>>,
@@ -265,7 +265,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
         if pending {
             header.parent_hash = parent_hash;
             header.number += 1;
-            header.timestamp += 12;
+            header.timestamp += self.constants().host().slot_duration();
             header.base_fee_per_gas =
                 header.next_block_base_fee(alloy::eips::eip1559::BaseFeeParams::ethereum());
             header.gas_limit = self.config().rpc_gas_cap;
