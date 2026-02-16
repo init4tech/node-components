@@ -9,7 +9,7 @@
 use alloy::{consensus::Transaction, primitives::U256};
 use signet_cold::{ColdStorageError, ColdStorageReadHandle, HeaderSpecifier};
 
-use crate::config::StorageRpcConfig;
+use crate::config::{GasOracleCache, StorageRpcConfig};
 
 /// Suggest a tip cap based on recent transaction tips.
 ///
@@ -20,11 +20,20 @@ use crate::config::StorageRpcConfig;
 ///
 /// Returns `default_gas_price` (default 1 Gwei) when no qualifying
 /// transactions are found.
+///
+/// Uses the provided `cache` to avoid redundant cold storage reads
+/// when the tip has already been computed for the current block.
 pub(crate) async fn suggest_tip_cap(
     cold: &ColdStorageReadHandle,
     latest: u64,
     config: &StorageRpcConfig,
+    cache: &GasOracleCache,
 ) -> Result<U256, ColdStorageError> {
+    // Check cache first - return early on hit
+    if let Some(cached_tip) = cache.get(latest) {
+        return Ok(cached_tip);
+    }
+
     let block_count = config.gas_oracle_block_count.min(latest + 1);
     let start = latest.saturating_sub(block_count - 1);
 
@@ -64,7 +73,9 @@ pub(crate) async fn suggest_tip_cap(
     }
 
     if all_tips.is_empty() {
-        return Ok(config.default_gas_price.map_or(U256::ZERO, U256::from));
+        let default_price = config.default_gas_price.map_or(U256::ZERO, U256::from);
+        cache.set(latest, default_price);
+        return Ok(default_price);
     }
 
     all_tips.sort_unstable();
@@ -77,6 +88,9 @@ pub(crate) async fn suggest_tip_cap(
     if let Some(max) = config.max_price {
         price = price.min(U256::from(max));
     }
+
+    // Store result in cache before returning
+    cache.set(latest, price);
 
     Ok(price)
 }
