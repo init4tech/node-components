@@ -18,8 +18,7 @@ pub(crate) mod types;
 
 use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
-use signet_hot::HotKv;
-use signet_hot::model::HotKvRead;
+use signet_hot::{HotKv, model::HotKvRead};
 use trevm::revm::database::DBErrorMarker;
 
 /// Instantiate the `eth` API router backed by storage.
@@ -62,14 +61,22 @@ where
         .route("estimateGas", estimate_gas::<H>)
         .route("sendRawTransaction", send_raw_transaction::<H>)
         .route("getLogs", get_logs::<H>)
-        // ---
-        // Unsupported methods
-        // ---
-        .route("protocolVersion", not_supported)
         .route("syncing", syncing::<H>)
         .route("gasPrice", gas_price::<H>)
         .route("maxPriorityFeePerGas", max_priority_fee_per_gas::<H>)
         .route("feeHistory", fee_history::<H>)
+        .route("createAccessList", create_access_list::<H>)
+        .route("newFilter", new_filter::<H>)
+        .route("newBlockFilter", new_block_filter::<H>)
+        .route("uninstallFilter", uninstall_filter::<H>)
+        .route("getFilterChanges", get_filter_changes::<H>)
+        .route("getFilterLogs", get_filter_changes::<H>)
+        .route("subscribe", subscribe::<H>)
+        .route("unsubscribe", unsubscribe::<H>)
+        // ---
+        // Unsupported methods
+        // ---
+        .route("protocolVersion", not_supported)
         .route("coinbase", not_supported)
         .route("accounts", not_supported)
         .route("blobBaseFee", not_supported)
@@ -87,13 +94,5 @@ where
         .route("signTransaction", not_supported)
         .route("signTypedData", not_supported)
         .route("getProof", not_supported)
-        .route("createAccessList", create_access_list::<H>)
-        .route("newFilter", new_filter::<H>)
-        .route("newBlockFilter", new_block_filter::<H>)
         .route("newPendingTransactionFilter", not_supported)
-        .route("uninstallFilter", uninstall_filter::<H>)
-        .route("getFilterChanges", get_filter_changes::<H>)
-        .route("getFilterLogs", get_filter_changes::<H>)
-        .route("subscribe", subscribe::<H>)
-        .route("unsubscribe", unsubscribe::<H>)
 }

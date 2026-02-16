@@ -9,8 +9,7 @@ mod types;
 
 use crate::config::StorageRpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
-use signet_hot::HotKv;
-use signet_hot::model::HotKvRead;
+use signet_hot::{HotKv, model::HotKvRead};
 use trevm::revm::database::DBErrorMarker;
 
 /// Instantiate a `debug` API router backed by storage.

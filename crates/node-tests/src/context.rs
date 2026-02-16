@@ -271,11 +271,6 @@ impl SignetTestContext {
         self.cold().get_transactions_in_block(block).await.unwrap()
     }
 
-    /// Get signet events in a range of blocks from cold storage.
-    pub async fn signet_events_in_range(&self, start: u64, end: u64) -> Vec<DbSignetEvent> {
-        self.cold().get_signet_events_in_range(start, end).await.unwrap()
-    }
-
     /// Get signet events in a single block from cold storage.
     pub async fn signet_events_in_block(&self, block: u64) -> Vec<DbSignetEvent> {
         self.cold().get_signet_events_in_block(block).await.unwrap()
@@ -350,12 +345,16 @@ impl SignetTestContext {
             // `append_blocks()` dispatches to cold asynchronously, so we
             // poll until cold storage has the expected block.
             let cold = self.storage.cold_reader();
-            loop {
-                match cold.get_latest_block().await {
-                    Ok(Some(latest)) if latest >= expected_height => break,
-                    _ => tokio::task::yield_now().await,
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    match cold.get_latest_block().await {
+                        Ok(Some(latest)) if latest >= expected_height => break,
+                        _ => tokio::task::yield_now().await,
+                    }
                 }
-            }
+            })
+            .await
+            .expect("cold storage did not reach expected height within 30s");
 
             // cheeky little check that the RPC is correct :)
             assert_eq!(self.alloy_provider.get_block_number().await.unwrap(), expected_height);

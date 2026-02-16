@@ -5,8 +5,7 @@ use endpoints::{call_bundle, send_order};
 pub(crate) mod error;
 
 use crate::config::StorageRpcCtx;
-use signet_hot::HotKv;
-use signet_hot::model::HotKvRead;
+use signet_hot::{HotKv, model::HotKvRead};
 use trevm::revm::database::DBErrorMarker;
 
 /// Instantiate a `signet` API router backed by storage.

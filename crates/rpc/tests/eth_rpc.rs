@@ -9,6 +9,7 @@ use alloy::{
         TxType, transaction::Recovered,
     },
     primitives::{Address, B256, Log as PrimitiveLog, LogData, TxKind, U256, address, logs_bloom},
+    signers::{SignerSync, local::PrivateKeySigner},
 };
 use axum::body::Body;
 use http::Request;
@@ -18,11 +19,12 @@ use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
 use signet_rpc::{BlockTags, NewBlockNotification, StorageRpcConfig, StorageRpcCtx};
 use signet_storage::UnifiedStorage;
-use signet_storage_types::{Receipt, SealedHeader};
+use signet_storage_types::{Account, Receipt, SealedHeader};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
+use trevm::revm::bytecode::Bytecode;
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -137,8 +139,6 @@ fn make_signed_tx_with_gas_price(
     nonce: u64,
     gas_price: u128,
 ) -> (signet_storage_types::RecoveredTx, Address) {
-    use alloy::signers::{SignerSync, local::PrivateKeySigner};
-
     let signer = PrivateKeySigner::from_signing_key(
         alloy::signers::k256::ecdsa::SigningKey::from_slice(
             &B256::repeat_byte((nonce as u8).wrapping_add(1)).0,
@@ -411,9 +411,6 @@ async fn test_get_block_receipts() {
 
 /// Populate hot storage with a test account.
 fn setup_hot_account(hot: &MemKv) {
-    use signet_storage_types::Account;
-    use trevm::revm::bytecode::Bytecode;
-
     let writer = hot.writer().unwrap();
 
     let code = alloy::primitives::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
@@ -622,7 +619,7 @@ async fn test_syncing_not_syncing() {
 #[tokio::test]
 async fn test_syncing_in_progress() {
     let h = TestHarness::new(0).await;
-    h.tags.set_sync_status(signet_rpc_storage::SyncStatus {
+    h.tags.set_sync_status(signet_rpc::SyncStatus {
         starting_block: 0,
         current_block: 50,
         highest_block: 100,
@@ -818,8 +815,6 @@ async fn test_uninstall_filter() {
 /// The genesis header at block 0 is required so `revm_reader_at_height`
 /// can validate height bounds. Without it, MemKv returns `NoBlocks`.
 fn setup_hot_for_evm(hot: &MemKv, addr: Address, balance: U256) {
-    use signet_storage_types::{Account, SealedHeader};
-
     let writer = hot.writer().unwrap();
 
     // Write a genesis header so the hot storage tracks block 0.

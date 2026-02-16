@@ -16,8 +16,7 @@ use alloy::{
 };
 use itertools::Itertools;
 use signet_evm::EvmErrored;
-use signet_hot::HotKv;
-use signet_hot::model::HotKvRead;
+use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::MagicSig;
 use tracing::Instrument;
 use trevm::revm::database::DBErrorMarker;

@@ -51,22 +51,19 @@ impl InterestKind {
             .enumerate()
             .flat_map(|(tx_idx, receipt)| {
                 let tx_hash = *notif.transactions[tx_idx].tx_hash();
-                receipt.inner.logs.iter().enumerate().filter_map(move |(log_idx, log)| {
-                    if filter.matches(log) {
-                        Some(Log {
-                            inner: log.clone(),
-                            block_hash: Some(block_hash),
-                            block_number: Some(block_number),
-                            block_timestamp: Some(block_timestamp),
-                            transaction_hash: Some(tx_hash),
-                            transaction_index: Some(tx_idx as u64),
-                            log_index: Some(log_idx as u64),
-                            removed: false,
-                        })
-                    } else {
-                        None
-                    }
-                })
+                receipt.inner.logs.iter().map(move |log| (tx_idx, tx_hash, log))
+            })
+            .enumerate()
+            .filter(|(_, (_, _, log))| filter.matches(log))
+            .map(|(log_idx, (tx_idx, tx_hash, log))| Log {
+                inner: log.clone(),
+                block_hash: Some(block_hash),
+                block_number: Some(block_number),
+                block_timestamp: Some(block_timestamp),
+                transaction_hash: Some(tx_hash),
+                transaction_index: Some(tx_idx as u64),
+                log_index: Some(log_idx as u64),
+                removed: false,
             })
             .collect();
 

@@ -159,6 +159,7 @@ where
     /// ===========================
     ///
     /// Run the EVM for a single block extraction.
+    #[instrument(skip_all)]
     async fn run_evm(
         &self,
         block_extracts: &Extracts<'_, ExtractableChainShim<'_>>,
@@ -168,8 +169,9 @@ where
         let host_height = block_extracts.host_block.number();
         let timestamp = block_extracts.host_block.timestamp();
 
-        // Read the parent header from hot storage and convert to signet
-        // SealedHeader for the driver.
+        // TODO: this opens a second reader (revm_state opens the first). If a write
+        // occurs between the two, they could see different snapshots. Consider
+        // opening one reader at the start and threading it through.
         let parent_header = self
             .hot
             .reader()?
@@ -234,6 +236,7 @@ where
     }
 
     /// Build an [`ExecutedBlock`] from processor outputs.
+    #[instrument(skip_all)]
     fn build_executed_block(
         &self,
         extracts: &Extracts<'_, ExtractableChainShim<'_>>,
@@ -241,8 +244,10 @@ where
     ) -> eyre::Result<ExecutedBlock> {
         let BlockResult { sealed_block, execution_outcome, .. } = block_result;
 
-        // Header from the sealed block, converted to storage SealedHeader.
-        let header = sealed_block.block.header.header().clone().seal_slow();
+        // Header from the sealed block. Re-use the known hash to avoid
+        // recomputing it.
+        let hash = sealed_block.block.header.hash();
+        let header = sealed_block.block.header.header().clone().seal_unchecked(hash);
 
         // Bundle and receipts from execution outcome.
         let (bundle, receipt_vecs, _) = execution_outcome.into_parts();
@@ -269,20 +274,18 @@ where
             .collect();
 
         // Signet events with a single incrementing index across all types.
-        let mut signet_events = Vec::new();
-        let mut index: u64 = 0;
-        for enter in extracts.enters() {
-            signet_events.push(DbSignetEvent::Enter(index, enter));
-            index += 1;
-        }
-        for enter_token in extracts.enter_tokens() {
-            signet_events.push(DbSignetEvent::EnterToken(index, enter_token));
-            index += 1;
-        }
-        for transact in extracts.transacts() {
-            signet_events.push(DbSignetEvent::Transact(index, transact.clone()));
-            index += 1;
-        }
+        let signet_events: Vec<_> = extracts
+            .enters()
+            .map(|e| DbSignetEvent::Enter(0, e))
+            .chain(extracts.enter_tokens().map(|e| DbSignetEvent::EnterToken(0, e)))
+            .chain(extracts.transacts().map(|t| DbSignetEvent::Transact(0, t.clone())))
+            .enumerate()
+            .map(|(i, e)| match e {
+                DbSignetEvent::Enter(_, v) => DbSignetEvent::Enter(i as u64, v),
+                DbSignetEvent::EnterToken(_, v) => DbSignetEvent::EnterToken(i as u64, v),
+                DbSignetEvent::Transact(_, v) => DbSignetEvent::Transact(i as u64, v),
+            })
+            .collect();
 
         // Zenith header from extracts.
         let zenith_header = extracts.ru_header().map(DbZenithHeader::from);

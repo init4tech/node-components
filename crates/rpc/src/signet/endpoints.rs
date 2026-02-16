@@ -8,8 +8,7 @@ use crate::{
 use ajj::{HandlerCtx, ResponsePayload};
 use alloy::eips::BlockId;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
-use signet_hot::HotKv;
-use signet_hot::model::HotKvRead;
+use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::SignedOrder;
 use std::time::Duration;
 use tokio::select;

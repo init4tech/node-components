@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, instrument};
 use trevm::revm::database::DBErrorMarker;
 
-/// Make it easier to write some args
+/// Type alias for the host primitives.
 type PrimitivesOf<Host> = <<Host as FullNodeTypes>::Types as NodeTypes>::Primitives;
 type ExExNotification<Host> = reth_exex::ExExNotification<PrimitivesOf<Host>>;
 type Chain<Host> = reth::providers::Chain<PrimitivesOf<Host>>;
@@ -424,14 +424,14 @@ where
     /// Update the host node with the highest processed host height for the
     /// ExEx.
     fn update_highest_processed_height(&self, finalized_host_height: u64) -> eyre::Result<()> {
-        let finalized_host_header = self
+        let adjusted_height = finalized_host_height.saturating_sub(1);
+        let adjusted_header = self
             .host
             .provider()
-            .sealed_header(finalized_host_height)?
-            .expect("db inconsistent. no host header for finalized height");
+            .sealed_header(adjusted_height)?
+            .expect("db inconsistent. no host header for adjusted height");
 
-        let adjusted_height = finalized_host_header.number.saturating_sub(1);
-        let hash = finalized_host_header.hash();
+        let hash = adjusted_header.hash();
 
         debug!(finalized_host_height = adjusted_height, "Sending FinishedHeight notification");
         self.host.events.send(ExExEvent::FinishedHeight(alloy::eips::NumHash {
