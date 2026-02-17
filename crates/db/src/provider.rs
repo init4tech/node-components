@@ -163,8 +163,8 @@ where
         // Put journal hash into the DB
         self.tx_ref().put::<crate::JournalHashes>(block_number, journal_hash)?;
 
-        let block_hash = block.block.header.hash();
-        let block_header = block.block.header.header();
+        let block_hash = block.header.seal();
+        let block_header = block.header.inner();
 
         self.static_file_provider()
             .get_writer(block_number, StaticFileSegment::Headers)?
@@ -179,14 +179,14 @@ where
             .map(|(n, _)| n + 1)
             .unwrap_or_default();
         let first_tx_num = next_tx_num;
-        let tx_count = block.block.body.transactions.len() as u64;
+        let tx_count = block.transactions.len() as u64;
 
-        for (sender, transaction) in block.senders.iter().zip(block.block.body.transactions()) {
+        for (sender, transaction) in block.senders().zip(block.transactions()) {
             let hash = *transaction.hash();
             debug_assert_ne!(hash, B256::ZERO, "transaction hash is zero");
 
             if self.prune_modes_ref().sender_recovery.as_ref().is_none_or(|m| !m.is_full()) {
-                self.tx_ref().put::<tables::TransactionSenders>(next_tx_num, *sender)?;
+                self.tx_ref().put::<tables::TransactionSenders>(next_tx_num, sender)?;
             }
 
             if self.prune_modes_ref().transaction_lookup.is_none_or(|m| !m.is_full()) {
@@ -231,7 +231,7 @@ where
         // Increment block on static file header
         tx_writer.increment_block(block_number)?;
 
-        let tx_count = block.block.body.transactions.len() as u64;
+        let tx_count = block.transactions.len() as u64;
         let block_indices = StoredBlockBodyIndices { first_tx_num: next_tx_num, tx_count };
 
         // insert block meta
@@ -243,7 +243,7 @@ where
         }
 
         // Write transactions
-        for transaction in block.block.body.transactions() {
+        for transaction in block.transactions() {
             tx_writer.append_transaction(next_tx_num, transaction)?;
 
             // Increment transaction id for each transaction

@@ -59,8 +59,10 @@ impl From<RethRecovered> for RecoveredBlockShim {
 }
 
 impl HasTxns for RecoveredBlockShim {
-    fn transactions(&self) -> &[signet_types::primitives::TransactionSigned] {
-        &self.block.sealed_block().body().transactions
+    fn transactions(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &signet_types::primitives::TransactionSigned> {
+        self.block.sealed_block().body().transactions.iter()
     }
 }
 
