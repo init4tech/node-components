@@ -7,6 +7,7 @@ use alloy::{
     consensus::BlockHeader,
     primitives::{Address, B256, BlockNumber},
 };
+use reth::{core::primitives::StorageSlotKey, providers::ChangesetEntry};
 use reth::{
     primitives::StaticFileSegment,
     providers::{
@@ -21,7 +22,7 @@ use reth_db::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_prune_types::{MINIMUM_PRUNING_DISTANCE, PruneMode};
+use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode};
 use signet_evm::BlockResult;
 use signet_node_types::NodeTypesDbTrait;
 use signet_types::primitives::RecoveredBlock;
@@ -449,7 +450,9 @@ where
                 .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            self.unwind_storage_history_indices(changed_storages.iter().copied())?;
+            self.unwind_storage_history_indices(changed_storages.iter().map(|(bna, entry)| {
+                (*bna, ChangesetEntry { key: StorageSlotKey::plain(entry.key), value: entry.value })
+            }))?;
 
             // We also skip calculating the reverted root here.
         }
@@ -523,7 +526,9 @@ where
                 .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            self.unwind_storage_history_indices(changed_storages.iter().copied())?;
+            self.unwind_storage_history_indices(changed_storages.iter().map(|(bna, entry)| {
+                (*bna, ChangesetEntry { key: StorageSlotKey::plain(entry.key), value: entry.value })
+            }))?;
 
             // We also skip calculating the reverted root here.
         }
@@ -604,7 +609,7 @@ where
         // All receipts from the last 128 blocks are required for blockchain tree, even with
         // [`PruneSegment::ContractLogs`].
         let prunable_receipts =
-            PruneMode::Distance(MINIMUM_PRUNING_DISTANCE).should_prune(first_block, tip);
+            PruneMode::Distance(MINIMUM_UNWIND_SAFE_DISTANCE).should_prune(first_block, tip);
 
         for (idx, (receipts, first_tx_index)) in
             execution_outcome.receipts().iter().zip(block_indices).enumerate()

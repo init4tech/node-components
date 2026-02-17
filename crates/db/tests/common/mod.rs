@@ -35,5 +35,6 @@ pub fn create_test_provider_factory() -> ProviderFactory<SignetNodeTypes<TmpDb>>
     let sfp = StaticFileProvider::read_write(static_dir.keep()).expect("static file provider");
     let rocks_db = RocksDBProvider::builder(rocksdb_dir.keep()).build().unwrap();
 
-    ProviderFactory::new(db, chain_spec(), sfp, rocks_db).expect("provider factory")
+    ProviderFactory::new(db, chain_spec(), sfp, rocks_db, Default::default())
+        .expect("provider factory")
 }

@@ -106,9 +106,9 @@ impl<N: Pnt + ProviderNodeTypes<DB = Arc<mdbx::DatabaseEnv>>> TableViewer<()>
 
         self.factory.db_ref().view(|tx| {
             let table_db =
-                tx.inner.open_db(Some(self.args.table_name())).wrap_err("Could not open db.")?;
+                tx.inner().open_db(Some(self.args.table_name())).wrap_err("Could not open db.")?;
             let stats = tx
-                .inner
+                .inner()
                 .db_stat(table_db.dbi())
                 .wrap_err(format!("Could not find table: {}", stringify!($table)))?;
             let total_entries = stats.entries();
