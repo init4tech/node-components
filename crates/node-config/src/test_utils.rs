@@ -1,4 +1,4 @@
-use crate::SignetNodeConfig;
+use crate::{SignetNodeConfig, StorageConfig};
 use init4_bin_base::utils::calc::SlotCalculator;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
@@ -21,7 +21,7 @@ pub fn test_config() -> SignetNodeConfig {
 const TEST_CONFIG: SignetNodeConfig = SignetNodeConfig::new(
     BlobFetcherConfig::new(Cow::Borrowed("")),
     Cow::Borrowed("NOP"),
-    Cow::Borrowed("NOP"),
+    StorageConfig::new(Cow::Borrowed("NOP"), Cow::Borrowed("NOP")),
     None,
     31391, // NOP
     31392, // NOP
