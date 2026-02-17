@@ -287,8 +287,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
     ///
     /// For `Pending` block IDs, remaps to `Latest` and synthesizes a
     /// next-block header (incremented number, timestamp +12s, projected
-    /// base fee, gas limit from config). State is loaded at the latest
-    /// finalized block in both cases.
+    /// base fee). State is loaded at the latest block in both cases.
     pub(crate) fn resolve_evm_block(
         &self,
         id: BlockId,
@@ -311,7 +310,6 @@ impl<H: HotKv> StorageRpcCtx<H> {
             header.timestamp += self.constants().host().slot_duration();
             header.base_fee_per_gas =
                 header.next_block_base_fee(alloy::eips::eip1559::BaseFeeParams::ethereum());
-            header.gas_limit = self.config().rpc_gas_cap;
         }
 
         let spec_id = self.spec_id_for_header(&header);
