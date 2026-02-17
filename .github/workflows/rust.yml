@@ -3,7 +3,7 @@ name: CI # Continuous Integration
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 # simplest example of using the rust-base action
