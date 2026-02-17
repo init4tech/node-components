@@ -308,6 +308,8 @@ where
 
         let mut processed = false;
         for block_extracts in extracts.iter().filter(|e| e.ru_height > last_height) {
+            // Constructed per-block: hardforks must be rechecked each block,
+            // and the remaining fields are cheap (Arcs / Copy types).
             let hardforks = EthereumHardfork::active_hardforks(
                 &self.config.genesis().config,
                 block_extracts.host_block.number(),

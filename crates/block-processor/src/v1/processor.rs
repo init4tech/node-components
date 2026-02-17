@@ -165,7 +165,6 @@ where
             .get_header(ru_height.saturating_sub(1))?
             .wrap_err("parent ru block not present in DB")
             .inspect_err(|e| error!(%e))?;
-        let parent_header = signet_types::primitives::SealedHeader::new(parent_header.into_inner());
 
         let txns = match &block_extracts.submitted {
             Some(submitted) => {

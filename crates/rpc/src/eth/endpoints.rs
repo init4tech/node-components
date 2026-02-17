@@ -289,7 +289,7 @@ fn calculate_reward_percentiles(
     for &percentile in percentiles {
         let threshold = (gas_used as f64 * percentile / 100.0) as u64;
 
-        while tx_idx < tx_gas_and_tip.len() - 1 {
+        while tx_idx < tx_gas_and_tip.len() {
             cumulative_gas += tx_gas_and_tip[tx_idx].0;
             if cumulative_gas >= threshold {
                 break;
@@ -297,7 +297,8 @@ fn calculate_reward_percentiles(
             tx_idx += 1;
         }
 
-        result.push(tx_gas_and_tip[tx_idx].1);
+        let (_, tip) = tx_gas_and_tip.get(tx_idx).unwrap_or(tx_gas_and_tip.last().unwrap());
+        result.push(*tip);
     }
 
     result
