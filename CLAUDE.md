@@ -1,5 +1,10 @@
 # Signet Node Components
 
+## Branches
+
+The `main` branch is in maintenance and bug-fix mode. The `develop` branch
+contains current work.
+
 ## Commands
 
 - `cargo +nightly fmt` - format

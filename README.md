@@ -1,5 +1,8 @@
 # Signet Node Components
 
+> **Note:** The `main` branch is in maintenance and bug-fix mode. The
+> `develop` branch contains current work.
+
 A collection of components for building the Signet node. These components
 implement core node functionality, but are potentially indepedently useful.
 
