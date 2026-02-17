@@ -21,7 +21,5 @@ pub use node::SignetNode;
 
 mod rpc;
 
-mod serve;
-
 mod status;
 pub use status::NodeStatus;

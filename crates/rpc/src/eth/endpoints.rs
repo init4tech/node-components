@@ -730,11 +730,11 @@ where
     let span = trace_span!("run_call", block_id = %id);
 
     let task = async move {
-        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
+        let EvmBlockContext { header, db, spec_id } = response_tri!(ctx.resolve_evm_block(id));
 
-        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone());
+        trevm.set_spec_id(spec_id);
+        let trevm = trevm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())
@@ -813,11 +813,11 @@ where
     let span = trace_span!("eth_estimateGas", block_id = %id);
 
     let task = async move {
-        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
+        let EvmBlockContext { header, db, spec_id } = response_tri!(ctx.resolve_evm_block(id));
 
-        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone());
+        trevm.set_spec_id(spec_id);
+        let trevm = trevm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())
@@ -864,11 +864,11 @@ where
     let span = trace_span!("eth_createAccessList", block_id = %id);
 
     let task = async move {
-        let EvmBlockContext { header, db } = response_tri!(ctx.resolve_evm_block(id));
+        let EvmBlockContext { header, db, spec_id } = response_tri!(ctx.resolve_evm_block(id));
 
-        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone());
+        trevm.set_spec_id(spec_id);
+        let trevm = trevm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         let trevm = response_tri!(trevm.maybe_apply_state_overrides(state_overrides.as_ref()))
             .maybe_apply_block_overrides(block_overrides.as_deref())

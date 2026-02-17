@@ -60,7 +60,7 @@ where
         let id = bundle.state_block_number();
         let block_id: BlockId = id.into();
 
-        let EvmBlockContext { header, db } =
+        let EvmBlockContext { header, db, spec_id } =
             response_tri!(ctx.resolve_evm_block(block_id).map_err(|e| {
                 tracing::warn!(error = %e, ?block_id, "block resolution failed for bundle");
                 SignetError::Resolve(e.to_string())
@@ -68,9 +68,9 @@ where
 
         let mut driver = SignetBundleDriver::from(&bundle);
 
-        let trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone());
+        trevm.set_spec_id(spec_id);
+        let trevm = trevm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| {
             let e = e.into_error();

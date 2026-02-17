@@ -1,4 +1,4 @@
-use crate::{NodeStatus, metrics, serve::RpcServerGuard};
+use crate::{NodeStatus, metrics};
 use alloy::consensus::BlockHeader;
 use eyre::Context;
 use futures_util::StreamExt;
@@ -14,7 +14,7 @@ use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{ChainNotifier, NewBlockNotification};
+use signet_rpc::{ChainNotifier, NewBlockNotification, RpcServerGuard};
 use signet_storage::{HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};

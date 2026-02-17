@@ -210,6 +210,24 @@ impl StorageRpcConfigBuilder {
         self
     }
 
+    /// Set the default gas price returned when no recent transactions exist.
+    pub const fn default_gas_price(mut self, price: Option<u128>) -> Self {
+        self.inner.default_gas_price = price;
+        self
+    }
+
+    /// Set the minimum effective tip to include in the oracle sample.
+    pub const fn ignore_price(mut self, price: Option<u128>) -> Self {
+        self.inner.ignore_price = price;
+        self
+    }
+
+    /// Set the maximum gas price the oracle will ever suggest.
+    pub const fn max_price(mut self, price: Option<u128>) -> Self {
+        self.inner.max_price = price;
+        self
+    }
+
     /// Set the default bundle simulation timeout in milliseconds.
     pub const fn default_bundle_timeout_ms(mut self, ms: u64) -> Self {
         self.inner.default_bundle_timeout_ms = ms;
