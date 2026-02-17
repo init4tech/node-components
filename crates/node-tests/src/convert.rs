@@ -46,9 +46,14 @@ impl ToRethPrimitive for SealedBlock {
     type RethPrimitive = reth::primitives::SealedBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let (hash, header) = self.header.split();
+        let (header, hash) = self.header.into_parts();
+        let body = alloy::consensus::BlockBody {
+            transactions: self.transactions,
+            ommers: vec![],
+            withdrawals: None,
+        };
         reth::primitives::SealedBlock::new_unchecked(
-            reth::primitives::Block::new(header, self.body),
+            reth::primitives::Block::new(header, body),
             hash,
         )
     }
@@ -58,8 +63,21 @@ impl ToRethPrimitive for RecoveredBlock {
     type RethPrimitive = reth::primitives::RecoveredBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let hash = self.block.header.hash();
-        reth::primitives::RecoveredBlock::new(self.block.to_reth().into_block(), self.senders, hash)
+        let (header, hash) = self.header.into_parts();
+        let (senders, transactions): (Vec<_>, Vec<_>) = self
+            .transactions
+            .into_iter()
+            .map(|r| {
+                let (tx, sender) = r.into_parts();
+                (sender, tx)
+            })
+            .unzip();
+        let body = alloy::consensus::BlockBody { transactions, ommers: vec![], withdrawals: None };
+        reth::primitives::RecoveredBlock::new(
+            reth::primitives::Block::new(header, body),
+            senders,
+            hash,
+        )
     }
 }
 

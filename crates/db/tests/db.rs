@@ -2,14 +2,14 @@
 mod test_common;
 
 use alloy::{
-    consensus::{BlockBody, BlockHeader, Signed, TxEip1559, TxEnvelope},
+    consensus::{BlockHeader, Signed, TxEip1559, TxEnvelope},
     primitives::{Address, B256, U256},
     signers::Signature,
 };
 use reth::providers::{BlockNumReader, BlockReader};
 use signet_constants::test_utils::{DEPLOY_HEIGHT, RU_CHAIN_ID};
 use signet_db::RuWriter;
-use signet_types::primitives::{RecoveredBlock, SealedBlock, SealedHeader, TransactionSigned};
+use signet_types::primitives::{SealedBlock, SealedHeader, TransactionSigned};
 use signet_zenith::Zenith;
 
 #[test]
@@ -35,25 +35,19 @@ fn test_insert_signet_block() {
         blockDataHash: B256::repeat_byte(0x22),
     });
 
-    let block = RecoveredBlock {
-        block: SealedBlock {
-            header: SealedHeader::new(alloy::consensus::Header::default()),
-            body: BlockBody {
-                transactions: std::iter::repeat_n(
-                    TxEnvelope::Eip1559(Signed::new_unhashed(
-                        TxEip1559::default(),
-                        Signature::test_signature(),
-                    ))
-                    .into(),
-                    10,
-                )
-                .collect(),
-                ommers: vec![],
-                withdrawals: None,
-            },
-        },
-        senders: std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect(),
-    };
+    let transactions: Vec<TransactionSigned> = std::iter::repeat_n(
+        TxEnvelope::Eip1559(Signed::new_unhashed(
+            TxEip1559::default(),
+            Signature::test_signature(),
+        ))
+        .into(),
+        10,
+    )
+    .collect();
+    let senders: Vec<Address> = std::iter::repeat_n(Address::repeat_byte(0x33), 10).collect();
+    let sealed =
+        SealedBlock::new(SealedHeader::new(alloy::consensus::Header::default()), transactions);
+    let block = sealed.recover_unchecked(senders);
 
     writer.insert_signet_block(header, &block, journal_hash).unwrap();
     writer.commit().unwrap();
@@ -74,8 +68,8 @@ fn test_insert_signet_block() {
         .first()
         .cloned()
         .unwrap();
-    assert_eq!(loaded_block.header(), block.block.header.header());
-    assert_eq!(loaded_block.body().transactions.len(), block.block.body.transactions.len());
+    assert_eq!(loaded_block.header(), block.header.inner());
+    assert_eq!(loaded_block.body().transactions.len(), block.transactions.len());
 
     // Check that the ZenithHeader can be loaded back
     let loaded_header = reader.get_signet_header(block.number()).unwrap();
@@ -111,13 +105,10 @@ fn test_transaction_hash_indexing() {
     let expected_hashes: Vec<B256> =
         transactions.iter().map(|tx: &TransactionSigned| *tx.hash()).collect();
 
-    let block = RecoveredBlock {
-        block: SealedBlock {
-            header: SealedHeader::new(alloy::consensus::Header::default()),
-            body: BlockBody { transactions, ommers: vec![], withdrawals: None },
-        },
-        senders: std::iter::repeat_n(Address::repeat_byte(0x33), 5).collect(),
-    };
+    let senders: Vec<Address> = std::iter::repeat_n(Address::repeat_byte(0x33), 5).collect();
+    let sealed =
+        SealedBlock::new(SealedHeader::new(alloy::consensus::Header::default()), transactions);
+    let block = sealed.recover_unchecked(senders);
 
     writer.insert_signet_block(header, &block, journal_hash).unwrap();
     writer.commit().unwrap();
