@@ -41,7 +41,7 @@ where
         ResponsePayload(Ok(()))
     };
 
-    await_handler!(@response_option hctx.spawn_blocking_with_ctx(task))
+    await_handler!(@response_option hctx.spawn_with_ctx(task))
 }
 
 /// `signet_callBundle` handler.
