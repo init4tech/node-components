@@ -80,9 +80,10 @@ where
                 DebugError::from(e)
             }));
 
-        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let spec_id = ctx.spec_id_for_header(&header);
+        let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
+        evm.set_spec_id(spec_id);
+        let mut trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         let mut txns = txs.iter().enumerate().peekable();
         for (idx, tx) in txns
@@ -165,9 +166,10 @@ where
                 DebugError::from(e)
             }));
 
-        let mut trevm = signet_evm::signet_evm(db, ctx.constants().clone())
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header);
+        let spec_id = ctx.spec_id_for_header(&header);
+        let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
+        evm.set_spec_id(spec_id);
+        let mut trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         // Replay all transactions up to (but not including) the target
         let mut txns = txs.iter().enumerate().peekable();

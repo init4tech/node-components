@@ -1,22 +1,54 @@
+//! RPC transport infrastructure (HTTP, WebSocket, IPC).
+//!
+//! Serves an [`ajj::Router`] over one or more transports. The
+//! [`ServeConfig`] describes which addresses and endpoints to bind;
+//! [`ServeConfig::serve`] starts all configured transports and returns
+//! an [`RpcServerGuard`] that shuts them down on drop.
+
 use ajj::{
     Router,
     pubsub::{Connect, ServerShutdown},
 };
 use axum::http::HeaderValue;
 use interprocess::local_socket as ls;
-use reqwest::Method;
-use reth::{args::RpcServerArgs, rpc::builder::CorsDomainError, tasks::TaskExecutor};
 use std::{future::IntoFuture, net::SocketAddr};
-use tokio::task::JoinHandle;
+use tokio::{runtime::Handle, task::JoinHandle};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::error;
 
-/// Guard to shutdown the RPC servers. When dropped, this will shutdown all
-/// running servers.
+/// Errors that can occur when starting the RPC server.
+#[derive(Debug, thiserror::Error)]
+pub enum ServeError {
+    /// An I/O error (bind failure, IPC error, etc).
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Invalid CORS configuration.
+    #[error(transparent)]
+    Cors(#[from] CorsDomainError),
+}
+
+/// Error parsing a CORS domain configuration string.
+#[derive(Debug, thiserror::Error)]
+pub enum CorsDomainError {
+    /// Wildcard `*` was mixed with explicit origins.
+    #[error("wildcard origin `*` cannot be combined with other domains: {input}")]
+    WildCardNotAllowed {
+        /// The raw input string.
+        input: String,
+    },
+    /// A domain could not be parsed as an HTTP header value.
+    #[error("invalid CORS header value: {domain}")]
+    InvalidHeader {
+        /// The domain string that failed to parse.
+        domain: String,
+    },
+}
+
+/// Guard that shuts down the RPC servers on drop.
 #[derive(Default)]
-pub(crate) struct RpcServerGuard {
-    http: Option<tokio::task::JoinHandle<()>>,
-    ws: Option<tokio::task::JoinHandle<()>>,
+pub struct RpcServerGuard {
+    http: Option<JoinHandle<()>>,
+    ws: Option<JoinHandle<()>>,
     ipc: Option<ServerShutdown>,
 }
 
@@ -24,8 +56,8 @@ impl core::fmt::Debug for RpcServerGuard {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RpcServerGuard")
             .field("http", &self.http.is_some())
-            .field("ipc", &self.ipc.is_some())
             .field("ws", &self.ws.is_some())
+            .field("ipc", &self.ipc.is_some())
             .finish()
     }
 }
@@ -38,92 +70,74 @@ impl Drop for RpcServerGuard {
         if let Some(ws) = self.ws.take() {
             ws.abort();
         }
-        // IPC is handled by its own drop guards.
+        // IPC is handled by its own drop guard.
     }
 }
 
-/// Configuration for the RPC server.
+/// Configuration for the RPC transport layer.
 #[derive(Clone, Debug)]
-pub(crate) struct ServeConfig {
-    /// HTTP server addresses.
+pub struct ServeConfig {
+    /// HTTP server bind addresses.
     pub http: Vec<SocketAddr>,
-    /// CORS header to be used for HTTP (if any).
+    /// CORS header to use for HTTP (if any).
     pub http_cors: Option<String>,
-    /// WS server addresses.
+    /// WebSocket server bind addresses.
     pub ws: Vec<SocketAddr>,
-    /// CORS header to be used for WS (if any).
+    /// CORS header to use for WebSocket (if any).
     pub ws_cors: Option<String>,
-    /// IPC name info.
+    /// IPC endpoint path (e.g. `/tmp/signet.ipc`).
     pub ipc: Option<String>,
 }
 
-impl From<RpcServerArgs> for ServeConfig {
-    fn from(args: RpcServerArgs) -> Self {
-        let http = if args.http {
-            vec![SocketAddr::from((args.http_addr, args.http_port))]
-        } else {
-            vec![]
-        };
-        let ws =
-            if args.ws { vec![SocketAddr::from((args.ws_addr, args.ws_port))] } else { vec![] };
-
-        let http_cors = args.http_corsdomain;
-        let ws_cors = args.ws_allowed_origins;
-
-        let ipc = if !args.ipcdisable { Some(args.ipcpath) } else { None };
-
-        Self { http, http_cors, ws, ws_cors, ipc }
-    }
-}
-
 impl ServeConfig {
-    /// Serve the router via HTTP.
+    /// Serve the router on all configured transports.
+    ///
+    /// Returns an [`RpcServerGuard`] that aborts the HTTP and WS
+    /// servers on drop and signals the IPC server to shut down.
+    pub async fn serve(&self, router: Router<()>) -> Result<RpcServerGuard, ServeError> {
+        let handle = Handle::current();
+
+        let (http, ws, ipc) = tokio::try_join!(
+            self.serve_http(&handle, router.clone()),
+            self.serve_ws(&handle, router.clone()),
+            self.serve_ipc(&handle, &router),
+        )?;
+
+        Ok(RpcServerGuard { http, ws, ipc })
+    }
+
+    /// Start the HTTP transport (if configured).
     async fn serve_http(
         &self,
-        tasks: &TaskExecutor,
+        handle: &Handle,
         router: Router<()>,
-    ) -> eyre::Result<Option<JoinHandle<()>>> {
+    ) -> Result<Option<JoinHandle<()>>, ServeError> {
         if self.http.is_empty() {
             return Ok(None);
         }
-        serve_axum(tasks, router, &self.http, self.http_cors.as_deref()).await.map(Some)
+        serve_axum(handle, router, &self.http, self.http_cors.as_deref()).await.map(Some)
     }
 
-    /// Serve the router via WebSocket.
+    /// Start the WebSocket transport (if configured).
     async fn serve_ws(
         &self,
-        tasks: &TaskExecutor,
+        handle: &Handle,
         router: Router<()>,
-    ) -> eyre::Result<Option<JoinHandle<()>>> {
+    ) -> Result<Option<JoinHandle<()>>, ServeError> {
         if self.ws.is_empty() {
             return Ok(None);
         }
-        serve_ws(tasks, router, &self.ws, self.ws_cors.as_deref()).await.map(Some)
+        serve_ws_transport(handle, router, &self.ws, self.ws_cors.as_deref()).await.map(Some)
     }
 
-    /// Serve the router on the given ipc path.
+    /// Start the IPC transport (if configured).
     async fn serve_ipc(
         &self,
-        tasks: &TaskExecutor,
+        handle: &Handle,
         router: &Router<()>,
-    ) -> eyre::Result<Option<ServerShutdown>> {
+    ) -> Result<Option<ServerShutdown>, ServeError> {
         let Some(endpoint) = &self.ipc else { return Ok(None) };
-        let shutdown = serve_ipc(tasks, router, endpoint).await?;
-        Ok(Some(shutdown))
-    }
-
-    /// Serve the router.
-    pub(crate) async fn serve(
-        &self,
-        tasks: &TaskExecutor,
-        router: Router<()>,
-    ) -> eyre::Result<RpcServerGuard> {
-        let (http, ws, ipc) = tokio::try_join!(
-            self.serve_http(tasks, router.clone()),
-            self.serve_ws(tasks, router.clone()),
-            self.serve_ipc(tasks, &router),
-        )?;
-        Ok(RpcServerGuard { http, ws, ipc })
+        serve_ipc(handle, router, endpoint).await.map(Some)
     }
 }
 
@@ -146,57 +160,47 @@ fn make_cors(cors: Option<&str>) -> Result<CorsLayer, CorsDomainError> {
     };
 
     Ok(CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
         .allow_origin(origins)
         .allow_headers(Any))
 }
 
-/// Serve the axum router on the specified addresses.
-async fn serve(
-    tasks: &TaskExecutor,
+/// Bind a TCP listener and serve the axum service.
+async fn bind_and_serve(
     addrs: &[SocketAddr],
     service: axum::Router,
-) -> eyre::Result<JoinHandle<()>> {
+) -> Result<JoinHandle<()>, ServeError> {
     let listener = tokio::net::TcpListener::bind(addrs).await?;
 
-    let fut = async move {
-        match axum::serve(listener, service).into_future().await {
-            Ok(_) => (),
-            Err(err) => error!(%err, "Error serving RPC via axum"),
+    Ok(tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, service).into_future().await {
+            error!(%err, "error serving RPC via axum");
         }
-    };
-
-    Ok(tasks.spawn(fut))
+    }))
 }
 
-/// Serve the router on the given addresses using axum.
+/// Serve the router via HTTP with optional CORS.
 async fn serve_axum(
-    tasks: &TaskExecutor,
+    handle: &Handle,
     router: Router<()>,
     addrs: &[SocketAddr],
     cors: Option<&str>,
-) -> eyre::Result<JoinHandle<()>> {
-    let handle = tasks.handle().clone();
+) -> Result<JoinHandle<()>, ServeError> {
     let cors = make_cors(cors)?;
-
-    let service = router.into_axum_with_handle("/", handle).layer(cors);
-
-    serve(tasks, addrs, service).await
+    let service = router.into_axum_with_handle("/", handle.clone()).layer(cors);
+    bind_and_serve(addrs, service).await
 }
 
-/// Serve the router on the given address using a Websocket.
-async fn serve_ws(
-    tasks: &TaskExecutor,
+/// Serve the router via WebSocket with optional CORS.
+async fn serve_ws_transport(
+    handle: &Handle,
     router: Router<()>,
     addrs: &[SocketAddr],
     cors: Option<&str>,
-) -> eyre::Result<JoinHandle<()>> {
-    let handle = tasks.handle().clone();
+) -> Result<JoinHandle<()>, ServeError> {
     let cors = make_cors(cors)?;
-
-    let service = router.into_axum_with_ws_and_handle("/rpc", "/", handle).layer(cors);
-
-    serve(tasks, addrs, service).await
+    let service = router.into_axum_with_ws_and_handle("/rpc", "/", handle.clone()).layer(cors);
+    bind_and_serve(addrs, service).await
 }
 
 fn to_name(path: &std::ffi::OsStr) -> std::io::Result<ls::Name<'_>> {
@@ -207,17 +211,17 @@ fn to_name(path: &std::ffi::OsStr) -> std::io::Result<ls::Name<'_>> {
     }
 }
 
-/// Serve the router on the given address using IPC.
+/// Serve the router via IPC.
 async fn serve_ipc(
-    tasks: &TaskExecutor,
+    handle: &Handle,
     router: &Router<()>,
     endpoint: &str,
-) -> eyre::Result<ServerShutdown> {
+) -> Result<ServerShutdown, ServeError> {
     let name = std::ffi::OsStr::new(endpoint);
     let name = to_name(name)?;
     ls::ListenerOptions::new()
         .name(name)
-        .serve_with_handle(router.clone(), tasks.handle().clone())
+        .serve_with_handle(router.clone(), handle.clone())
         .await
         .map_err(Into::into)
 }

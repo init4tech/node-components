@@ -53,6 +53,7 @@ impl TestHarness {
         let ctx = StorageRpcCtx::new(
             Arc::new(storage),
             constants,
+            alloy::genesis::ChainConfig::default(),
             chain.clone(),
             None,
             StorageRpcConfig::default(),

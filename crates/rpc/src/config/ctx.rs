@@ -8,8 +8,12 @@ use crate::{
     eth::EthError,
     interest::{FilterManager, SubscriptionManager},
 };
-use alloy::eips::{BlockId, BlockNumberOrTag};
+use alloy::{
+    eips::{BlockId, BlockNumberOrTag},
+    genesis::ChainConfig,
+};
 use signet_cold::ColdStorageReadHandle;
+use signet_evm::EthereumHardfork;
 use signet_hot::{
     HotKv,
     db::HotDbRead,
@@ -20,7 +24,10 @@ use signet_tx_cache::TxCache;
 use signet_types::constants::SignetSystemConstants;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use trevm::revm::database::{DBErrorMarker, StateBuilder};
+use trevm::revm::{
+    database::{DBErrorMarker, StateBuilder},
+    primitives::hardfork::SpecId,
+};
 
 /// Resolved block context for EVM execution.
 ///
@@ -38,6 +45,8 @@ pub(crate) struct EvmBlockContext<Db> {
     /// [`State`]: trevm::revm::database::State
     /// [`DatabaseCommit`]: trevm::revm::database::DatabaseCommit
     pub db: trevm::revm::database::State<Db>,
+    /// The EVM hardfork spec active at this block.
+    pub spec_id: SpecId,
 }
 
 /// RPC context backed by [`UnifiedStorage`].
@@ -64,6 +73,7 @@ impl<H: HotKv> Clone for StorageRpcCtx<H> {
 struct StorageRpcCtxInner<H: HotKv> {
     storage: Arc<UnifiedStorage<H>>,
     constants: SignetSystemConstants,
+    chain_config: ChainConfig,
     chain: ChainNotifier,
     tx_cache: Option<TxCache>,
     config: StorageRpcConfig,
@@ -79,9 +89,13 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// The [`ChainNotifier`] provides block tag tracking and a broadcast
     /// sender for new block notifications. The subscription manager
     /// subscribes to this channel to push updates to WebSocket clients.
+    ///
+    /// The `chain_config` is the rollup genesis chain configuration, used
+    /// to determine the active EVM hardfork (spec ID) for each block.
     pub fn new(
         storage: Arc<UnifiedStorage<H>>,
         constants: SignetSystemConstants,
+        chain_config: ChainConfig,
         chain: ChainNotifier,
         tx_cache: Option<TxCache>,
         config: StorageRpcConfig,
@@ -94,6 +108,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
             inner: Arc::new(StorageRpcCtxInner {
                 storage,
                 constants,
+                chain_config,
                 chain,
                 tx_cache,
                 config,
@@ -128,6 +143,16 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// Access the system constants.
     pub fn constants(&self) -> &SignetSystemConstants {
         &self.inner.constants
+    }
+
+    /// Access the chain configuration (rollup genesis forks).
+    pub(crate) fn chain_config(&self) -> &ChainConfig {
+        &self.inner.chain_config
+    }
+
+    /// Determine the EVM [`SpecId`] for a given block header.
+    pub(crate) fn spec_id_for_header(&self, header: &alloy::consensus::Header) -> SpecId {
+        EthereumHardfork::active_hardforks_at_header(self.chain_config(), header).spec_id()
     }
 
     /// Get the chain ID.
@@ -289,6 +314,8 @@ impl<H: HotKv> StorageRpcCtx<H> {
             header.gas_limit = self.config().rpc_gas_cap;
         }
 
-        Ok(EvmBlockContext { header, db })
+        let spec_id = self.spec_id_for_header(&header);
+
+        Ok(EvmBlockContext { header, db, spec_id })
     }
 }

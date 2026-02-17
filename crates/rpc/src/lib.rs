@@ -26,6 +26,9 @@ pub use debug::DebugError;
 mod signet;
 pub use signet::error::SignetError;
 
+pub mod serve;
+pub use serve::{RpcServerGuard, ServeConfig, ServeError};
+
 /// Instantiate a combined router with `eth`, `debug`, and `signet`
 /// namespaces.
 pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>
