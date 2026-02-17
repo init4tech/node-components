@@ -981,7 +981,7 @@ where
                     return Err("fromBlock must not exceed toBlock".to_string());
                 }
                 let max_blocks = ctx.config().max_blocks_per_filter;
-                if to - from > max_blocks {
+                if to - from >= max_blocks {
                     return Err(format!("query exceeds max block range ({max_blocks})"));
                 }
 
