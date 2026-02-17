@@ -1,7 +1,7 @@
+use crate::StorageConfig;
 use alloy::genesis::Genesis;
-use eyre::Context;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
-use reth::providers::providers::{RocksDBProvider, StaticFileProvider};
+use reth::providers::providers::StaticFileProvider;
 use reth_chainspec::ChainSpec;
 use reth_node_api::NodePrimitives;
 use signet_blobber::BlobFetcherConfig;
@@ -31,9 +31,9 @@ pub struct SignetNodeConfig {
     /// Path to the static files for reth StaticFileProviders.
     #[from_env(var = "SIGNET_STATIC_PATH", desc = "Path to the static files", infallible)]
     static_path: Cow<'static, str>,
-    /// Path to the MDBX database.
-    #[from_env(var = "SIGNET_DATABASE_PATH", desc = "Path to the MDBX database", infallbile)]
-    database_path: Cow<'static, str>,
+    /// Unified storage configuration (hot + cold MDBX paths).
+    #[from_env(infallible)]
+    storage: StorageConfig,
     /// URL to which to forward raw transactions.
     #[from_env(
         var = "TX_FORWARD_URL",
@@ -76,7 +76,7 @@ impl SignetNodeConfig {
     pub const fn new(
         block_extractor: BlobFetcherConfig,
         static_path: Cow<'static, str>,
-        database_path: Cow<'static, str>,
+        storage: StorageConfig,
         forward_url: Option<Cow<'static, str>>,
         rpc_port: u16,
         ws_port: u16,
@@ -87,7 +87,7 @@ impl SignetNodeConfig {
         Self {
             block_extractor,
             static_path,
-            database_path,
+            storage,
             forward_url,
             http_port: Some(rpc_port),
             ws_port: Some(ws_port),
@@ -142,29 +142,9 @@ impl SignetNodeConfig {
         StaticFileProvider::read_write(self.static_path()).map_err(Into::into)
     }
 
-    /// Get the database path as a str.
-    pub fn database_path_str(&self) -> &str {
-        &self.database_path
-    }
-
-    /// Get the database path.
-    pub fn database_path(&self) -> PathBuf {
-        self.database_path.as_ref().to_owned().into()
-    }
-
-    /// Get the RocksDB path as a String.
-    pub fn rocksdb_path_string(&self) -> String {
-        format!("{}-rocksdb", &self.database_path)
-    }
-
-    /// Get the RocksDB path.
-    pub fn rocksdb_path(&self) -> PathBuf {
-        self.rocksdb_path_string().into()
-    }
-
-    /// Open the RocksDB database.
-    pub fn open_rocks_db(&self) -> eyre::Result<RocksDBProvider> {
-        RocksDBProvider::builder(self.rocksdb_path()).build().wrap_err("Failed to open RocksDB")
+    /// Get the storage configuration.
+    pub const fn storage(&self) -> &StorageConfig {
+        &self.storage
     }
 
     /// Get the URL to which to forward raw transactions.
@@ -246,13 +226,12 @@ mod defaults {
             Self {
                 block_extractor: BlobFetcherConfig::new(Cow::Borrowed("")),
                 static_path: Cow::Borrowed(""),
-                database_path: Cow::Borrowed(""),
+                storage: StorageConfig::new(Cow::Borrowed(""), Cow::Borrowed("")),
                 forward_url: None,
                 http_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT),
                 ws_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT + 1),
                 ipc_endpoint: None,
                 genesis: GenesisSpec::Known(KnownChains::Test),
-
                 slot_calculator: SlotCalculator::new(0, 0, 12),
             }
         }

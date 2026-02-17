@@ -16,6 +16,9 @@ pub use core::{SIGNET_NODE_DEFAULT_HTTP_PORT, SignetNodeConfig};
 
 mod rpc;
 
+mod storage;
+pub use storage::StorageConfig;
+
 /// Test configuration for Signet Nodes.
 #[cfg(feature = "test_utils")]
 pub mod test_utils;
