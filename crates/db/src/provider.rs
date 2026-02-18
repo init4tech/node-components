@@ -7,6 +7,7 @@ use alloy::{
     consensus::BlockHeader,
     primitives::{Address, B256, BlockNumber},
 };
+use reth::{core::primitives::StorageSlotKey, providers::ChangesetEntry};
 use reth::{
     primitives::StaticFileSegment,
     providers::{
@@ -21,7 +22,7 @@ use reth_db::{
     tables,
     transaction::{DbTx, DbTxMut},
 };
-use reth_prune_types::{MINIMUM_PRUNING_DISTANCE, PruneMode};
+use reth_prune_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode};
 use signet_evm::BlockResult;
 use signet_node_types::NodeTypesDbTrait;
 use signet_types::primitives::RecoveredBlock;
@@ -163,8 +164,8 @@ where
         // Put journal hash into the DB
         self.tx_ref().put::<crate::JournalHashes>(block_number, journal_hash)?;
 
-        let block_hash = block.block.header.hash();
-        let block_header = block.block.header.header();
+        let block_hash = block.header.seal();
+        let block_header = block.header.inner();
 
         self.static_file_provider()
             .get_writer(block_number, StaticFileSegment::Headers)?
@@ -179,14 +180,14 @@ where
             .map(|(n, _)| n + 1)
             .unwrap_or_default();
         let first_tx_num = next_tx_num;
-        let tx_count = block.block.body.transactions.len() as u64;
+        let tx_count = block.transactions.len() as u64;
 
-        for (sender, transaction) in block.senders.iter().zip(block.block.body.transactions()) {
+        for (sender, transaction) in block.senders().zip(block.transactions()) {
             let hash = *transaction.hash();
             debug_assert_ne!(hash, B256::ZERO, "transaction hash is zero");
 
             if self.prune_modes_ref().sender_recovery.as_ref().is_none_or(|m| !m.is_full()) {
-                self.tx_ref().put::<tables::TransactionSenders>(next_tx_num, *sender)?;
+                self.tx_ref().put::<tables::TransactionSenders>(next_tx_num, sender)?;
             }
 
             if self.prune_modes_ref().transaction_lookup.is_none_or(|m| !m.is_full()) {
@@ -231,7 +232,7 @@ where
         // Increment block on static file header
         tx_writer.increment_block(block_number)?;
 
-        let tx_count = block.block.body.transactions.len() as u64;
+        let tx_count = block.transactions.len() as u64;
         let block_indices = StoredBlockBodyIndices { first_tx_num: next_tx_num, tx_count };
 
         // insert block meta
@@ -243,7 +244,7 @@ where
         }
 
         // Write transactions
-        for transaction in block.block.body.transactions() {
+        for transaction in block.transactions() {
             tx_writer.append_transaction(next_tx_num, transaction)?;
 
             // Increment transaction id for each transaction
@@ -449,7 +450,9 @@ where
                 .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            self.unwind_storage_history_indices(changed_storages.iter().copied())?;
+            self.unwind_storage_history_indices(changed_storages.iter().map(|(bna, entry)| {
+                (*bna, ChangesetEntry { key: StorageSlotKey::plain(entry.key), value: entry.value })
+            }))?;
 
             // We also skip calculating the reverted root here.
         }
@@ -523,7 +526,9 @@ where
                 .walk_range(storage_start..)?
                 .collect::<Result<Vec<_>, _>>()?;
 
-            self.unwind_storage_history_indices(changed_storages.iter().copied())?;
+            self.unwind_storage_history_indices(changed_storages.iter().map(|(bna, entry)| {
+                (*bna, ChangesetEntry { key: StorageSlotKey::plain(entry.key), value: entry.value })
+            }))?;
 
             // We also skip calculating the reverted root here.
         }
@@ -604,7 +609,7 @@ where
         // All receipts from the last 128 blocks are required for blockchain tree, even with
         // [`PruneSegment::ContractLogs`].
         let prunable_receipts =
-            PruneMode::Distance(MINIMUM_PRUNING_DISTANCE).should_prune(first_block, tip);
+            PruneMode::Distance(MINIMUM_UNWIND_SAFE_DISTANCE).should_prune(first_block, tip);
 
         for (idx, (receipts, first_tx_index)) in
             execution_outcome.receipts().iter().zip(block_indices).enumerate()

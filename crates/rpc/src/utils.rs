@@ -154,7 +154,7 @@ async fn serve(
         }
     };
 
-    Ok(tasks.spawn(fut))
+    Ok(tasks.spawn_task(fut))
 }
 
 /// Serve the router on the given addresses using axum.

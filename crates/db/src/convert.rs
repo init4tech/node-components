@@ -104,6 +104,6 @@ impl DataCompat<signet_types::primitives::SealedHeader> for reth::primitives::Se
 
 impl DataCompat<reth::primitives::SealedHeader> for signet_types::primitives::SealedHeader {
     fn convert(self) -> reth::primitives::SealedHeader {
-        reth::primitives::SealedHeader::new_unhashed(self.header().to_owned())
+        reth::primitives::SealedHeader::new_unhashed(self.clone_inner())
     }
 }

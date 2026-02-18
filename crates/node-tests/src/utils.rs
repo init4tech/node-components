@@ -140,5 +140,5 @@ pub fn create_test_provider_factory_with_chain_spec(
 
     let rocks = RocksDBProvider::builder(rocks.keep()).build().expect("rocksdb provider");
 
-    ProviderFactory::new(db, chain_spec, sfp, rocks).unwrap()
+    ProviderFactory::new(db, chain_spec, sfp, rocks, Default::default()).unwrap()
 }

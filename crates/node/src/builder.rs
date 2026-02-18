@@ -14,7 +14,6 @@ use signet_block_processor::AliasOracleFactory;
 use signet_db::DbProviderExt;
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
-use std::sync::Arc;
 
 /// A type that does not implement [`AliasOracleFactory`].
 #[derive(Debug, Clone, Copy)]
@@ -66,11 +65,14 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
         self,
         db: NewDb,
     ) -> eyre::Result<SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<NewDb>>, Aof>> {
+        let runtime =
+            reth::tasks::Runtime::with_existing_handle(tokio::runtime::Handle::current())?;
         let factory = ProviderFactory::new(
             db,
             self.config.chain_spec().clone(),
             self.config.static_file_rw()?,
             self.config.open_rocks_db()?,
+            runtime,
         )?;
 
         Ok(SignetNodeBuilder {
@@ -86,14 +88,17 @@ impl<Host, Db, Aof> SignetNodeBuilder<Host, Db, Aof> {
     pub fn with_config_db(
         self,
     ) -> eyre::Result<
-        SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<Arc<reth_db::DatabaseEnv>>>, Aof>,
+        SignetNodeBuilder<Host, ProviderFactory<SignetNodeTypes<reth_db::DatabaseEnv>>, Aof>,
     > {
+        let runtime =
+            reth::tasks::Runtime::with_existing_handle(tokio::runtime::Handle::current())?;
         let factory = ProviderFactory::new_with_database_path(
             self.config.database_path(),
             self.config.chain_spec().clone(),
             reth_db::mdbx::DatabaseArguments::default(),
             self.config.static_file_rw()?,
             self.config.open_rocks_db()?,
+            runtime,
         )?;
         Ok(SignetNodeBuilder {
             config: self.config,
@@ -230,7 +235,7 @@ where
     pub fn build(
         self,
     ) -> eyre::Result<(
-        SignetNode<Host, Arc<reth_db::DatabaseEnv>, Box<dyn StateProviderFactory>>,
+        SignetNode<Host, reth_db::DatabaseEnv, Box<dyn StateProviderFactory>>,
         tokio::sync::watch::Receiver<NodeStatus>,
     )> {
         self.with_config_db()?.build()
@@ -254,7 +259,7 @@ where
     pub fn build(
         self,
     ) -> eyre::Result<(
-        SignetNode<Host, Arc<reth_db::DatabaseEnv>, Aof>,
+        SignetNode<Host, reth_db::DatabaseEnv, Aof>,
         tokio::sync::watch::Receiver<NodeStatus>,
     )> {
         self.with_config_db()?.build()

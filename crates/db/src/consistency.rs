@@ -75,11 +75,9 @@ where
             // * pruning data was interrupted before a config commit, then we
             //   have deleted data that we are expected to still have. We need
             //   to check the Database and unwind everything accordingly.
-            if sfp.is_read_only() {
-                sfp.check_segment_consistency(segment)?;
-            } else {
-                // Fetching the writer will attempt to heal any file level
-                // inconsistency.
+            // Fetching the writer will attempt to heal any file level
+            // inconsistency.
+            if !sfp.is_read_only() {
                 sfp.latest_writer(segment)?;
             }
 
@@ -157,6 +155,10 @@ where
                 >(
                     self, segment, highest_tx, highest_block
                 )?,
+                // StorageChangeSets uses BlockNumberAddress keys (not u64),
+                // so our simplified ensure_invariants doesn't apply. Signet
+                // does not use storage change sets in static files.
+                StaticFileSegment::StorageChangeSets => None,
             } {
                 update_last_good_height(unwind);
             }
@@ -231,6 +233,7 @@ where
                 StageId::Execution
             }
             StaticFileSegment::TransactionSenders => StageId::SenderRecovery,
+            StaticFileSegment::StorageChangeSets => StageId::Execution,
         })?
         .unwrap_or_default()
         .block_number;

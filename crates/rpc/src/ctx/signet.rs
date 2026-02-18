@@ -126,7 +126,7 @@ where
             cache.clone(),
         );
 
-        spawner.spawn_critical("fee_history_cache_new_blocks", Box::pin(fee_task));
+        spawner.spawn_critical_task("fee_history_cache_new_blocks", Box::pin(fee_task));
 
         let filters = FilterManager::new(eth_config.stale_filter_ttl, eth_config.stale_filter_ttl);
 
