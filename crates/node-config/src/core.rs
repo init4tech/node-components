@@ -62,6 +62,16 @@ pub struct SignetNodeConfig {
 
     /// The slot calculator.
     slot_calculator: SlotCalculator,
+
+    /// Maximum number of blocks to process per backfill batch.
+    /// Lower values reduce memory usage during sync. Default is 10,000
+    /// (reth's default of 500K can cause OOM on mainnet).
+    #[from_env(
+        var = "BACKFILL_MAX_BLOCKS",
+        desc = "Maximum blocks per backfill batch (lower = less memory)",
+        optional
+    )]
+    backfill_max_blocks: Option<u64>,
 }
 
 impl Display for SignetNodeConfig {
@@ -94,6 +104,7 @@ impl SignetNodeConfig {
             ipc_endpoint,
             genesis,
             slot_calculator,
+            backfill_max_blocks: None, // Uses default of 10,000 via accessor
         }
     }
 
@@ -214,6 +225,14 @@ impl SignetNodeConfig {
         signet_evm::EthereumHardfork::active_hardforks(&self.genesis().config, block, timestamp)
             .spec_id()
     }
+
+    /// Get the maximum number of blocks to process per backfill batch.
+    /// Returns `Some(10_000)` by default if not configured, to avoid OOM
+    /// during mainnet sync (reth's default of 500K is too aggressive).
+    pub fn backfill_max_blocks(&self) -> Option<u64> {
+        // Default to 10,000 if not explicitly configured
+        Some(self.backfill_max_blocks.unwrap_or(10_000))
+    }
 }
 
 #[cfg(test)]
@@ -233,6 +252,7 @@ mod defaults {
                 ipc_endpoint: None,
                 genesis: GenesisSpec::Known(KnownChains::Test),
                 slot_calculator: SlotCalculator::new(0, 0, 12),
+                backfill_max_blocks: None, // Uses default of 10,000 via accessor
             }
         }
     }

@@ -9,6 +9,7 @@ use reth::{
 };
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
+use reth_stages_types::ExecutionStageThresholds;
 use signet_blobber::{CacheHandle, ExtractableChainShim};
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
@@ -225,6 +226,7 @@ where
                 Some(genesis_block) => {
                     let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
                     self.host.notifications.set_with_head(exex_head);
+                    self.set_backfill_thresholds();
                     return Ok(exex_head);
                 }
                 None => {
@@ -240,6 +242,7 @@ where
                         .expect("failed to find genesis block");
                     let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
                     self.host.notifications.set_with_head(exex_head);
+                    self.set_backfill_thresholds();
                     return Ok(exex_head);
                 }
             }
@@ -253,6 +256,7 @@ where
                 debug!(host_height, "found host block for height");
                 let exex_head = ExExHead { block: host_block.num_hash_slow() };
                 self.host.notifications.set_with_head(exex_head);
+                self.set_backfill_thresholds();
                 Ok(exex_head)
             }
             None => {
@@ -261,8 +265,22 @@ where
                     self.host.provider().block_by_number(0)?.expect("failed to find genesis block");
                 let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
                 self.host.notifications.set_with_head(exex_head);
+                self.set_backfill_thresholds();
                 Ok(exex_head)
             }
+        }
+    }
+
+    /// Sets backfill thresholds to limit memory usage during sync.
+    /// This should be called after `set_with_head` to configure how many
+    /// blocks can be processed per backfill batch.
+    fn set_backfill_thresholds(&mut self) {
+        if let Some(max_blocks) = self.config.backfill_max_blocks() {
+            self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
+                max_blocks: Some(max_blocks),
+                ..Default::default()
+            });
+            debug!(max_blocks, "configured backfill thresholds");
         }
     }
 
