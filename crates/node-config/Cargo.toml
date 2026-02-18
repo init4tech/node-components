@@ -10,10 +10,7 @@ repository.workspace = true
 
 [dependencies]
 signet-blobber.workspace = true
-signet-cold.workspace = true
-signet-cold-mdbx.workspace = true
 signet-evm.workspace = true
-signet-hot-mdbx.workspace = true
 signet-storage.workspace = true
 signet-types.workspace = true
 
@@ -37,3 +34,5 @@ tempfile = { workspace = true, optional = true }
 
 [features]
 test_utils = ["dep:tempfile"]
+postgres = ["signet-storage/postgres"]
+sqlite = ["signet-storage/sqlite"]
