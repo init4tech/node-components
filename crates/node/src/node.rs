@@ -17,8 +17,8 @@ use reth::{
 };
 use reth_chainspec::EthChainSpec;
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
-use reth_stages_types::ExecutionStageThresholds;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
+use reth_stages_types::ExecutionStageThresholds;
 use signet_blobber::BlobFetcher;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_db::{DbProviderExt, ProviderConsistencyExt, RuChain, RuWriter};
@@ -298,7 +298,7 @@ where
     /// Sets backfill thresholds to limit memory usage during sync.
     /// This should be called after `set_with_head` to configure how many
     /// blocks can be processed per backfill batch.
-    fn set_backfill_thresholds(&self) {
+    fn set_backfill_thresholds(&mut self) {
         if let Some(max_blocks) = self.config.backfill_max_blocks() {
             self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
                 max_blocks: Some(max_blocks),
