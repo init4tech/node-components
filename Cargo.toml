@@ -131,10 +131,7 @@ uuid = "1.16.0"
 alloy-rlp = "0.3.11"
 tempfile = "3.17.0"
 
-[patch.crates-io]
-# Pinned to fix Protocol::Tlsv13 non-exhaustive match bug in 0.2.17
-native-tls = { git = "https://github.com/rust-native-tls/rust-native-tls", rev = "a352cb30671a89223b7a583e0bcb8f338376cf34" }
-
+# [patch.crates-io]
 # signet-bundle = { path = "../sdk/crates/bundle"}
 # signet-constants = { path = "../sdk/crates/constants"}
 # signet-evm = { path = "../sdk/crates/evm"}
