@@ -12,6 +12,7 @@ use std::{
     fmt::Display,
     path::PathBuf,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use tracing::warn;
 use trevm::revm::primitives::hardfork::SpecId;
@@ -72,6 +73,15 @@ pub struct SignetNodeConfig {
         optional
     )]
     backfill_max_blocks: Option<u64>,
+
+    /// Maximum duration of a backfill batch.
+    /// This prevents MDBX from killing the read transaction, leading to a crash if reth's default mdbx read transaction timeout is exceeded.
+    #[from_env(
+        var = "BACKFILL_MAX_DURATION",
+        desc = "Maximum duration of a backfill batch, in seconds",
+        optional
+    )]
+    backfill_max_duration: Option<u64>,
 }
 
 impl Display for SignetNodeConfig {
@@ -105,6 +115,7 @@ impl SignetNodeConfig {
             genesis,
             slot_calculator,
             backfill_max_blocks: None, // Uses default of 10,000 via accessor
+            backfill_max_duration: None, // Uses default of 30 seconds via accessor
         }
     }
 
@@ -252,6 +263,12 @@ impl SignetNodeConfig {
         // Default to 10,000 if not explicitly configured
         Some(self.backfill_max_blocks.unwrap_or(10_000))
     }
+
+    /// Get the maximum duration of a backfill batch.
+    /// Returns `Some(30)` seconds by default if not configured.
+    pub fn backfill_max_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(self.backfill_max_duration.unwrap_or(30)))
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +289,7 @@ mod defaults {
                 genesis: GenesisSpec::Known(KnownChains::Test),
                 slot_calculator: SlotCalculator::new(0, 0, 12),
                 backfill_max_blocks: None, // Uses default of 10,000 via accessor
+                backfill_max_duration: None, // Uses default of 30 seconds via accessor
             }
         }
     }

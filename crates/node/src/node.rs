@@ -299,13 +299,14 @@ where
     /// This should be called after `set_with_head` to configure how many
     /// blocks can be processed per backfill batch.
     fn set_backfill_thresholds(&mut self) {
-        if let Some(max_blocks) = self.config.backfill_max_blocks() {
-            self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
-                max_blocks: Some(max_blocks),
-                ..Default::default()
-            });
-            debug!(max_blocks, "configured backfill thresholds");
-        }
+        let max_blocks = self.config.backfill_max_blocks();
+        let max_duration = self.config.backfill_max_duration();
+        self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
+            max_blocks,
+            max_duration,
+            ..Default::default()
+        });
+        debug!(?max_blocks, ?max_duration, "configured backfill thresholds");
     }
 
     /// Runs on any notification received from the ExEx context.
