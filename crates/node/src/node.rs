@@ -27,7 +27,7 @@ use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
 use signet_rpc::RpcServerGuard;
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, mem::MaybeUninit, sync::Arc};
-use tokio::{sync::watch, time::Duration};
+use tokio::sync::watch;
 use tracing::{debug, info, instrument};
 
 /// The genesis journal hash for the signet chain.
@@ -299,16 +299,14 @@ where
     /// This should be called after `set_with_head` to configure how many
     /// blocks can be processed per backfill batch.
     fn set_backfill_thresholds(&mut self) {
-        if let Some(max_blocks) = self.config.backfill_max_blocks() {
-            self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
-                max_blocks: Some(max_blocks),
-                // Keep the backfill mdbx read transaction open for no longer than 30 seconds.
-                // This prevents MDBX from killing the read transaction, leading to a crash if reth's default mdbx read transaction timeout is exceeded.
-                max_duration: Some(Duration::from_secs(30)),
-                ..Default::default()
-            });
-            debug!(max_blocks, "configured backfill thresholds");
-        }
+        let max_blocks = self.config.backfill_max_blocks();
+        let max_duration = self.config.backfill_max_duration();
+        self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
+            max_blocks,
+            max_duration,
+            ..Default::default()
+        });
+        debug!(?max_blocks, ?max_duration, "configured backfill thresholds");
     }
 
     /// Runs on any notification received from the ExEx context.
