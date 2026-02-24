@@ -27,7 +27,7 @@ use signet_node_types::{NodeStatus, NodeTypesDbTrait, SignetNodeTypes};
 use signet_rpc::RpcServerGuard;
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, mem::MaybeUninit, sync::Arc};
-use tokio::sync::watch;
+use tokio::{sync::watch, time::Duration};
 use tracing::{debug, info, instrument};
 
 /// The genesis journal hash for the signet chain.
@@ -302,6 +302,9 @@ where
         if let Some(max_blocks) = self.config.backfill_max_blocks() {
             self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
                 max_blocks: Some(max_blocks),
+                // Keep the backfill mdbx read transaction open for no longer than 30 seconds.
+                // This prevents MDBX from killing the read transaction, leading to a crash if reth's default mdbx read transaction timeout is exceeded.
+                max_duration: Some(Duration::from_secs(30)),
                 ..Default::default()
             });
             debug!(max_blocks, "configured backfill thresholds");
