@@ -8,13 +8,12 @@ mod tracer;
 
 use crate::ctx::RpcCtx;
 use alloy::{eips::BlockNumberOrTag, primitives::B256};
-use reth_node_api::FullNodeComponents;
 use signet_node_types::Pnt;
 
 /// Instantiate a `debug` API router.
 pub fn debug<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     ajj::Router::new()

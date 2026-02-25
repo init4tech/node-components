@@ -97,13 +97,17 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ctx.host()
-        .network()
-        .network_status()
-        .await
-        .map(|info| info.protocol_version)
-        .map(U64::from)
-        .map_err(|s| s.to_string())
+    match ctx.host() {
+        Some(host) => host
+            .network()
+            .network_status()
+            .await
+            .map(|info| info.protocol_version)
+            .map(U64::from)
+            .map_err(|s| s.to_string()),
+        // In standalone mode, return a default protocol version
+        None => Ok(U64::from(68u64)),
+    }
 }
 
 pub(super) async fn syncing<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<bool, ()>
@@ -111,12 +115,34 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    Ok(ctx.host().network().is_syncing())
+    match ctx.host() {
+        Some(host) => Ok(host.network().is_syncing()),
+        // In standalone mode, we're never "syncing" from RPC perspective
+        None => Ok(false),
+    }
+}
+
+/// Standalone version of protocol_version (no host required).
+pub(super) async fn protocol_version_standalone<Signet>(
+    _ctx: RpcCtx<(), Signet>,
+) -> Result<U64, String>
+where
+    Signet: Pnt,
+{
+    Ok(U64::from(68u64))
+}
+
+/// Standalone version of syncing (no host required).
+pub(super) async fn syncing_standalone<Signet>(_ctx: RpcCtx<(), Signet>) -> Result<bool, ()>
+where
+    Signet: Pnt,
+{
+    Ok(false)
 }
 
 pub(super) async fn block_number<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     ctx.signet().provider().last_block_number().map(U64::from).map_err(|s| s.to_string())
@@ -124,7 +150,7 @@ where
 
 pub(super) async fn chain_id<Host, Signet>(ctx: RpcCtx<Host, Signet>) -> Result<U64, ()>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     Ok(U64::from(ctx.signet().constants().ru_chain_id()))
@@ -137,7 +163,7 @@ pub(super) async fn block<T, Host, Signet>(
 ) -> Result<Option<RpcBlock<Ethereum>>, String>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = t.into();
@@ -153,7 +179,7 @@ pub(super) async fn block_tx_count<T, Host, Signet>(
 ) -> Result<Option<U64>, String>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = t.into();
@@ -168,7 +194,7 @@ pub(super) async fn block_receipts<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<Option<Vec<RpcReceipt<Ethereum>>>, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move {
@@ -219,7 +245,7 @@ pub(super) async fn raw_transaction_by_hash<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<Option<alloy::primitives::Bytes>, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move {
@@ -239,7 +265,7 @@ pub(super) async fn transaction_by_hash<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<Option<RpcTransaction<Ethereum>>, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { ctx.signet().rpc_transaction_by_hash(hash).map_err(|e| e.to_string()) };
@@ -254,7 +280,7 @@ pub(super) async fn raw_transaction_by_block_and_index<T, Host, Signet>(
 ) -> Result<Option<alloy::primitives::Bytes>, String>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id: BlockId = t.into();
@@ -276,7 +302,7 @@ pub(super) async fn transaction_by_block_and_index<T, Host, Signet>(
 ) -> Result<Option<RpcTransaction<Ethereum>>, String>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = t.into();
@@ -297,7 +323,7 @@ pub(super) async fn transaction_receipt<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<Option<RpcReceipt<Ethereum>>, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task =
@@ -312,7 +338,7 @@ pub(super) async fn balance<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U256, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let block = block.unwrap_or(BlockId::latest());
@@ -331,7 +357,7 @@ pub(super) async fn storage_at<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<B256, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let block = block.unwrap_or(BlockId::latest());
@@ -350,7 +376,7 @@ pub(super) async fn addr_tx_count<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let block = block.unwrap_or(BlockId::latest());
@@ -369,7 +395,7 @@ pub(super) async fn code_at<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<alloy::primitives::Bytes, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let block = block.unwrap_or(BlockId::latest());
@@ -389,7 +415,7 @@ pub(super) async fn header_by<T, Host, Signet>(
 ) -> Result<Option<RpcHeader<Ethereum>>, String>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = t.into();
@@ -421,7 +447,7 @@ pub(super) async fn run_call<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> ResponsePayload<ExecutionResult, CallErrorData>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -480,7 +506,7 @@ pub(super) async fn call<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> ResponsePayload<alloy::primitives::Bytes, CallErrorData>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     // Stateless gas normalization. We will do stateful gas normalization later
@@ -523,7 +549,7 @@ pub(super) async fn estimate_gas<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> ResponsePayload<U64, CallErrorData>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let id = block.unwrap_or(BlockId::pending());
@@ -593,7 +619,7 @@ pub(super) async fn gas_price<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U256, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move {
@@ -615,7 +641,7 @@ pub(super) async fn max_priority_fee_per_gas<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U256, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task =
@@ -630,7 +656,7 @@ pub(super) async fn fee_history<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<alloy::rpc::types::FeeHistory, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move {
@@ -649,7 +675,7 @@ pub(super) async fn send_raw_transaction<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<B256, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = |hctx: HandlerCtx| async move {
@@ -679,7 +705,7 @@ pub(super) async fn get_logs<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<Vec<alloy::rpc::types::Log>, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { ctx.signet().logs(&filter).await.map_err(EthError::into_string) };
@@ -693,7 +719,7 @@ pub(super) async fn new_filter<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task =
@@ -707,7 +733,7 @@ pub(super) async fn new_block_filter<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { ctx.signet().install_block_filter().map_err(EthError::into_string) };
@@ -721,7 +747,7 @@ pub(super) async fn uninstall_filter<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<bool, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { Ok(ctx.signet().uninstall_filter(id)) };
@@ -735,7 +761,7 @@ pub(super) async fn get_filter_changes<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<FilterOutput, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { ctx.signet().filter_changes(id).await.map_err(EthError::into_string) };
@@ -749,7 +775,7 @@ pub(super) async fn subscribe<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<U64, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let kind = sub.try_into()?;
@@ -770,7 +796,7 @@ pub(super) async fn unsubscribe<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<bool, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = async move { Ok(ctx.signet().subscriptions().unsubscribe(id)) };

@@ -4,7 +4,6 @@ use crate::{
     utils::{await_handler, response_tri},
 };
 use ajj::{HandlerCtx, ResponsePayload};
-use reth_node_api::FullNodeComponents;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
 use signet_node_types::Pnt;
 use signet_types::SignedOrder;
@@ -17,7 +16,7 @@ pub(super) async fn send_order<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> Result<(), String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let task = |hctx: HandlerCtx| async move {
@@ -39,7 +38,7 @@ pub(super) async fn call_bundle<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> ResponsePayload<SignetCallBundleResponse, String>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let timeout = bundle.bundle.timeout.unwrap_or(1000);

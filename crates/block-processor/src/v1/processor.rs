@@ -113,12 +113,30 @@ where
     }
 
     /// Called when the host chain has committed a block or set of blocks.
-    #[instrument(skip_all, fields(count = chain.len(), first = chain.first().number(), tip = chain.tip().number()))]
+    ///
+    /// This is a convenience wrapper around [`process_chain`] that accepts
+    /// a generic `Host` chain type.
+    ///
+    /// [`process_chain`]: Self::process_chain
     pub async fn on_host_commit<Host>(&self, chain: &Chain<Host>) -> eyre::Result<Option<RuChain>>
     where
         Host: FullNodeComponents,
         Host::Types: NodeTypes<Primitives = EthPrimitives>,
     {
+        // Chain<Host> is Chain<EthPrimitives> due to the Primitives bound,
+        // which is the same as reth::providers::Chain (default generic).
+        self.process_chain(chain).await
+    }
+
+    /// Process a host chain commit.
+    ///
+    /// Extracts Signet blocks from the host chain, runs the EVM for each,
+    /// and commits the results to the rollup database.
+    #[instrument(skip_all, fields(count = chain.len(), first = chain.first().number(), tip = chain.tip().number()))]
+    pub async fn process_chain(
+        &self,
+        chain: &reth::providers::Chain,
+    ) -> eyre::Result<Option<RuChain>> {
         let highest = chain.tip().number();
         if highest < self.constants.host_deploy_height() {
             return Ok(None);
@@ -212,7 +230,7 @@ where
 
         let ru_info = provider.get_extraction_results(start..=current)?;
 
-        let inner = Chain::<Host>::new(
+        let inner = reth::providers::Chain::new(
             provider.recovered_block_range(start..=current)?,
             net_outcome,
             Default::default(),

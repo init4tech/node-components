@@ -231,6 +231,80 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
     }
 }
 
+impl BlobCacher<()> {
+    /// Creates a new `BlobCacher` without a transaction pool.
+    ///
+    /// The cacher will only use remote blob sources (explorer, CL, pylon).
+    pub fn new_no_pool(fetcher: BlobFetcher<()>) -> Self {
+        Self { fetcher, cache: LruMap::new(BLOB_CACHE_SIZE).into() }
+    }
+
+    /// Fetches blobs using remote sources only.
+    #[instrument(skip(self), target = "signet_blobber::BlobCacher", fields(retries = FETCH_RETRIES))]
+    async fn fetch_blobs_remote(
+        &self,
+        slot: usize,
+        tx_hash: B256,
+        versioned_hashes: Vec<B256>,
+    ) -> BlobberResult<Blobs> {
+        // Cache hit
+        if let Some(blobs) = self.cache.lock().unwrap().get(&(slot, tx_hash)) {
+            info!(target: "signet_blobber::BlobCacher", "Cache hit");
+            return Ok(blobs.clone());
+        }
+
+        // Cache miss, use the fetcher to retrieve blobs from remote sources
+        for attempt in 1..=FETCH_RETRIES {
+            let Ok(blobs) = self
+                .fetcher
+                .fetch_blobs_remote(slot, tx_hash, &versioned_hashes)
+                .instrument(debug_span!("fetch_blobs_loop", attempt))
+                .await
+            else {
+                tokio::time::sleep(BETWEEN_RETRIES).await;
+                continue;
+            };
+
+            self.cache.lock().unwrap().insert((slot, tx_hash), blobs.clone());
+            return Ok(blobs);
+        }
+        error!(target: "signet_blobber::BlobCacher", "All fetch attempts failed");
+        Err(BlobberError::missing_sidecar(tx_hash))
+    }
+
+    /// Processes cache instructions (no-pool variant).
+    async fn handle_inst_no_pool(self: Arc<Self>, inst: CacheInst) {
+        match inst {
+            CacheInst::Retrieve { slot, tx_hash, version_hashes, resp, span } => {
+                if let Ok(blobs) =
+                    self.fetch_blobs_remote(slot, tx_hash, version_hashes).instrument(span).await
+                {
+                    let _ = resp.send(blobs);
+                }
+            }
+        }
+    }
+
+    async fn task_future_no_pool(self: Arc<Self>, mut inst: mpsc::Receiver<CacheInst>) {
+        while let Some(inst) = inst.recv().await {
+            let this = Arc::clone(&self);
+            tokio::spawn(async move {
+                this.handle_inst_no_pool(inst).await;
+            });
+        }
+    }
+
+    /// Spawns the cache task without a transaction pool.
+    ///
+    /// # Panics
+    /// This function will panic if the cache task fails to spawn.
+    pub fn spawn_no_pool<C: SidecarCoder + Default>(self) -> CacheHandle<C> {
+        let (sender, inst) = mpsc::channel(CACHE_REQUEST_CHANNEL_SIZE);
+        tokio::spawn(Arc::new(self).task_future_no_pool(inst));
+        CacheHandle { sender, _coder: PhantomData }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::BlobFetcher;

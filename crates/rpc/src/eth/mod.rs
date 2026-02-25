@@ -18,9 +18,31 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
-    ajj::Router::new()
+    eth_core()
         .route("protocolVersion", protocol_version)
         .route("syncing", syncing)
+}
+
+/// Instantiate the `eth` API router for standalone mode (no host chain).
+///
+/// Uses stub implementations for `protocolVersion` and `syncing` that
+/// return default values.
+pub(crate) fn eth_standalone<Signet>() -> ajj::Router<RpcCtx<(), Signet>>
+where
+    Signet: Pnt,
+{
+    eth_core()
+        .route("protocolVersion", protocol_version_standalone)
+        .route("syncing", syncing_standalone)
+}
+
+/// Core `eth` routes shared between full and standalone mode.
+fn eth_core<Host, Signet>() -> ajj::Router<RpcCtx<Host, Signet>>
+where
+    Host: Send + Sync + 'static,
+    Signet: Pnt,
+{
+    ajj::Router::new()
         .route("blockNumber", block_number)
         .route("chainId", chain_id)
         .route("getBlockByHash", block::<B256, _, _>)

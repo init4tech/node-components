@@ -97,6 +97,21 @@ where
         .nest("debug", debug::<Host, Signet>())
 }
 
+/// Create a new router for standalone mode (without host chain components).
+///
+/// Uses `Host = ()` and stub implementations for the host-dependent
+/// endpoints (`eth_protocolVersion`, `eth_syncing`).
+pub fn router_standalone<Signet>() -> Router<ctx::RpcCtx<(), Signet>>
+where
+    Signet: Pnt,
+{
+    use eth::eth_standalone;
+    ajj::Router::new()
+        .nest("eth", eth_standalone::<Signet>())
+        .nest("signet", signet::<(), Signet>())
+        .nest("debug", debug::<(), Signet>())
+}
+
 /// Create a new hazmat router that exposes the `inspect` API.
 pub fn hazmat_router<Signet>() -> Router<ProviderFactory<Signet>>
 where

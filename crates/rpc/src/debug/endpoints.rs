@@ -12,7 +12,6 @@ use reth::rpc::{
         trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
     },
 };
-use reth_node_api::FullNodeComponents;
 use signet_evm::EvmErrored;
 use signet_node_types::Pnt;
 use signet_types::MagicSig;
@@ -35,7 +34,7 @@ pub(super) async fn trace_block<T, Host, Signet>(
 ) -> ResponsePayload<Vec<TraceResult>, DebugError>
 where
     T: Into<BlockId>,
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));
@@ -104,7 +103,7 @@ pub(super) async fn trace_transaction<Host, Signet>(
     ctx: RpcCtx<Host, Signet>,
 ) -> ResponsePayload<GethTrace, DebugError>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     let opts = response_tri!(opts.ok_or(DebugError::from(EthApiError::InvalidTracerConfig)));

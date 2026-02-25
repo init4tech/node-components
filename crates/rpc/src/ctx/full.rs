@@ -77,10 +77,14 @@ impl From<LoadState> for bool {
 
 /// RPC context. Contains all necessary host and signet components for serving
 /// RPC requests.
+///
+/// The `Host` parameter may be any type; in standalone mode (no host chain),
+/// use `()`. `Host: FullNodeComponents` is only required by methods that
+/// access the host (e.g. [`Self::new`]).
 #[derive(Debug)]
 pub struct RpcCtx<Host, Signet>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     inner: Arc<RpcCtxInner<Host, Signet>>,
@@ -119,9 +123,33 @@ where
     }
 }
 
+impl<Signet> RpcCtx<(), Signet>
+where
+    Signet: Pnt,
+{
+    /// Create a new `RpcCtx` without host chain components.
+    ///
+    /// This is used by the standalone rollup process which does not have
+    /// access to the host chain's node components. The `protocol_version`
+    /// and `syncing` RPC endpoints will return default values.
+    pub fn new_standalone<Tasks>(
+        constants: SignetSystemConstants,
+        provider: BlockchainProvider<Signet>,
+        eth_config: EthConfig,
+        tx_cache: Option<TxCache>,
+        spawner: Tasks,
+    ) -> ProviderResult<Self>
+    where
+        Tasks: TaskSpawner + Clone + 'static,
+    {
+        RpcCtxInner::new_standalone(constants, provider, eth_config, tx_cache, spawner)
+            .map(|inner| Self { inner: Arc::new(inner) })
+    }
+}
+
 impl<Host, Signet> Clone for RpcCtx<Host, Signet>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     fn clone(&self) -> Self {
@@ -131,7 +159,7 @@ where
 
 impl<Host, Signet> core::ops::Deref for RpcCtx<Host, Signet>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
     type Target = RpcCtxInner<Host, Signet>;
@@ -148,13 +176,15 @@ struct SharedContext {
 }
 
 /// Inner context for [`RpcCtx`].
+///
+/// The `Host` parameter may be any type; in standalone mode, use `()`.
 #[derive(Debug)]
 pub struct RpcCtxInner<Host, Signet>
 where
-    Host: FullNodeComponents,
+    Host: Send + Sync + 'static,
     Signet: Pnt,
 {
-    host: Host,
+    host: Option<Host>,
     signet: SignetCtx<Signet>,
 
     shared: SharedContext,
@@ -191,27 +221,75 @@ where
         let tracing_semaphores = Semaphore::new(eth_config.max_tracing_requests).into();
 
         SignetCtx::new(constants, provider, eth_config, tx_cache, spawner).map(|signet| Self {
-            host,
+            host: Some(host),
             signet,
             shared: SharedContext { tracing_semaphores },
         })
     }
 
+    /// Get the task executor. Panics if no host is available.
+    ///
+    /// In standalone mode, callers should use a directly-provided TaskExecutor
+    /// rather than accessing it through the RPC context.
+    pub fn task_executor(&self) -> &TaskExecutor {
+        self.host
+            .as_ref()
+            .expect("task_executor called without host; use standalone TaskExecutor")
+            .task_executor()
+    }
+}
+
+impl<Signet> RpcCtxInner<(), Signet>
+where
+    Signet: Pnt,
+{
+    /// Create a new `RpcCtxInner` without host chain components.
+    ///
+    /// Used by the standalone rollup process. Endpoints that require host
+    /// components (`eth_protocolVersion`, `eth_syncing`) will return defaults.
+    pub fn new_standalone<Tasks>(
+        constants: SignetSystemConstants,
+        provider: BlockchainProvider<Signet>,
+        eth_config: EthConfig,
+        tx_cache: Option<TxCache>,
+        spawner: Tasks,
+    ) -> ProviderResult<Self>
+    where
+        Tasks: TaskSpawner + Clone + 'static,
+    {
+        let tracing_semaphores = Semaphore::new(eth_config.max_tracing_requests).into();
+
+        SignetCtx::new(constants, provider, eth_config, tx_cache, spawner).map(|signet| Self {
+            host: None,
+            signet,
+            shared: SharedContext { tracing_semaphores },
+        })
+    }
+}
+
+impl<Host, Signet> RpcCtxInner<Host, Signet>
+where
+    Host: Send + Sync + 'static,
+    Signet: Pnt,
+{
     /// Acquire a permit for tracing.
     pub async fn acquire_tracing_permit(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
         self.shared.tracing_semaphores.clone().acquire_owned().await
     }
 
-    pub const fn host(&self) -> &Host {
-        &self.host
+    /// Returns a reference to the host components, if available.
+    pub fn host(&self) -> Option<&Host> {
+        self.host.as_ref()
     }
 
+    /// Returns `true` if host components are available.
+    pub fn has_host(&self) -> bool {
+        self.host.is_some()
+    }
+
+    /// Returns a reference to the signet context.
     pub const fn signet(&self) -> &SignetCtx<Signet> {
         &self.signet
-    }
-
-    pub fn task_executor(&self) -> &TaskExecutor {
-        self.host.task_executor()
     }
 
     /// Instantiate a trevm instance with a custom inspector.

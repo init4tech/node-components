@@ -107,8 +107,8 @@ impl Blobs {
 /// transactions. Decoder attempts to fetch from the Pool first and then
 /// queries an explorer if it can't find the blob. When Decoder does find a
 /// blob, it decodes it and returns the decoded transactions.
-pub struct BlobFetcher<Pool> {
-    pool: Pool,
+pub struct BlobFetcher<Pool = ()> {
+    pool: Option<Pool>,
     explorer: foundry_blob_explorers::Client,
     client: reqwest::Client,
     cl_url: Option<url::Url>,
@@ -117,9 +117,11 @@ pub struct BlobFetcher<Pool> {
 
 impl<Pool: core::fmt::Debug> core::fmt::Debug for BlobFetcher<Pool> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("BlobFetcher")
-            .field("pool", &self.pool)
-            .field("explorer", &self.explorer.baseurl())
+        let mut s = f.debug_struct("BlobFetcher");
+        if let Some(pool) = &self.pool {
+            s.field("pool", pool);
+        }
+        s.field("explorer", &self.explorer.baseurl())
             .field("cl_url", &self.cl_url)
             .field("pylon_url", &self.pylon_url)
             .finish_non_exhaustive()
@@ -133,35 +135,15 @@ impl BlobFetcher<()> {
     }
 }
 
-impl<Pool> BlobFetcher<Pool>
-where
-    Pool: TransactionPool,
-{
-    /// new returns a new `Decoder` generic over a `Pool`
-    pub const fn new(
-        pool: Pool,
-        explorer: foundry_blob_explorers::Client,
-        cl_client: reqwest::Client,
-        cl_url: Option<url::Url>,
-        pylon_url: Option<url::Url>,
-    ) -> Self {
-        Self { pool, explorer, client: cl_client, cl_url, pylon_url }
-    }
-
-    /// Fetch blobs from the local txpool, or fall back to remote sources
+impl<Pool> BlobFetcher<Pool> {
+    /// Fetch blobs from remote sources only (explorer, CL, pylon).
     #[instrument(skip(self))]
-    pub(crate) async fn fetch_blobs(
+    pub(crate) async fn fetch_blobs_remote(
         &self,
         slot: usize,
         tx_hash: B256,
         versioned_hashes: &[B256],
     ) -> FetchResult<Blobs> {
-        if let Ok(blobs) = self.get_blobs_from_pool(tx_hash) {
-            return Ok(blobs);
-        }
-
-        // if the pool doesn't have it, reach out to other sources
-        // and return the first successful response
         select! {
             Ok(blobs) = self.get_blobs_from_explorer(tx_hash) => {
                  Ok(blobs)
@@ -176,11 +158,6 @@ where
                 Err(FetchError::MissingSidecar(tx_hash))
             }
         }
-    }
-
-    /// Return a blob from the local pool or an error
-    fn get_blobs_from_pool(&self, tx: TxHash) -> FetchResult<Blobs> {
-        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| FetchError::MissingSidecar(tx))
     }
 
     /// Returns the blob from the explorer
@@ -260,6 +237,63 @@ where
         }
 
         Ok(blobs)
+    }
+}
+
+impl BlobFetcher<()> {
+    /// Create a new `BlobFetcher` without a transaction pool.
+    ///
+    /// The fetcher will only use remote sources (explorer, CL, pylon).
+    pub const fn new_no_pool(
+        explorer: foundry_blob_explorers::Client,
+        cl_client: reqwest::Client,
+        cl_url: Option<url::Url>,
+        pylon_url: Option<url::Url>,
+    ) -> Self {
+        Self { pool: None, explorer, client: cl_client, cl_url, pylon_url }
+    }
+}
+
+impl<Pool> BlobFetcher<Pool>
+where
+    Pool: TransactionPool,
+{
+    /// new returns a new `Decoder` generic over a `Pool`
+    pub const fn new(
+        pool: Pool,
+        explorer: foundry_blob_explorers::Client,
+        cl_client: reqwest::Client,
+        cl_url: Option<url::Url>,
+        pylon_url: Option<url::Url>,
+    ) -> Self {
+        Self { pool: Some(pool), explorer, client: cl_client, cl_url, pylon_url }
+    }
+
+    /// Fetch blobs from the local txpool, or fall back to remote sources
+    #[instrument(skip(self))]
+    pub(crate) async fn fetch_blobs(
+        &self,
+        slot: usize,
+        tx_hash: B256,
+        versioned_hashes: &[B256],
+    ) -> FetchResult<Blobs> {
+        if let Some(pool) = &self.pool {
+            if let Ok(Some(sidecar)) = pool.get_blob(tx_hash) {
+                return Ok(sidecar.into());
+            }
+        }
+
+        self.fetch_blobs_remote(slot, tx_hash, versioned_hashes).await
+    }
+
+    /// Return a blob from the local pool or an error
+    fn get_blobs_from_pool(&self, tx: TxHash) -> FetchResult<Blobs> {
+        self.pool
+            .as_ref()
+            .ok_or_else(|| FetchError::MissingSidecar(tx))?
+            .get_blob(tx)?
+            .map(Into::into)
+            .ok_or_else(|| FetchError::MissingSidecar(tx))
     }
 }
 

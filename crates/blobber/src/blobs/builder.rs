@@ -106,6 +106,29 @@ impl<Pool> BlobFetcherBuilder<Pool> {
     }
 }
 
+impl<Pool> BlobFetcherBuilder<Pool> {
+    /// Build a [`BlobFetcher`] without a transaction pool.
+    ///
+    /// The fetcher will only use remote sources (explorer, CL, pylon).
+    pub fn build_no_pool(self) -> Result<BlobFetcher<()>, BuilderError> {
+        let explorer_url = self.explorer_url.ok_or(BuilderError::MissingExplorerUrl)?;
+        let cl_url = self.cl_url.map(parse_url).transpose()?;
+        let pylon_url = self.pylon_url.map(parse_url).transpose()?;
+        let client = self.client.ok_or(BuilderError::MissingClient)?;
+        let explorer =
+            foundry_blob_explorers::Client::new_with_client(explorer_url, client.clone());
+        Ok(BlobFetcher::new_no_pool(explorer, client, cl_url, pylon_url))
+    }
+
+    /// Build a [`BlobCacher`] without a transaction pool.
+    ///
+    /// The cacher will only use remote sources (explorer, CL, pylon).
+    pub fn build_cache_no_pool(self) -> Result<BlobCacher<()>, BuilderError> {
+        let fetcher = self.build_no_pool()?;
+        Ok(BlobCacher::new_no_pool(fetcher))
+    }
+}
+
 impl<Pool: TransactionPool> BlobFetcherBuilder<Pool> {
     /// Build the [`BlobFetcher`] with the provided parameters.
     pub fn build(self) -> Result<BlobFetcher<Pool>, BuilderError> {
