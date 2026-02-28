@@ -85,6 +85,7 @@ where
         .route("signTransaction", not_supported)
         .route("signTypedData", not_supported)
         .route("getProof", not_supported)
+        // eth_createAccessList would use `pending` when implemented (like estimateGas)
         .route("createAccessList", not_supported)
         .route("newPendingTransactionFilter", not_supported)
 }
