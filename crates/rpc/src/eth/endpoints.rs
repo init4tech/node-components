@@ -33,7 +33,7 @@ use tracing::{Instrument, debug, trace_span};
 use trevm::{EstimationResult, MIN_TRANSACTION_GAS, revm::context::result::ExecutionResult};
 
 /// Args for `eth_estimateGas` and `eth_call`.
-/// 
+///
 /// **Note on default block parameters:**
 /// - `eth_call` defaults to `latest` - used for inspecting current chain state
 /// - `eth_estimateGas` defaults to `pending` - used for estimating new transactions with newest header info
