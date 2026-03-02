@@ -33,6 +33,11 @@ use tracing::{Instrument, debug, trace_span};
 use trevm::{EstimationResult, MIN_TRANSACTION_GAS, revm::context::result::ExecutionResult};
 
 /// Args for `eth_estimateGas` and `eth_call`.
+///
+/// **Note on default block parameters:**
+/// - `eth_call` defaults to `latest` - used for inspecting current chain state
+/// - `eth_estimateGas` defaults to `pending` - used for estimating new transactions with newest header info
+/// - `eth_createAccessList` (when implemented) would default to `pending` - same rationale as estimateGas
 #[derive(Debug, Deserialize)]
 pub(super) struct TxParams(
     TransactionRequest,
@@ -424,6 +429,8 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    // eth_call defaults to `latest` for current state inspection
+    // (differs from eth_estimateGas which uses `pending` for new transactions)
     let id = block.unwrap_or(BlockId::latest());
 
     // this span is verbose yo.
@@ -526,6 +533,8 @@ where
     Host: FullNodeComponents,
     Signet: Pnt,
 {
+    // eth_estimateGas defaults to `pending` for new transaction estimation
+    // (differs from eth_call which uses `latest` for current state inspection)
     let id = block.unwrap_or(BlockId::pending());
 
     // this span is verbose yo.
