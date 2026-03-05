@@ -242,8 +242,7 @@ where
             match host_deployment_block {
                 Some(genesis_block) => {
                     let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                    self.host.notifications.set_with_head(exex_head);
-                    self.set_backfill_thresholds();
+                    self.configure_notifications(exex_head);
                     return Ok(exex_head);
                 }
                 None => {
@@ -256,8 +255,7 @@ where
                     match genesis_block {
                         Some(genesis_block) => {
                             let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                            self.host.notifications.set_with_head(exex_head);
-                            self.set_backfill_thresholds();
+                            self.configure_notifications(exex_head);
                             return Ok(exex_head);
                         }
                         None => panic!("failed to find genesis block"),
@@ -275,8 +273,7 @@ where
             Some(host_block) => {
                 debug!(host_height, "found host block for height");
                 let exex_head = ExExHead { block: host_block.num_hash_slow() };
-                self.host.notifications.set_with_head(exex_head);
-                self.set_backfill_thresholds();
+                self.configure_notifications(exex_head);
                 Ok(exex_head)
             }
             None => {
@@ -285,8 +282,7 @@ where
                 match genesis_block {
                     Some(genesis_block) => {
                         let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                        self.host.notifications.set_with_head(exex_head);
-                        self.set_backfill_thresholds();
+                        self.configure_notifications(exex_head);
                         Ok(exex_head)
                     }
                     None => panic!("failed to find genesis block"),
@@ -295,10 +291,11 @@ where
         }
     }
 
-    /// Sets backfill thresholds to limit memory usage during sync.
-    /// This should be called after `set_with_head` to configure how many
-    /// blocks can be processed per backfill batch.
-    fn set_backfill_thresholds(&mut self) {
+    /// Configures the ExEx notification stream with the given head and
+    /// backfill thresholds from the node config.
+    fn configure_notifications(&mut self, exex_head: ExExHead) {
+        self.host.notifications.set_with_head(exex_head);
+
         let max_blocks = self.config.backfill_max_blocks();
         let max_duration = self.config.backfill_max_duration();
         self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
