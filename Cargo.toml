@@ -113,11 +113,11 @@ url = "2.5.4"
 # Test Utils
 tempfile = "3.17.0"
 
-# [patch.crates-io]
-# signet-cold = { path = "../storage/crates/cold" }
-# signet-hot = { path = "../storage/crates/hot" }
-# signet-storage = { path = "../storage/crates/storage" }
-# signet-storage-types = { path = "../storage/crates/types" }
+[patch.crates-io]
+signet-cold = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-hot = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-storage = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-storage-types = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
 
 # signet-bundle = { path = "../sdk/crates/bundle"}
 # signet-constants = { path = "../sdk/crates/constants"}

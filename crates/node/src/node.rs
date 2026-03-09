@@ -15,8 +15,8 @@ use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{ChainNotifier, NewBlockNotification, RpcServerGuard};
-use signet_storage::{HistoryRead, HotKv, HotKvRead, UnifiedStorage};
+use signet_rpc::{ChainNotifier, NewBlockNotification, ReorgNotification, RpcServerGuard};
+use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
 use tokio::sync::watch;
@@ -296,7 +296,8 @@ where
 
         // NB: REVERTS MUST RUN FIRST
         if let Some(chain) = notification.reverted_chain() {
-            changed |= self.on_host_revert(&chain).wrap_err("error encountered during revert")?;
+            changed |=
+                self.on_host_revert(&chain).await.wrap_err("error encountered during revert")?;
         }
 
         if let Some(chain) = notification.committed_chain() {
@@ -358,6 +359,20 @@ where
         };
         // Ignore send errors — no subscribers is fine.
         let _ = self.chain.send_new_block(notif);
+    }
+
+    /// Send a reorg notification on the broadcast channel.
+    fn notify_reorg(&self, drained: Vec<DrainedBlock>, common_ancestor: u64) {
+        let removed_hashes = drained.iter().map(|d| d.header.hash()).collect();
+        let removed_logs = drained
+            .into_iter()
+            .flat_map(|d| d.receipts)
+            .flat_map(|r| r.receipt.logs)
+            .map(|l| l.inner)
+            .collect();
+        let notif = ReorgNotification { common_ancestor, removed_hashes, removed_logs };
+        // Ignore send errors — no subscribers is fine.
+        let _ = self.chain.send_reorg(notif);
     }
 
     /// Update the status channel and block tags. This keeps the RPC node
@@ -476,7 +491,7 @@ where
     ///
     /// Returns `true` if any rollup state was unwound.
     #[instrument(skip_all, fields(first = chain.first().number(), tip = chain.tip().number()))]
-    pub fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
+    pub async fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
         // If the end is before the RU genesis, nothing to do.
         if chain.tip().number() <= self.constants.host_deploy_height() {
             return Ok(false);
@@ -489,7 +504,15 @@ where
             .unwrap_or_default()
             .saturating_sub(1);
 
-        self.storage.unwind_above(target)?;
+        let drained = self.storage.drain_above(target).await?;
+
+        // The early return above guards against no-op reverts, so drained
+        // should always contain at least one block. Guard defensively.
+        debug_assert!(!drained.is_empty(), "drain_above returned empty after host revert");
+        if !drained.is_empty() {
+            self.notify_reorg(drained, target);
+        }
+
         Ok(true)
     }
 }
