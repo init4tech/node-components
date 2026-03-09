@@ -1,18 +1,18 @@
 //! Shared chain state between the node and RPC layer.
 
-use crate::{config::resolve::BlockTags, interest::NewBlockNotification};
+use crate::{config::resolve::BlockTags, interest::ChainEvent};
 use tokio::sync::broadcast;
 
 /// Shared chain state between the node and RPC layer.
 ///
-/// Combines block tag tracking and new-block notification into a single
+/// Combines block tag tracking and chain event notification into a single
 /// unit that both the node and RPC context hold. Cloning is cheap — all
 /// fields are backed by `Arc`.
 ///
 /// # Construction
 ///
 /// ```
-/// use signet_rpc::ChainNotifier;
+/// use signet_rpc::{ChainNotifier, ChainEvent, NewBlockNotification};
 ///
 /// let notifier = ChainNotifier::new(128);
 /// assert_eq!(notifier.tags().latest(), 0);
@@ -23,7 +23,7 @@ use tokio::sync::broadcast;
 #[derive(Debug, Clone)]
 pub struct ChainNotifier {
     tags: BlockTags,
-    notif_tx: broadcast::Sender<NewBlockNotification>,
+    notif_tx: broadcast::Sender<ChainEvent>,
 }
 
 impl ChainNotifier {
@@ -40,27 +40,27 @@ impl ChainNotifier {
         &self.tags
     }
 
-    /// Send a new block notification.
+    /// Send a chain event to subscribers.
     ///
     /// Returns `Ok(receiver_count)` or `Err` if there are no active
     /// receivers (which is not usually an error condition).
     #[allow(clippy::result_large_err)]
-    pub fn send_notification(
+    pub fn send_event(
         &self,
-        notif: NewBlockNotification,
-    ) -> Result<usize, broadcast::error::SendError<NewBlockNotification>> {
-        self.notif_tx.send(notif)
+        event: ChainEvent,
+    ) -> Result<usize, broadcast::error::SendError<ChainEvent>> {
+        self.notif_tx.send(event)
     }
 
-    /// Subscribe to new block notifications.
-    pub fn subscribe(&self) -> broadcast::Receiver<NewBlockNotification> {
+    /// Subscribe to chain events.
+    pub fn subscribe(&self) -> broadcast::Receiver<ChainEvent> {
         self.notif_tx.subscribe()
     }
 
     /// Get a clone of the broadcast sender.
     ///
     /// Used by the subscription manager to create its own receiver.
-    pub fn notif_sender(&self) -> broadcast::Sender<NewBlockNotification> {
+    pub fn notif_sender(&self) -> broadcast::Sender<ChainEvent> {
         self.notif_tx.clone()
     }
 }

@@ -1,7 +1,7 @@
 //! Subscription management for `eth_subscribe` / `eth_unsubscribe`.
 
 use crate::interest::{
-    InterestKind, NewBlockNotification,
+    ChainEvent, InterestKind,
     buffer::{EventBuffer, EventItem},
 };
 use ajj::HandlerCtx;
@@ -71,7 +71,7 @@ impl SubscriptionManager {
     /// Instantiate a new subscription manager, start a task to clean up
     /// subscriptions cancelled by user disconnection.
     pub(crate) fn new(
-        notif_sender: broadcast::Sender<NewBlockNotification>,
+        notif_sender: broadcast::Sender<ChainEvent>,
         clean_interval: Duration,
     ) -> Self {
         let inner = Arc::new(SubscriptionManagerInner::new(notif_sender));
@@ -100,12 +100,12 @@ impl core::fmt::Debug for SubscriptionManager {
 pub(crate) struct SubscriptionManagerInner {
     next_id: AtomicU64,
     tasks: DashMap<U64, CancellationToken>,
-    notif_sender: broadcast::Sender<NewBlockNotification>,
+    notif_sender: broadcast::Sender<ChainEvent>,
 }
 
 impl SubscriptionManagerInner {
     /// Create a new subscription manager.
-    fn new(notif_sender: broadcast::Sender<NewBlockNotification>) -> Self {
+    fn new(notif_sender: broadcast::Sender<ChainEvent>) -> Self {
         Self { next_id: AtomicU64::new(1), tasks: DashMap::new(), notif_sender }
     }
 
@@ -154,7 +154,7 @@ struct SubscriptionTask {
     id: U64,
     filter: InterestKind,
     token: CancellationToken,
-    notifs: broadcast::Receiver<NewBlockNotification>,
+    notifs: broadcast::Receiver<ChainEvent>,
 }
 
 impl SubscriptionTask {
@@ -219,8 +219,8 @@ impl SubscriptionTask {
                     }
                 }
                 notif_res = notifs.recv() => {
-                    let notif = match notif_res {
-                        Ok(notif) => notif,
+                    let event = match notif_res {
+                        Ok(event) => event,
                         Err(RecvError::Lagged(skipped)) => {
                             trace!(skipped, "missed notifications");
                             continue;
@@ -229,6 +229,10 @@ impl SubscriptionTask {
                             trace!(?e, "notification stream closed");
                             break;
                         }
+                    };
+                    let notif = match event {
+                        ChainEvent::NewBlock(notif) => *notif,
+                        ChainEvent::Reorg(_) => continue,
                     };
 
                     let output = filter.filter_notification_for_sub(&notif);

@@ -56,3 +56,26 @@ pub struct NewBlockNotification {
     /// Receipts for the block.
     pub receipts: Vec<signet_storage_types::Receipt>,
 }
+
+/// A chain event broadcast to subscribers.
+///
+/// Wraps block notifications and reorg notifications into a single
+/// enum so consumers can handle both through one channel.
+#[derive(Debug, Clone)]
+pub enum ChainEvent {
+    /// A new block has been added to the chain.
+    NewBlock(Box<NewBlockNotification>),
+    /// A chain reorganization has occurred.
+    Reorg(ReorgNotification),
+}
+
+/// Notification sent when a chain reorganization is detected.
+#[derive(Debug, Clone)]
+pub struct ReorgNotification {
+    /// The block number of the common ancestor (last block still valid).
+    pub common_ancestor: u64,
+    /// Hashes of the removed blocks.
+    pub removed_hashes: Vec<alloy::primitives::B256>,
+    /// Logs from the removed blocks (needed for `removed: true` emission).
+    pub removed_logs: Vec<alloy::primitives::Log>,
+}
