@@ -109,6 +109,33 @@ impl BlockTags {
         self.latest.store(latest, Ordering::Release);
     }
 
+    /// Cap all three tags to at most `ancestor`.
+    ///
+    /// Used during reorgs to ensure tags never reference blocks that
+    /// have been removed from storage. Stores are ordered
+    /// latest → safe → finalized (the reverse of [`update_all`]) so
+    /// that readers never observe `latest < finalized` while the
+    /// values are being decreased.
+    ///
+    /// [`update_all`]: Self::update_all
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use signet_rpc::BlockTags;
+    ///
+    /// let tags = BlockTags::new(100, 95, 90);
+    /// tags.rewind_to(92);
+    /// assert_eq!(tags.latest(), 92);
+    /// assert_eq!(tags.safe(), 92);
+    /// assert_eq!(tags.finalized(), 90); // already below ancestor
+    /// ```
+    pub fn rewind_to(&self, ancestor: u64) {
+        self.latest.fetch_min(ancestor, Ordering::Release);
+        self.safe.fetch_min(ancestor, Ordering::Release);
+        self.finalized.fetch_min(ancestor, Ordering::Release);
+    }
+
     /// Returns `true` if the node is currently syncing.
     pub fn is_syncing(&self) -> bool {
         self.sync_status.read().expect("sync status lock poisoned").is_some()
@@ -127,6 +154,38 @@ impl BlockTags {
     /// Clear the sync status, indicating the node is fully synced.
     pub fn clear_sync_status(&self) {
         *self.sync_status.write().expect("sync status lock poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewind_to_caps_all_tags() {
+        let tags = BlockTags::new(100, 95, 90);
+        tags.rewind_to(92);
+        assert_eq!(tags.latest(), 92);
+        assert_eq!(tags.safe(), 92);
+        assert_eq!(tags.finalized(), 90);
+    }
+
+    #[test]
+    fn rewind_to_caps_all_above_ancestor() {
+        let tags = BlockTags::new(100, 95, 90);
+        tags.rewind_to(50);
+        assert_eq!(tags.latest(), 50);
+        assert_eq!(tags.safe(), 50);
+        assert_eq!(tags.finalized(), 50);
+    }
+
+    #[test]
+    fn rewind_to_noop_when_all_below() {
+        let tags = BlockTags::new(100, 95, 90);
+        tags.rewind_to(200);
+        assert_eq!(tags.latest(), 100);
+        assert_eq!(tags.safe(), 95);
+        assert_eq!(tags.finalized(), 90);
     }
 }
 
