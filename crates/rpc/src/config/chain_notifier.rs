@@ -1,6 +1,9 @@
 //! Shared chain state between the node and RPC layer.
 
-use crate::{config::resolve::BlockTags, interest::ChainEvent};
+use crate::{
+    config::resolve::BlockTags,
+    interest::{ChainEvent, NewBlockNotification, ReorgNotification},
+};
 use tokio::sync::broadcast;
 
 /// Shared chain state between the node and RPC layer.
@@ -12,7 +15,7 @@ use tokio::sync::broadcast;
 /// # Construction
 ///
 /// ```
-/// use signet_rpc::{ChainNotifier, ChainEvent, NewBlockNotification};
+/// use signet_rpc::ChainNotifier;
 ///
 /// let notifier = ChainNotifier::new(128);
 /// assert_eq!(notifier.tags().latest(), 0);
@@ -40,12 +43,33 @@ impl ChainNotifier {
         &self.tags
     }
 
-    /// Send a chain event to subscribers.
+    /// Send a new block notification.
     ///
     /// Returns `Ok(receiver_count)` or `Err` if there are no active
     /// receivers (which is not usually an error condition).
     #[allow(clippy::result_large_err)]
-    pub fn send_event(
+    pub fn send_new_block(
+        &self,
+        notif: NewBlockNotification,
+    ) -> Result<usize, broadcast::error::SendError<ChainEvent>> {
+        self.send_event(ChainEvent::NewBlock(Box::new(notif)))
+    }
+
+    /// Send a reorg notification.
+    ///
+    /// Returns `Ok(receiver_count)` or `Err` if there are no active
+    /// receivers (which is not usually an error condition).
+    #[allow(clippy::result_large_err)]
+    pub fn send_reorg(
+        &self,
+        notif: ReorgNotification,
+    ) -> Result<usize, broadcast::error::SendError<ChainEvent>> {
+        self.send_event(ChainEvent::Reorg(notif))
+    }
+
+    /// Send a chain event to subscribers.
+    #[allow(clippy::result_large_err)]
+    fn send_event(
         &self,
         event: ChainEvent,
     ) -> Result<usize, broadcast::error::SendError<ChainEvent>> {

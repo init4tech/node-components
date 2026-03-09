@@ -232,6 +232,7 @@ impl SubscriptionTask {
                     };
                     let notif = match event {
                         ChainEvent::NewBlock(notif) => *notif,
+                        // Reorg handling will be addressed in future PRs (ENG-1968 et al.)
                         ChainEvent::Reorg(_) => continue,
                     };
 

@@ -15,7 +15,7 @@ use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{ChainEvent, ChainNotifier, NewBlockNotification, RpcServerGuard};
+use signet_rpc::{ChainNotifier, NewBlockNotification, RpcServerGuard};
 use signet_storage::{HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
@@ -357,7 +357,7 @@ where
             receipts: block.receipts.clone(),
         };
         // Ignore send errors — no subscribers is fine.
-        let _ = self.chain.send_event(ChainEvent::NewBlock(Box::new(notif)));
+        let _ = self.chain.send_new_block(notif);
     }
 
     /// Update the status channel and block tags. This keeps the RPC node
