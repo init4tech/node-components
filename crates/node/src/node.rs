@@ -1,11 +1,11 @@
-use crate::{NodeStatus, metrics};
+use crate::{NodeStatus, RethAliasOracleFactory, metrics};
 use alloy::consensus::BlockHeader;
 use eyre::Context;
 use futures_util::StreamExt;
 use reth::{
     chainspec::EthChainSpec,
     primitives::EthPrimitives,
-    providers::{BlockIdReader, BlockReader, HeaderProvider, StateProviderFactory},
+    providers::{BlockIdReader, BlockReader, HeaderProvider},
 };
 use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
@@ -29,7 +29,7 @@ type ExExNotification<Host> = reth_exex::ExExNotification<PrimitivesOf<Host>>;
 type Chain<Host> = reth::providers::Chain<PrimitivesOf<Host>>;
 
 /// Signet context and configuration.
-pub struct SignetNode<Host, H, AliasOracle = Box<dyn StateProviderFactory>>
+pub struct SignetNode<Host, H, AliasOracle = RethAliasOracleFactory>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
