@@ -357,7 +357,7 @@ where
             receipts: block.receipts.clone(),
         };
         // Ignore send errors — no subscribers is fine.
-        let _ = self.chain.send_notification(notif);
+        let _ = self.chain.send_new_block(notif);
     }
 
     /// Update the status channel and block tags. This keeps the RPC node
