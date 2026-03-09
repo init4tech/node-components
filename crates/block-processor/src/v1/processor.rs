@@ -6,7 +6,6 @@ use alloy::{
 use core::fmt;
 use eyre::{ContextCompat, WrapErr};
 use init4_bin_base::utils::calc::SlotCalculator;
-use reth::{providers::StateProviderFactory, revm::db::StateBuilder};
 use signet_blobber::{CacheHandle, ExtractableChainShim};
 use signet_constants::SignetSystemConstants;
 use signet_evm::{BlockResult, EthereumHardfork, EvmNeedsCfg, SignetDriver};
@@ -19,7 +18,7 @@ use signet_storage_types::{DbSignetEvent, DbZenithHeader, ExecutedBlock, Execute
 use std::collections::VecDeque;
 use tracing::{error, instrument};
 use trevm::revm::{
-    database::{DBErrorMarker, State},
+    database::{DBErrorMarker, State, StateBuilder},
     primitives::hardfork::SpecId,
 };
 
@@ -32,7 +31,7 @@ type HotRevmState<H> = State<RevmRead<<H as HotKv>::RoTx>>;
 /// The processor is a stateless executor: it reads state from hot storage,
 /// runs the EVM, and returns an [`ExecutedBlock`]. The caller (node) handles
 /// extraction, persistence, and orchestrates the per-block loop.
-pub struct SignetBlockProcessor<H, Alias = Box<dyn StateProviderFactory>>
+pub struct SignetBlockProcessor<H, Alias>
 where
     H: HotKv,
 {
@@ -56,7 +55,7 @@ where
     blob_cacher: CacheHandle,
 }
 
-impl<H> fmt::Debug for SignetBlockProcessor<H>
+impl<H, Alias> fmt::Debug for SignetBlockProcessor<H, Alias>
 where
     H: HotKv,
 {

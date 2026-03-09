@@ -1,6 +1,6 @@
 #![allow(clippy::type_complexity)]
 
-use crate::{NodeStatus, SignetNode};
+use crate::{NodeStatus, RethAliasOracleFactory, SignetNode};
 use eyre::OptionExt;
 use reth::{primitives::EthPrimitives, providers::StateProviderFactory};
 use reth_exex::ExExContext;
@@ -170,7 +170,7 @@ where
         self.prebuild().await?;
         let ctx = self.ctx.unwrap();
         let provider = ctx.provider().clone();
-        let alias_oracle: Box<dyn StateProviderFactory> = Box::new(provider);
+        let alias_oracle = RethAliasOracleFactory::new(Box::new(provider));
 
         SignetNode::new_unsafe(
             ctx,
