@@ -113,7 +113,7 @@ impl BlockTags {
     ///
     /// Used during reorgs to ensure tags never reference blocks that
     /// have been removed from storage. Stores are ordered
-    /// latest → safe → finalized (the reverse of [`update_all`]) so
+    /// finalized → safe → latest (the same as [`update_all`]) so
     /// that readers never observe `latest < finalized` while the
     /// values are being decreased.
     ///
@@ -131,9 +131,9 @@ impl BlockTags {
     /// assert_eq!(tags.finalized(), 90); // already below ancestor
     /// ```
     pub fn rewind_to(&self, ancestor: u64) {
-        self.latest.fetch_min(ancestor, Ordering::Release);
-        self.safe.fetch_min(ancestor, Ordering::Release);
         self.finalized.fetch_min(ancestor, Ordering::Release);
+        self.safe.fetch_min(ancestor, Ordering::Release);
+        self.latest.fetch_min(ancestor, Ordering::Release);
     }
 
     /// Returns `true` if the node is currently syncing.
