@@ -32,7 +32,7 @@ use revm_inspectors::access_list::AccessListInspector;
 use serde::Serialize;
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
-use tracing::{Instrument, debug, trace_span};
+use tracing::{Instrument, debug, trace, trace_span};
 use trevm::{
     EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
 };
@@ -1078,8 +1078,21 @@ where
         let fm = ctx.filter_manager();
         let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
 
+        // Handle any pending reorg watermark.
+        if let Some(watermark) = entry.handle_reorg() {
+            trace!(watermark, "filter reset due to reorg");
+        }
+
         let latest = ctx.tags().latest();
         let start = entry.next_start_block();
+
+        // Implicit reorg detection: if latest has moved backward past our
+        // window, a reorg occurred that we missed. Reset to avoid skipping.
+        if latest + 1 < start {
+            trace!(latest, start, "implicit reorg detected, resetting filter");
+            entry.mark_polled(latest);
+            return Ok(entry.empty_output());
+        }
 
         if start > latest {
             entry.mark_polled(latest);

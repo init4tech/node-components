@@ -1,6 +1,6 @@
 //! Filter management for `eth_newFilter` / `eth_getFilterChanges`.
 
-use crate::interest::{InterestKind, buffer::EventBuffer};
+use crate::interest::{ChainEvent, InterestKind, buffer::EventBuffer};
 use alloy::{
     primitives::{B256, U64},
     rpc::types::Filter,
@@ -13,6 +13,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tokio::sync::broadcast;
 use tracing::trace;
 
 type FilterId = U64;
@@ -29,17 +30,22 @@ pub(crate) struct ActiveFilter {
     next_start_block: u64,
     last_poll_time: Instant,
     kind: InterestKind,
+    reorg_watermark: Option<u64>,
 }
 
 impl core::fmt::Display for ActiveFilter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "ActiveFilter {{ next_start_block: {}, ms_since_last_poll: {}, kind: {:?} }}",
+            "ActiveFilter {{ next_start_block: {}, ms_since_last_poll: {}, kind: {:?}",
             self.next_start_block,
             self.last_poll_time.elapsed().as_millis(),
             self.kind
-        )
+        )?;
+        if let Some(w) = self.reorg_watermark {
+            write!(f, ", reorg_watermark: {w}")?;
+        }
+        write!(f, " }}")
     }
 }
 
@@ -74,6 +80,31 @@ impl ActiveFilter {
     pub(crate) const fn empty_output(&self) -> FilterOutput {
         self.kind.empty_output()
     }
+
+    /// Record that a reorg occurred back to this ancestor block.
+    ///
+    /// If multiple reorgs arrive before the filter is polled, the lowest
+    /// (most conservative) watermark is kept.
+    pub(crate) fn set_reorg_watermark(&mut self, common_ancestor: u64) {
+        self.reorg_watermark =
+            Some(self.reorg_watermark.map_or(common_ancestor, |w| w.min(common_ancestor)));
+    }
+
+    /// Reset filter state if a pending reorg affected this filter's window.
+    ///
+    /// Takes and clears the watermark. If the watermark is below
+    /// `next_start_block`, rewinds the start block so the next poll
+    /// re-fetches from just after the common ancestor. Returns the
+    /// watermark value when a reset occurred, `None` otherwise.
+    pub(crate) fn handle_reorg(&mut self) -> Option<u64> {
+        let watermark = self.reorg_watermark.take()?;
+        if watermark < self.next_start_block {
+            self.next_start_block = watermark + 1;
+            Some(watermark)
+        } else {
+            None
+        }
+    }
 }
 
 /// Inner logic for [`FilterManager`].
@@ -103,9 +134,15 @@ impl FilterManagerInner {
     fn install(&self, current_block: u64, kind: InterestKind) -> FilterId {
         let id = self.next_id();
         let next_start_block = current_block + 1;
-        let _ = self
-            .filters
-            .insert(id, ActiveFilter { next_start_block, last_poll_time: Instant::now(), kind });
+        let _ = self.filters.insert(
+            id,
+            ActiveFilter {
+                next_start_block,
+                last_poll_time: Instant::now(),
+                kind,
+                reorg_watermark: None,
+            },
+        );
         id
     }
 
@@ -122,6 +159,13 @@ impl FilterManagerInner {
     /// Uninstall a filter, returning the kind of filter that was uninstalled.
     pub(crate) fn uninstall(&self, id: FilterId) -> Option<(U64, ActiveFilter)> {
         self.filters.remove(&id)
+    }
+
+    /// Set a reorg watermark on all active filters.
+    pub(crate) fn set_reorg_watermark_all(&self, common_ancestor: u64) {
+        self.filters
+            .iter_mut()
+            .for_each(|mut entry| entry.value_mut().set_reorg_watermark(common_ancestor));
     }
 
     /// Clean stale filters that have not been polled in a while.
@@ -145,11 +189,20 @@ pub(crate) struct FilterManager {
 }
 
 impl FilterManager {
-    /// Create a new filter manager. Spawn a task to clean stale filters.
-    pub(crate) fn new(clean_interval: Duration, age_limit: Duration) -> Self {
+    /// Create a new filter manager.
+    ///
+    /// Spawns a cleanup thread for stale filters and a tokio task that
+    /// listens for [`ChainEvent::Reorg`] events and propagates watermarks
+    /// to all active filters.
+    pub(crate) fn new(
+        chain_events: &broadcast::Sender<ChainEvent>,
+        clean_interval: Duration,
+        age_limit: Duration,
+    ) -> Self {
         let inner = Arc::new(FilterManagerInner::new());
         let manager = Self { inner };
         FilterCleanTask::new(Arc::downgrade(&manager.inner), clean_interval, age_limit).spawn();
+        FilterReorgTask::new(Arc::downgrade(&manager.inner), chain_events.subscribe()).spawn();
         manager
     }
 }
@@ -191,6 +244,121 @@ impl FilterCleanTask {
                     None => break,
                 }
             }
+        });
+    }
+}
+
+/// Task that listens for reorg events and propagates watermarks to all
+/// active filters.
+///
+/// Uses a [`Weak`] reference to self-terminate when the [`FilterManager`]
+/// is dropped.
+struct FilterReorgTask {
+    manager: Weak<FilterManagerInner>,
+    rx: broadcast::Receiver<ChainEvent>,
+}
+
+impl FilterReorgTask {
+    const fn new(manager: Weak<FilterManagerInner>, rx: broadcast::Receiver<ChainEvent>) -> Self {
+        Self { manager, rx }
+    }
+
+    /// Spawn the listener as a tokio task.
+    fn spawn(self) {
+        tokio::spawn(self.run());
+    }
+
+    async fn run(mut self) {
+        loop {
+            let event = match self.rx.recv().await {
+                Ok(event) => event,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    trace!(skipped, "filter reorg listener missed notifications");
+                    continue;
+                }
+                Err(_) => break,
+            };
+
+            let ChainEvent::Reorg(reorg) = event else { continue };
+
+            let Some(manager) = self.manager.upgrade() else { break };
+            manager.set_reorg_watermark_all(reorg.common_ancestor);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interest::InterestKind;
+
+    fn block_filter(start: u64) -> ActiveFilter {
+        ActiveFilter {
+            next_start_block: start,
+            last_poll_time: Instant::now(),
+            kind: InterestKind::Block,
+            reorg_watermark: None,
+        }
+    }
+
+    #[test]
+    fn set_reorg_watermark_keeps_minimum() {
+        let mut f = block_filter(10);
+        f.set_reorg_watermark(8);
+        assert_eq!(f.reorg_watermark, Some(8));
+
+        // A higher watermark does not overwrite the lower one.
+        f.set_reorg_watermark(9);
+        assert_eq!(f.reorg_watermark, Some(8));
+
+        // A lower watermark replaces the current one.
+        f.set_reorg_watermark(5);
+        assert_eq!(f.reorg_watermark, Some(5));
+    }
+
+    #[test]
+    fn handle_reorg_resets_start_block() {
+        let mut f = block_filter(10);
+        f.set_reorg_watermark(7);
+
+        let result = f.handle_reorg();
+        assert_eq!(result, Some(7));
+        assert_eq!(f.next_start_block, 8);
+        assert!(f.reorg_watermark.is_none());
+    }
+
+    #[test]
+    fn handle_reorg_noop_when_watermark_at_or_above_start() {
+        let mut f = block_filter(10);
+        f.set_reorg_watermark(10);
+
+        let result = f.handle_reorg();
+        assert!(result.is_none());
+        // next_start_block unchanged.
+        assert_eq!(f.next_start_block, 10);
+        assert!(f.reorg_watermark.is_none());
+    }
+
+    #[test]
+    fn handle_reorg_clears_watermark() {
+        let mut f = block_filter(10);
+        f.set_reorg_watermark(5);
+        f.handle_reorg();
+
+        // Second call returns None — watermark already consumed.
+        assert!(f.handle_reorg().is_none());
+    }
+
+    #[test]
+    fn set_reorg_watermark_all_propagates() {
+        let inner = FilterManagerInner::new();
+        inner.install_block_filter(20);
+        inner.install_block_filter(30);
+
+        inner.set_reorg_watermark_all(15);
+
+        inner.filters.iter().for_each(|entry| {
+            assert_eq!(entry.value().reorg_watermark, Some(15));
         });
     }
 }
