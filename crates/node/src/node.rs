@@ -506,6 +506,12 @@ where
 
         let drained = self.storage.drain_above(target).await?;
 
+        // Immediately cap block tags to the common ancestor so that
+        // `latest` never references a block that no longer exists in
+        // storage. This must happen before the reorg notification so
+        // that RPC consumers see consistent tags.
+        self.chain.tags().rewind_to(target);
+
         // The early return above guards against no-op reverts, so drained
         // should always contain at least one block. Guard defensively.
         debug_assert!(!drained.is_empty(), "drain_above returned empty after host revert");
