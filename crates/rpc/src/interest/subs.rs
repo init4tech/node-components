@@ -233,7 +233,7 @@ impl SubscriptionTask {
                     let notif = match event {
                         ChainEvent::NewBlock(notif) => *notif,
                         ChainEvent::Reorg(reorg) => {
-                            let output = filter.filter_reorg_for_sub(&reorg);
+                            let output = filter.filter_reorg_for_sub(reorg);
                             trace!(count = output.len(), "Reorg filter applied");
                             if !output.is_empty() {
                                 notif_buffer.extend(output);
