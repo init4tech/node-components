@@ -107,11 +107,6 @@ where
         Ok(trevm)
     }
 
-    /// Check if the given address should be aliased.
-    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        self.alias_oracle.create()?.should_alias(address)
-    }
-
     /// Called when the host chain has committed a block or set of blocks.
     #[instrument(skip_all, fields(count = chain.len(), first = chain.first().number(), tip = chain.tip().number()))]
     pub async fn on_host_commit<Host>(&self, chain: &Chain<Host>) -> eyre::Result<Option<RuChain>>
@@ -272,11 +267,14 @@ where
             None => VecDeque::new(),
         };
 
-        // Determine which addresses need to be aliased.
+        // Determine which addresses need to be aliased. The oracle is
+        // created once per block so all addresses share the same state
+        // snapshot.
+        let oracle = self.alias_oracle.create()?;
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if !to_alias.contains(&addr) && self.should_alias(addr)? {
+            if !to_alias.contains(&addr) && oracle.should_alias(addr)? {
                 to_alias.insert(addr);
             }
         }
