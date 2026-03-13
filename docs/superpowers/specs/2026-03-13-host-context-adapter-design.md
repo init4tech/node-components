@@ -51,30 +51,15 @@ pub trait Extractable: Debug + Sync {
         &self,
     ) -> impl Iterator<Item = (&Self::Block, &Vec<Self::Receipt>)>;
 
-    /// Block number of the first block in the segment.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the chain segment is empty.
-    fn first_number(&self) -> u64 {
-        self.blocks_and_receipts()
-            .next()
-            .expect("chain segment is empty")
-            .0
-            .number()
+    /// Block number of the first block in the segment, or `None` if empty.
+    fn first_number(&self) -> Option<u64> {
+        self.blocks_and_receipts().next().map(|(b, _)| b.number())
     }
 
-    /// Block number of the tip (last block) in the segment.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the chain segment is empty.
-    fn tip_number(&self) -> u64 {
-        self.blocks_and_receipts()
-            .last()
-            .expect("chain segment is empty")
-            .0
-            .number()
+    /// Block number of the tip (last block) in the segment, or `None` if
+    /// empty.
+    fn tip_number(&self) -> Option<u64> {
+        self.blocks_and_receipts().last().map(|(b, _)| b.number())
     }
 
     /// Number of blocks in the segment.
@@ -386,7 +371,7 @@ The `signet-node` RPC module receives pre-built config values only.
 | Lookups bundled into notification | Safe/finalized numbers travel with the notification; hash resolution is the backend's job. Structurally prevents inconsistent reads during processing |
 | `set_head` and `send_finished_height` take `u64` | Backend resolves block hashes internally; signet-node never queries the host chain |
 | Associated types for `Chain` | Flexibility for backends with different chain representations |
-| Chain metadata merged into `Extractable` | `first_number`, `tip_number`, `len` are derivable from `blocks_and_receipts`; eliminates a separate `HostChain` trait. Panics on empty match current reth behavior |
+| Chain metadata merged into `Extractable` | `first_number`, `tip_number`, `len` are derivable from `blocks_and_receipts`; eliminates a separate `HostChain` trait. Returns `Option` for empty safety |
 | Reth impl in dedicated crate | Keeps all reth deps isolated; signet-node is reth-free |
 | RPC config extracted at call site | Simpler than threading config through the trait; eliminates reth dep from signet-node-config |
 | `CacheHandle` passed into builder | Moves pool dependency out of signet-node; caller constructs blob cacher |

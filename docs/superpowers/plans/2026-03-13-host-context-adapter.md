@@ -27,30 +27,15 @@ The `Extractable` trait lives in the external SDK repo at `../sdk/crates/extract
 In `../sdk/crates/extract/src/trait.rs`, add after the `blocks_and_receipts` method:
 
 ```rust
-/// Block number of the first block in the segment.
-///
-/// # Panics
-///
-/// Panics if the chain segment is empty.
-fn first_number(&self) -> u64 {
-    self.blocks_and_receipts()
-        .next()
-        .expect("chain segment is empty")
-        .0
-        .number()
+/// Block number of the first block in the segment, or `None` if empty.
+fn first_number(&self) -> Option<u64> {
+    self.blocks_and_receipts().next().map(|(b, _)| b.number())
 }
 
-/// Block number of the tip (last block) in the segment.
-///
-/// # Panics
-///
-/// Panics if the chain segment is empty.
-fn tip_number(&self) -> u64 {
-    self.blocks_and_receipts()
-        .last()
-        .expect("chain segment is empty")
-        .0
-        .number()
+/// Block number of the tip (last block) in the segment, or `None` if
+/// empty.
+fn tip_number(&self) -> Option<u64> {
+    self.blocks_and_receipts().last().map(|(b, _)| b.number())
 }
 
 /// Number of blocks in the segment.
@@ -454,12 +439,12 @@ impl Extractable for RethChain {
         ExtractableChainShim::new(&self.inner).blocks_and_receipts()
     }
 
-    fn first_number(&self) -> u64 {
-        self.inner.first().number()
+    fn first_number(&self) -> Option<u64> {
+        Some(self.inner.first().number())
     }
 
-    fn tip_number(&self) -> u64 {
-        self.inner.tip().number()
+    fn tip_number(&self) -> Option<u64> {
+        Some(self.inner.tip().number())
     }
 
     fn len(&self) -> usize {
@@ -892,7 +877,7 @@ Replace the entire file. Key changes:
 - `notification.reverted_chain()` → `notification.kind.reverted_chain()`
 - `notification.committed_chain()` → `notification.kind.committed_chain()`
 - `process_committed_chain` takes `&Arc<N::Chain>` where `N::Chain: Extractable`. Remove the `ExtractableChainShim::new(chain)` call — the chain already implements `Extractable` directly. Use the chain as-is with `Extractor::extract_signet`.
-- `on_host_revert` takes `&Arc<N::Chain>`, uses `chain.first_number()` and `chain.tip_number()`
+- `on_host_revert` takes `&Arc<N::Chain>`, uses `chain.first_number()` and `chain.tip_number()` (both return `Option<u64>` — unwrap or early-return on `None`)
 - **Decompose `update_status`:** Split into two parts:
   - `update_status_channel(ru_height)` — just updates `self.status.send_modify(...)`. Called from `on_notification` as before.
   - `update_block_tags(safe_block_number, finalized_block_number)` — takes the bundled values from the notification. Called from `start_inner` AFTER `on_notification` returns.
