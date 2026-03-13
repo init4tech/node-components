@@ -1,5 +1,5 @@
 use alloy::{consensus::constants::KECCAK_EMPTY, primitives::Address};
-use core::fmt;
+use core::{fmt, future::Future};
 use eyre::OptionExt;
 use reth::providers::{StateProviderBox, StateProviderFactory};
 use signet_block_processor::{AliasOracle, AliasOracleFactory};
@@ -17,27 +17,30 @@ impl fmt::Debug for RethAliasOracle {
 }
 
 impl AliasOracle for RethAliasOracle {
-    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        // No account at this address.
-        let Some(acct) = self.0.basic_account(&address)? else { return Ok(false) };
-        // Get the bytecode hash for this account.
-        let bch = match acct.bytecode_hash {
-            Some(hash) => hash,
-            // No bytecode hash; not a contract.
-            None => return Ok(false),
-        };
-        // No code at this address.
-        if bch == KECCAK_EMPTY {
-            return Ok(false);
-        }
-        // Fetch the code associated with this bytecode hash.
-        let code = self
-            .0
-            .bytecode_by_hash(&bch)?
-            .ok_or_eyre("code not found. This indicates a corrupted database")?;
+    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+        let result = (|| {
+            // No account at this address.
+            let Some(acct) = self.0.basic_account(&address)? else { return Ok(false) };
+            // Get the bytecode hash for this account.
+            let bch = match acct.bytecode_hash {
+                Some(hash) => hash,
+                // No bytecode hash; not a contract.
+                None => return Ok(false),
+            };
+            // No code at this address.
+            if bch == KECCAK_EMPTY {
+                return Ok(false);
+            }
+            // Fetch the code associated with this bytecode hash.
+            let code = self
+                .0
+                .bytecode_by_hash(&bch)?
+                .ok_or_eyre("code not found. This indicates a corrupted database")?;
 
-        // If not a 7702 delegation contract, alias it.
-        Ok(!code.is_eip7702())
+            // If not a 7702 delegation contract, alias it.
+            Ok(!code.is_eip7702())
+        })();
+        async move { result }
     }
 }
 
