@@ -4,8 +4,7 @@ use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
 use alloy::primitives::{B256, Bytes, keccak256};
 use core::fmt;
-use reth::transaction_pool::TransactionPool;
-use reth::{network::cache::LruMap, primitives::Receipt};
+use reth::{network::cache::LruMap, transaction_pool::TransactionPool};
 use signet_extract::ExtractedEvent;
 use signet_zenith::Zenith::BlockSubmitted;
 use signet_zenith::ZenithBlock;
@@ -75,10 +74,10 @@ impl<Coder> CacheHandle<Coder> {
 
     /// Fetch the blobs using [`Self::fetch_blobs`] and decode them to get the
     /// Zenith block data using the provided coder.
-    pub async fn fetch_and_decode(
+    pub async fn fetch_and_decode<R>(
         &self,
         slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+        extract: &ExtractedEvent<'_, R, BlockSubmitted>,
     ) -> BlobberResult<Bytes>
     where
         Coder: SidecarCoder + Default,
@@ -116,11 +115,11 @@ impl<Coder> CacheHandle<Coder> {
     ///   decoded (e.g., due to a malformatted blob).
     /// - `Err(FetchError)` if there was an unrecoverable error fetching the
     ///   blobs.
-    pub async fn signet_block(
+    pub async fn signet_block<R>(
         &self,
         host_block_number: u64,
         slot: usize,
-        extract: &ExtractedEvent<'_, Receipt, BlockSubmitted>,
+        extract: &ExtractedEvent<'_, R, BlockSubmitted>,
     ) -> FetchResult<ZenithBlock>
     where
         Coder: SidecarCoder + Default,
