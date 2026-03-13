@@ -1,14 +1,14 @@
 #![allow(clippy::type_complexity)]
 
-use crate::{NodeStatus, RethAliasOracleFactory, SignetNode};
+use crate::{NodeStatus, SignetNode};
 use eyre::OptionExt;
-use reth::{primitives::EthPrimitives, providers::StateProviderFactory};
-use reth_exex::ExExContext;
-use reth_node_api::{FullNodeComponents, NodeTypes};
+use signet_blobber::CacheHandle;
 use signet_block_processor::AliasOracleFactory;
 use signet_cold::BlockData;
 use signet_hot::db::{HotDbRead, UnsafeDbWrite};
 use signet_node_config::SignetNodeConfig;
+use signet_node_types::HostNotifier;
+use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
 use std::sync::Arc;
 use tracing::info;
@@ -25,22 +25,27 @@ pub struct NotAStorage;
 /// Builder for [`SignetNode`]. This is the main way to create a signet node.
 ///
 /// The builder requires the following components to be set before building:
-/// - An [`ExExContext`], via [`Self::with_ctx`].
+/// - A [`HostNotifier`], via [`Self::with_notifier`].
 /// - An [`Arc<UnifiedStorage<H>>`], via [`Self::with_storage`].
 /// - An [`AliasOracleFactory`], via [`Self::with_alias_oracle`].
-///     - If not set, a default one will be created from the [`ExExContext`]'s
-///       provider.
+/// - A [`CacheHandle`], via [`Self::with_blob_cacher`].
+/// - A [`ServeConfig`], via [`Self::with_serve_config`].
+/// - A [`StorageRpcConfig`], via [`Self::with_rpc_config`].
 /// - A `reqwest::Client`, via [`Self::with_client`].
 ///   - If not set, a default client will be created.
-pub struct SignetNodeBuilder<Host = (), Storage = NotAStorage, Aof = NotAnAof> {
+pub struct SignetNodeBuilder<Notifier = (), Storage = NotAStorage, Aof = NotAnAof> {
     config: SignetNodeConfig,
     alias_oracle: Option<Aof>,
-    ctx: Option<Host>,
+    notifier: Option<Notifier>,
     storage: Option<Storage>,
     client: Option<reqwest::Client>,
+    chain_name: Option<String>,
+    blob_cacher: Option<CacheHandle>,
+    serve_config: Option<ServeConfig>,
+    rpc_config: Option<StorageRpcConfig>,
 }
 
-impl<Host, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Host, Storage, Aof> {
+impl<Notifier, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Notifier, Storage, Aof> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SignetNodeBuilder").finish_non_exhaustive()
     }
@@ -49,40 +54,51 @@ impl<Host, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Host, Storage, A
 impl SignetNodeBuilder {
     /// Create a new SignetNodeBuilder instance.
     pub const fn new(config: SignetNodeConfig) -> Self {
-        Self { config, alias_oracle: None, ctx: None, storage: None, client: None }
+        Self {
+            config,
+            alias_oracle: None,
+            notifier: None,
+            storage: None,
+            client: None,
+            chain_name: None,
+            blob_cacher: None,
+            serve_config: None,
+            rpc_config: None,
+        }
     }
 }
 
-impl<Host, Storage, Aof> SignetNodeBuilder<Host, Storage, Aof> {
+impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     /// Set the [`UnifiedStorage`] backend for the signet node.
     pub fn with_storage<H: HotKv>(
         self,
         storage: Arc<UnifiedStorage<H>>,
-    ) -> SignetNodeBuilder<Host, Arc<UnifiedStorage<H>>, Aof> {
+    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H>>, Aof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
-            ctx: self.ctx,
+            notifier: self.notifier,
             storage: Some(storage),
             client: self.client,
+            chain_name: self.chain_name,
+            blob_cacher: self.blob_cacher,
+            serve_config: self.serve_config,
+            rpc_config: self.rpc_config,
         }
     }
 
-    /// Set the [`ExExContext`] for the signet node.
-    pub fn with_ctx<NewHost>(
-        self,
-        ctx: ExExContext<NewHost>,
-    ) -> SignetNodeBuilder<ExExContext<NewHost>, Storage, Aof>
-    where
-        NewHost: FullNodeComponents,
-        NewHost::Types: NodeTypes<Primitives = EthPrimitives>,
-    {
+    /// Set the [`HostNotifier`] for the signet node.
+    pub fn with_notifier<N: HostNotifier>(self, notifier: N) -> SignetNodeBuilder<N, Storage, Aof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
-            ctx: Some(ctx),
+            notifier: Some(notifier),
             storage: self.storage,
             client: self.client,
+            chain_name: self.chain_name,
+            blob_cacher: self.blob_cacher,
+            serve_config: self.serve_config,
+            rpc_config: self.rpc_config,
         }
     }
 
@@ -90,13 +106,17 @@ impl<Host, Storage, Aof> SignetNodeBuilder<Host, Storage, Aof> {
     pub fn with_alias_oracle<NewAof: AliasOracleFactory>(
         self,
         alias_oracle: NewAof,
-    ) -> SignetNodeBuilder<Host, Storage, NewAof> {
+    ) -> SignetNodeBuilder<Notifier, Storage, NewAof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: Some(alias_oracle),
-            ctx: self.ctx,
+            notifier: self.notifier,
             storage: self.storage,
             client: self.client,
+            chain_name: self.chain_name,
+            blob_cacher: self.blob_cacher,
+            serve_config: self.serve_config,
+            rpc_config: self.rpc_config,
         }
     }
 
@@ -105,19 +125,44 @@ impl<Host, Storage, Aof> SignetNodeBuilder<Host, Storage, Aof> {
         self.client = Some(client);
         self
     }
+
+    /// Set the human-readable chain name for logging.
+    pub fn with_chain_name(mut self, chain_name: String) -> Self {
+        self.chain_name = Some(chain_name);
+        self
+    }
+
+    /// Set the pre-built blob cacher handle.
+    pub fn with_blob_cacher(mut self, blob_cacher: CacheHandle) -> Self {
+        self.blob_cacher = Some(blob_cacher);
+        self
+    }
+
+    /// Set the RPC transport configuration.
+    pub fn with_serve_config(mut self, serve_config: ServeConfig) -> Self {
+        self.serve_config = Some(serve_config);
+        self
+    }
+
+    /// Set the RPC behaviour configuration.
+    pub const fn with_rpc_config(mut self, rpc_config: StorageRpcConfig) -> Self {
+        self.rpc_config = Some(rpc_config);
+        self
+    }
 }
 
-impl<Host, H, Aof> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, Aof>
+impl<N, H, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H>>, Aof>
 where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    H: HotKv,
+    N: HostNotifier,
+    H: HotKv + Clone + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+    Aof: AliasOracleFactory,
 {
     /// Prebuild checks for the signet node builder. Shared by all build
     /// commands.
     async fn prebuild(&mut self) -> eyre::Result<()> {
         self.client.get_or_insert_default();
-        self.ctx.as_ref().ok_or_eyre("Launch context must be set")?;
+        self.notifier.as_ref().ok_or_eyre("Notifier must be set")?;
         let storage = self.storage.as_ref().ok_or_eyre("Storage must be set")?;
 
         // Load genesis into hot storage if absent.
@@ -150,60 +195,25 @@ where
 
         Ok(())
     }
-}
 
-impl<Host, H> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, NotAnAof>
-where
-    Host: FullNodeComponents<Provider: StateProviderFactory>,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    H: HotKv + Clone + Send + Sync + 'static,
-    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
-{
-    /// Build the node. This performs the following steps:
-    ///
-    /// - Runs prebuild checks.
-    /// - Inits storage from genesis if needed.
-    /// - Creates a default `AliasOracleFactory` from the host DB.
-    pub async fn build(
-        mut self,
-    ) -> eyre::Result<(SignetNode<Host, H>, tokio::sync::watch::Receiver<NodeStatus>)> {
-        self.prebuild().await?;
-        let ctx = self.ctx.unwrap();
-        let provider = ctx.provider().clone();
-        let alias_oracle = RethAliasOracleFactory::new(Box::new(provider));
-
-        SignetNode::new_unsafe(
-            ctx,
-            self.config,
-            self.storage.unwrap(),
-            alias_oracle,
-            self.client.unwrap(),
-        )
-    }
-}
-
-impl<Host, H, Aof> SignetNodeBuilder<ExExContext<Host>, Arc<UnifiedStorage<H>>, Aof>
-where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
-    H: HotKv + Clone + Send + Sync + 'static,
-    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
-    Aof: AliasOracleFactory,
-{
     /// Build the node. This performs the following steps:
     ///
     /// - Runs prebuild checks.
     /// - Inits storage from genesis if needed.
     pub async fn build(
         mut self,
-    ) -> eyre::Result<(SignetNode<Host, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
+    ) -> eyre::Result<(SignetNode<N, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
         self.prebuild().await?;
         SignetNode::new_unsafe(
-            self.ctx.unwrap(),
+            self.notifier.unwrap(),
             self.config,
             self.storage.unwrap(),
             self.alias_oracle.unwrap(),
             self.client.unwrap(),
+            self.chain_name.unwrap_or_default(),
+            self.blob_cacher.ok_or_eyre("Blob cacher must be set")?,
+            self.serve_config.ok_or_eyre("Serve config must be set")?,
+            self.rpc_config.ok_or_eyre("RPC config must be set")?,
         )
     }
 }
