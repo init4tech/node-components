@@ -104,8 +104,8 @@ where
     }
 
     /// Check if the given address should be aliased.
-    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        self.alias_oracle.create()?.should_alias(address)
+    async fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+        self.alias_oracle.create()?.should_alias(address).await
     }
 
     /// Process a single extracted block, returning an [`ExecutedBlock`].
@@ -189,7 +189,7 @@ where
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if !to_alias.contains(&addr) && self.should_alias(addr)? {
+            if !to_alias.contains(&addr) && self.should_alias(addr).await? {
                 to_alias.insert(addr);
             }
         }
