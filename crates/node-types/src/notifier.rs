@@ -27,7 +27,8 @@ pub trait HostNotifier {
     /// The backend resolves the block number to a block hash internally.
     fn set_head(&mut self, block_number: u64);
 
-    /// Configure backfill batch size limits.
+    /// Configure backfill batch size limits. `None` means use the backend's
+    /// default.
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>);
 
     /// Signal that processing is complete up to this host block number.
