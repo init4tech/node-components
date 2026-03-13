@@ -162,13 +162,23 @@ impl SignetTestContext {
             .unwrap()
             .spawn::<alloy::consensus::SimpleCoder>();
 
+        // Build serve config from the Signet test config rather than the
+        // reth defaults (which have IPC/HTTP disabled).
+        let serve_config = signet_rpc::ServeConfig {
+            http: vec![],
+            http_cors: None,
+            ws: vec![],
+            ws_cors: None,
+            ipc: cfg.ipc_endpoint().map(ToOwned::to_owned),
+        };
+
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
             .with_notifier(decomposed.notifier)
             .with_storage(Arc::clone(&storage))
             .with_alias_oracle(Arc::clone(&alias_oracle))
             .with_chain_name(decomposed.chain_name)
             .with_blob_cacher(blob_cacher)
-            .with_serve_config(decomposed.serve_config)
+            .with_serve_config(serve_config)
             .with_rpc_config(decomposed.rpc_config)
             .with_client(reqwest::Client::new())
             .build()
