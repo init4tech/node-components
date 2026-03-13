@@ -39,7 +39,6 @@ pub struct SignetNodeBuilder<Notifier = (), Storage = NotAStorage, Aof = NotAnAo
     notifier: Option<Notifier>,
     storage: Option<Storage>,
     client: Option<reqwest::Client>,
-    chain_name: Option<String>,
     blob_cacher: Option<CacheHandle>,
     serve_config: Option<ServeConfig>,
     rpc_config: Option<StorageRpcConfig>,
@@ -60,7 +59,6 @@ impl SignetNodeBuilder {
             notifier: None,
             storage: None,
             client: None,
-            chain_name: None,
             blob_cacher: None,
             serve_config: None,
             rpc_config: None,
@@ -80,7 +78,6 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             notifier: self.notifier,
             storage: Some(storage),
             client: self.client,
-            chain_name: self.chain_name,
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
@@ -95,7 +92,6 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             notifier: Some(notifier),
             storage: self.storage,
             client: self.client,
-            chain_name: self.chain_name,
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
@@ -113,7 +109,6 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             notifier: self.notifier,
             storage: self.storage,
             client: self.client,
-            chain_name: self.chain_name,
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
@@ -123,12 +118,6 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     /// Set the reqwest client for the signet node.
     pub fn with_client(mut self, client: reqwest::Client) -> Self {
         self.client = Some(client);
-        self
-    }
-
-    /// Set the human-readable chain name for logging.
-    pub fn with_chain_name(mut self, chain_name: String) -> Self {
-        self.chain_name = Some(chain_name);
         self
     }
 
@@ -210,7 +199,6 @@ where
             self.storage.unwrap(),
             self.alias_oracle.unwrap(),
             self.client.unwrap(),
-            self.chain_name.unwrap_or_default(),
             self.blob_cacher.ok_or_eyre("Blob cacher must be set")?,
             self.serve_config.ok_or_eyre("Serve config must be set")?,
             self.rpc_config.ok_or_eyre("RPC config must be set")?,

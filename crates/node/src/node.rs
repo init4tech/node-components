@@ -27,9 +27,6 @@ where
     /// The host notifier, which yields chain notifications.
     pub(crate) notifier: N,
 
-    /// Human-readable chain name for logging.
-    pub(crate) chain_name: String,
-
     /// Signet node configuration.
     pub(crate) config: Arc<SignetNodeConfig>,
 
@@ -103,7 +100,6 @@ where
         storage: Arc<UnifiedStorage<H>>,
         alias_oracle: AliasOracle,
         client: reqwest::Client,
-        chain_name: String,
         blob_cacher: CacheHandle,
         serve_config: ServeConfig,
         rpc_config: StorageRpcConfig,
@@ -117,7 +113,6 @@ where
         let this = Self {
             config: config.into(),
             notifier,
-            chain_name,
             storage,
             chain,
             rpc_handle: None,
@@ -140,7 +135,7 @@ where
 
     /// Start the Signet instance, listening for host notifications. Trace any
     /// errors.
-    #[instrument(skip(self), fields(host = %self.chain_name))]
+    #[instrument(skip(self))]
     pub async fn start(mut self) -> eyre::Result<()> {
         // Ensure hot and cold storage are at the same height. If either
         // is ahead, unwind to the minimum so the host re-delivers blocks.
@@ -226,8 +221,8 @@ where
     ///
     /// Returns `true` if any rollup state changed.
     #[instrument(parent = None, skip_all, fields(
-        reverted = notification.kind.reverted_chain().map(|c| c.len()).unwrap_or_default(),
-        committed = notification.kind.committed_chain().map(|c| c.len()).unwrap_or_default(),
+        reverted = notification.reverted_chain().map(|c| c.len()).unwrap_or_default(),
+        committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
     pub async fn on_notification(
         &self,
@@ -238,12 +233,12 @@ where
         let mut changed = false;
 
         // NB: REVERTS MUST RUN FIRST
-        if let Some(chain) = notification.kind.reverted_chain() {
+        if let Some(chain) = notification.reverted_chain() {
             changed |=
                 self.on_host_revert(chain).await.wrap_err("error encountered during revert")?;
         }
 
-        if let Some(chain) = notification.kind.committed_chain() {
+        if let Some(chain) = notification.committed_chain() {
             changed |= self
                 .process_committed_chain(chain)
                 .await
@@ -336,13 +331,12 @@ where
         let ru_height = self.last_rollup_block()?;
 
         // Safe height
-        let safe_heights = self.load_safe_block_heights(ru_height, safe_block_number);
+        let safe_heights = self.clamp_host_heights(ru_height, safe_block_number);
         let safe_ru_height = safe_heights.rollup;
         debug!(safe_ru_height, "calculated safe ru height");
 
         // Finalized height
-        let finalized_heights =
-            self.load_finalized_block_heights(ru_height, finalized_block_number);
+        let finalized_heights = self.clamp_host_heights(ru_height, finalized_block_number);
         debug!(
             finalized_host_height = finalized_heights.host,
             finalized_ru_height = finalized_heights.rollup,
@@ -367,55 +361,16 @@ where
         Ok(())
     }
 
-    /// Load the host chain "safe" block number and determine the rollup "safe"
-    /// block number.
-    ///
-    /// There are three cases:
-    /// 1. The host chain "safe" block number is below the rollup genesis.
-    /// 2. The safe rollup equivalent is beyond the current rollup height.
-    /// 3. The safe rollup equivalent is below the current rollup height (normal
-    ///    case).
-    fn load_safe_block_heights(
-        &self,
-        ru_height: u64,
-        safe_block_number: Option<u64>,
-    ) -> PairedHeights {
-        let Some(safe_heights) = safe_block_number.and_then(|h| self.constants.pair_host(h)) else {
-            // Host safe block is below rollup genesis — use genesis.
+    /// Map a host block number to a [`PairedHeights`], clamping to the
+    /// current rollup height. Returns genesis heights when the host block
+    /// is below the rollup deploy height.
+    fn clamp_host_heights(&self, ru_height: u64, host_block_number: Option<u64>) -> PairedHeights {
+        let Some(heights) = host_block_number.and_then(|h| self.constants.pair_host(h)) else {
             return PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 };
         };
 
         // Clamp to current rollup height if ahead.
-        if safe_heights.rollup > ru_height {
-            self.constants.pair_ru(ru_height)
-        } else {
-            safe_heights
-        }
-    }
-
-    /// Load the host chain "finalized" block number and determine the rollup
-    /// "finalized" block number.
-    ///
-    /// There are three cases:
-    /// 1. The host chain "finalized" block is below the rollup genesis.
-    /// 2. The finalized rollup equivalent is beyond the current rollup height.
-    /// 3. The finalized rollup equivalent is below the current rollup height
-    ///    (normal case).
-    fn load_finalized_block_heights(
-        &self,
-        ru_height: u64,
-        finalized_block_number: Option<u64>,
-    ) -> PairedHeights {
-        let Some(finalized_ru) =
-            finalized_block_number.and_then(|h| self.constants.host_block_to_rollup_block_num(h))
-        else {
-            // Host finalized block is below rollup genesis — use genesis.
-            return PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 };
-        };
-
-        // Clamp to current rollup height if ahead.
-        let ru = finalized_ru.min(ru_height);
-        self.constants.pair_ru(ru)
+        if heights.rollup > ru_height { self.constants.pair_ru(ru_height) } else { heights }
     }
 
     /// Update the host node with the highest processed host height.

@@ -14,6 +14,20 @@ pub struct HostNotification<C> {
     pub finalized_block_number: Option<u64>,
 }
 
+impl<C: Extractable> HostNotification<C> {
+    /// Returns the committed chain, if any. Shortcut for
+    /// `self.kind.committed_chain()`.
+    pub const fn committed_chain(&self) -> Option<&Arc<C>> {
+        self.kind.committed_chain()
+    }
+
+    /// Returns the reverted chain, if any. Shortcut for
+    /// `self.kind.reverted_chain()`.
+    pub const fn reverted_chain(&self) -> Option<&Arc<C>> {
+        self.kind.reverted_chain()
+    }
+}
+
 /// The kind of chain event in a [`HostNotification`].
 #[derive(Debug, Clone)]
 pub enum HostNotificationKind<C> {
