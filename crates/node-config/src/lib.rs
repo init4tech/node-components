@@ -14,8 +14,6 @@
 mod core;
 pub use core::{SIGNET_NODE_DEFAULT_HTTP_PORT, SignetNodeConfig};
 
-mod rpc;
-
 mod storage;
 pub use storage::StorageConfig;
 
