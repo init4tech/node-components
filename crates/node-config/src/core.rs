@@ -1,9 +1,9 @@
 use crate::StorageConfig;
 use alloy::genesis::Genesis;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
+use reth::primitives::NodePrimitives;
 use reth::providers::providers::StaticFileProvider;
 use reth_chainspec::ChainSpec;
-use reth_node_api::NodePrimitives;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
 use signet_types::constants::{ConfigError, SignetSystemConstants};
