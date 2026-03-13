@@ -37,6 +37,7 @@ incremental = false
 signet-blobber = { version = "0.16.0-rc.7", path = "crates/blobber" }
 signet-block-processor = { version = "0.16.0-rc.7", path = "crates/block-processor" }
 signet-genesis = { version = "0.16.0-rc.7", path = "crates/genesis" }
+signet-host-rpc = { version = "0.16.0-rc.7", path = "crates/host-rpc" }
 signet-node = { version = "0.16.0-rc.7", path = "crates/node" }
 signet-node-config = { version = "0.16.0-rc.7", path = "crates/node-config" }
 signet-node-tests = { version = "0.16.0-rc.7", path = "crates/node-tests" }
