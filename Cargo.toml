@@ -119,14 +119,14 @@ signet-hot = { git = "https://github.com/init4tech/storage.git", branch = "james
 signet-storage = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
 signet-storage-types = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
 
-# signet-bundle = { path = "../sdk/crates/bundle"}
-# signet-constants = { path = "../sdk/crates/constants"}
-# signet-evm = { path = "../sdk/crates/evm"}
-# signet-extract = { path = "../sdk/crates/extract"}
-# signet-journal = { path = "../sdk/crates/journal"}
-# signet-test-utils = { path = "../sdk/crates/test-utils"}
-# signet-tx-cache = { path = "../sdk/crates/tx-cache"}
-# signet-types = { path = "../sdk/crates/types"}
-# signet-zenith = { path = "../sdk/crates/zenith"}
+signet-bundle = { path = "../sdk/crates/bundle"}
+signet-constants = { path = "../sdk/crates/constants"}
+signet-evm = { path = "../sdk/crates/evm"}
+signet-extract = { path = "../sdk/crates/extract"}
+signet-journal = { path = "../sdk/crates/journal"}
+signet-test-utils = { path = "../sdk/crates/test-utils"}
+signet-tx-cache = { path = "../sdk/crates/tx-cache"}
+signet-types = { path = "../sdk/crates/types"}
+signet-zenith = { path = "../sdk/crates/zenith"}
 
 # init4-bin-base = { path = "../shared" }
