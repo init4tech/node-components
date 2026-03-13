@@ -121,14 +121,14 @@ signet-hot = { git = "https://github.com/init4tech/storage.git", branch = "james
 signet-storage = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
 signet-storage-types = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
 
-signet-bundle = { path = "../sdk/crates/bundle"}
-signet-constants = { path = "../sdk/crates/constants"}
-signet-evm = { path = "../sdk/crates/evm"}
-signet-extract = { path = "../sdk/crates/extract"}
-signet-journal = { path = "../sdk/crates/journal"}
-signet-test-utils = { path = "../sdk/crates/test-utils"}
-signet-tx-cache = { path = "../sdk/crates/tx-cache"}
-signet-types = { path = "../sdk/crates/types"}
-signet-zenith = { path = "../sdk/crates/zenith"}
+signet-bundle = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-constants = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-evm = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-extract = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-journal = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-test-utils = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-tx-cache = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-types = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-zenith = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
 
 # init4-bin-base = { path = "../shared" }
