@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use reth::{
     chainspec::EthChainSpec,
     primitives::EthPrimitives,
-    providers::{BlockIdReader, BlockReader, HeaderProvider},
+    providers::{BlockIdReader, HeaderProvider},
 };
 use reth_exex::{ExExContext, ExExEvent, ExExNotifications, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodeTypes};
@@ -122,26 +122,22 @@ where
     }
 
     fn set_head(&mut self, block_number: u64) {
-        let block = self
+        let head = self
             .provider
-            .block_by_number(block_number)
-            .expect("failed to look up block for set_head");
-
-        let head = match block {
-            Some(b) => b.num_hash_slow(),
-            None => {
-                debug!(block_number, "block not found for set_head, falling back to genesis");
+            .sealed_header(block_number)
+            .expect("failed to look up header for set_head")
+            .map(|h| BlockNumHash { number: block_number, hash: h.hash() })
+            .unwrap_or_else(|| {
+                debug!(block_number, "header not found for set_head, falling back to genesis");
                 let genesis = self
                     .provider
-                    .block_by_number(0)
-                    .expect("failed to look up genesis block")
-                    .expect("genesis block missing");
-                genesis.num_hash_slow()
-            }
-        };
+                    .sealed_header(0)
+                    .expect("failed to look up genesis header")
+                    .expect("genesis header missing");
+                BlockNumHash { number: 0, hash: genesis.hash() }
+            });
 
-        let exex_head = reth_exex::ExExHead { block: head };
-        self.notifications.set_with_head(exex_head);
+        self.notifications.set_with_head(reth_exex::ExExHead { block: head });
     }
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
