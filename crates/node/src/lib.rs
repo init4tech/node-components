@@ -11,9 +11,6 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod alias;
-pub use alias::{RethAliasOracle, RethAliasOracleFactory};
-
 mod builder;
 pub use builder::SignetNodeBuilder;
 

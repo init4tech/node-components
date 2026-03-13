@@ -1,21 +1,16 @@
-use crate::{NodeStatus, RethAliasOracleFactory, metrics};
+use crate::{NodeStatus, metrics};
 use alloy::consensus::BlockHeader;
 use eyre::Context;
-use futures_util::StreamExt;
-use reth::{
-    chainspec::EthChainSpec,
-    primitives::EthPrimitives,
-    providers::{BlockIdReader, BlockReader, HeaderProvider},
-};
-use reth_exex::{ExExContext, ExExEvent, ExExHead, ExExNotificationsStream};
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
-use reth_stages_types::ExecutionStageThresholds;
-use signet_blobber::{CacheHandle, ExtractableChainShim};
+use signet_blobber::CacheHandle;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
-use signet_extract::Extractor;
+use signet_extract::{Extractable, Extractor};
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{ChainNotifier, NewBlockNotification, ReorgNotification, RpcServerGuard};
+use signet_node_types::{HostNotification, HostNotifier};
+use signet_rpc::{
+    ChainNotifier, NewBlockNotification, ReorgNotification, RpcServerGuard, ServeConfig,
+    StorageRpcConfig,
+};
 use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
@@ -23,20 +18,17 @@ use tokio::sync::watch;
 use tracing::{debug, info, instrument};
 use trevm::revm::database::DBErrorMarker;
 
-/// Type alias for the host primitives.
-type PrimitivesOf<Host> = <<Host as FullNodeTypes>::Types as NodeTypes>::Primitives;
-type ExExNotification<Host> = reth_exex::ExExNotification<PrimitivesOf<Host>>;
-type Chain<Host> = reth::providers::Chain<PrimitivesOf<Host>>;
-
 /// Signet context and configuration.
-pub struct SignetNode<Host, H, AliasOracle = RethAliasOracleFactory>
+pub struct SignetNode<N, H, AliasOracle>
 where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
+    N: HostNotifier,
     H: HotKv,
 {
-    /// The host context, which manages provider access and notifications.
-    pub(crate) host: ExExContext<Host>,
+    /// The host notifier, which yields chain notifications.
+    pub(crate) notifier: N,
+
+    /// Human-readable chain name for logging.
+    pub(crate) chain_name: String,
 
     /// Signet node configuration.
     pub(crate) config: Arc<SignetNodeConfig>,
@@ -66,12 +58,17 @@ where
 
     /// A reqwest client, used by the blob fetch and the tx cache forwarder.
     pub(crate) client: reqwest::Client,
+
+    /// RPC transport configuration.
+    pub(crate) serve_config: ServeConfig,
+
+    /// RPC behaviour configuration.
+    pub(crate) rpc_config: StorageRpcConfig,
 }
 
-impl<Host, H, AliasOracle> fmt::Debug for SignetNode<Host, H, AliasOracle>
+impl<N, H, AliasOracle> fmt::Debug for SignetNode<N, H, AliasOracle>
 where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
+    N: HostNotifier,
     H: HotKv,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -79,10 +76,9 @@ where
     }
 }
 
-impl<Host, H, AliasOracle> SignetNode<Host, H, AliasOracle>
+impl<N, H, AliasOracle> SignetNode<N, H, AliasOracle>
 where
-    Host: FullNodeComponents,
-    Host::Types: NodeTypes<Primitives = EthPrimitives>,
+    N: HostNotifier,
     H: HotKv + Clone + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     AliasOracle: AliasOracleFactory,
@@ -100,12 +96,17 @@ where
     ///
     /// [`SignetNodeBuilder`]: crate::builder::SignetNodeBuilder
     #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_unsafe(
-        ctx: ExExContext<Host>,
+        notifier: N,
         config: SignetNodeConfig,
         storage: Arc<UnifiedStorage<H>>,
         alias_oracle: AliasOracle,
         client: reqwest::Client,
+        chain_name: String,
+        blob_cacher: CacheHandle,
+        serve_config: ServeConfig,
+        rpc_config: StorageRpcConfig,
     ) -> eyre::Result<(Self, watch::Receiver<NodeStatus>)> {
         let constants =
             config.constants().wrap_err("failed to load signet constants from genesis")?;
@@ -113,17 +114,10 @@ where
         let (status, receiver) = watch::channel(NodeStatus::Booting);
         let chain = ChainNotifier::new(128);
 
-        let blob_cacher = signet_blobber::BlobFetcher::builder()
-            .with_config(config.block_extractor())?
-            .with_pool(ctx.pool().clone())
-            .with_client(client.clone())
-            .build_cache()
-            .wrap_err("failed to create blob cacher")?
-            .spawn();
-
         let this = Self {
             config: config.into(),
-            host: ctx,
+            notifier,
+            chain_name,
             storage,
             chain,
             rpc_handle: None,
@@ -132,6 +126,8 @@ where
             alias_oracle: Arc::new(alias_oracle),
             blob_cacher,
             client,
+            serve_config,
+            rpc_config,
         };
         Ok((this, receiver))
     }
@@ -142,9 +138,9 @@ where
         Ok(reader.last_block_number()?.unwrap_or(0))
     }
 
-    /// Start the Signet instance, listening for ExEx notifications. Trace any
+    /// Start the Signet instance, listening for host notifications. Trace any
     /// errors.
-    #[instrument(skip(self), fields(host = ?self.host.config.chain.chain()))]
+    #[instrument(skip(self), fields(host = %self.chain_name))]
     pub async fn start(mut self) -> eyre::Result<()> {
         // Ensure hot and cold storage are at the same height. If either
         // is ahead, unwind to the minimum so the host re-delivers blocks.
@@ -173,13 +169,12 @@ where
 
             let last_block =
                 self.storage.reader().ok().and_then(|r| r.last_block_number().ok().flatten());
-            let exex_head = last_block.and_then(|h| self.set_exex_head(h).ok());
 
-            tracing::error!(err, last_block, ?exex_head, "Signet node crashed");
+            tracing::error!(err, last_block, "Signet node crashed");
         })
     }
 
-    /// Start the Signet instance, listening for ExEx notifications.
+    /// Start the Signet instance, listening for host notifications.
     async fn start_inner(&mut self) -> eyre::Result<()> {
         debug!(constants = ?self.constants, "signet starting");
 
@@ -193,135 +188,82 @@ where
         // Update the node status channel with last block height
         self.status.send_modify(|s| *s = NodeStatus::AtHeight(last_rollup_block));
 
-        // Sets the ExEx head position relative to that last block
-        let exex_head = self.set_exex_head(last_rollup_block)?;
+        // Set the head position and backfill thresholds on the notifier
+        let host_height = if last_rollup_block == 0 {
+            self.constants.host_deploy_height()
+        } else {
+            self.constants.pair_ru(last_rollup_block).host
+        };
+        self.notifier.set_head(host_height);
+        self.notifier.set_backfill_thresholds(self.config.backfill_max_blocks());
+
         info!(
-            host_head = exex_head.block.number,
-            host_hash = %exex_head.block.hash,
+            host_height,
             rollup_head_height = last_rollup_block,
             "signet listening for notifications"
         );
 
-        // Handle incoming ExEx notifications
-        while let Some(notification) = self.host.notifications.next().await {
-            let notification = notification.wrap_err("error in reth host notifications stream")?;
-            self.on_notification(notification)
+        // Handle incoming host notifications
+        while let Some(notification) = self.notifier.next_notification().await {
+            let notification = notification.wrap_err("error in host notifications stream")?;
+            let changed = self
+                .on_notification(&notification)
                 .await
                 .wrap_err("error while processing notification")?;
+            if changed {
+                self.update_block_tags(
+                    notification.safe_block_number,
+                    notification.finalized_block_number,
+                )?;
+            }
         }
 
         info!("signet shutting down");
         Ok(())
     }
 
-    /// Sets the head of the Exex chain from the last rollup block, handling
-    /// genesis conditions if necessary.
-    fn set_exex_head(&mut self, last_rollup_block: u64) -> eyre::Result<ExExHead> {
-        // If the last rollup block is 0, shortcut to the host rollup
-        // deployment block.
-        if last_rollup_block == 0 {
-            let host_deployment_block =
-                self.host.provider().block_by_number(self.constants.host_deploy_height())?;
-            match host_deployment_block {
-                Some(genesis_block) => {
-                    let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                    self.host.notifications.set_with_head(exex_head);
-                    self.set_backfill_thresholds();
-                    return Ok(exex_head);
-                }
-                None => {
-                    let host_ru_deploy_block = self.constants.host_deploy_height();
-                    debug!(
-                        host_ru_deploy_block,
-                        "Host deploy height not found. Falling back to genesis block"
-                    );
-                    let genesis_block = self
-                        .host
-                        .provider()
-                        .block_by_number(0)?
-                        .expect("failed to find genesis block");
-                    let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                    self.host.notifications.set_with_head(exex_head);
-                    self.set_backfill_thresholds();
-                    return Ok(exex_head);
-                }
-            }
-        }
-
-        // Find the corresponding host block for the rollup block number.
-        let host_height = self.constants.pair_ru(last_rollup_block).host;
-
-        match self.host.provider().block_by_number(host_height)? {
-            Some(host_block) => {
-                debug!(host_height, "found host block for height");
-                let exex_head = ExExHead { block: host_block.num_hash_slow() };
-                self.host.notifications.set_with_head(exex_head);
-                self.set_backfill_thresholds();
-                Ok(exex_head)
-            }
-            None => {
-                debug!(host_height, "no host block found for host height");
-                let genesis_block =
-                    self.host.provider().block_by_number(0)?.expect("failed to find genesis block");
-                let exex_head = ExExHead { block: genesis_block.num_hash_slow() };
-                self.host.notifications.set_with_head(exex_head);
-                self.set_backfill_thresholds();
-                Ok(exex_head)
-            }
-        }
-    }
-
-    /// Sets backfill thresholds to limit memory usage during sync.
-    /// This should be called after `set_with_head` to configure how many
-    /// blocks can be processed per backfill batch.
-    fn set_backfill_thresholds(&mut self) {
-        if let Some(max_blocks) = self.config.backfill_max_blocks() {
-            self.host.notifications.set_backfill_thresholds(ExecutionStageThresholds {
-                max_blocks: Some(max_blocks),
-                ..Default::default()
-            });
-            debug!(max_blocks, "configured backfill thresholds");
-        }
-    }
-
-    /// Runs on any notification received from the ExEx context.
+    /// Runs on any notification received from the host.
+    ///
+    /// Returns `true` if any rollup state changed.
     #[instrument(parent = None, skip_all, fields(
-        reverted = notification.reverted_chain().map(|c| c.len()).unwrap_or_default(),
-        committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
+        reverted = notification.kind.reverted_chain().map(|c| c.len()).unwrap_or_default(),
+        committed = notification.kind.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
-    pub async fn on_notification(&self, notification: ExExNotification<Host>) -> eyre::Result<()> {
-        metrics::record_notification_received(&notification);
+    pub async fn on_notification(
+        &self,
+        notification: &HostNotification<N::Chain>,
+    ) -> eyre::Result<bool> {
+        metrics::record_notification_received(notification);
 
         let mut changed = false;
 
         // NB: REVERTS MUST RUN FIRST
-        if let Some(chain) = notification.reverted_chain() {
+        if let Some(chain) = notification.kind.reverted_chain() {
             changed |=
-                self.on_host_revert(&chain).await.wrap_err("error encountered during revert")?;
+                self.on_host_revert(chain).await.wrap_err("error encountered during revert")?;
         }
 
-        if let Some(chain) = notification.committed_chain() {
+        if let Some(chain) = notification.kind.committed_chain() {
             changed |= self
-                .process_committed_chain(&chain)
+                .process_committed_chain(chain)
                 .await
                 .wrap_err("error encountered during commit")?;
         }
 
         if changed {
-            self.update_status()?;
+            self.update_status_channel()?;
         }
 
-        metrics::record_notification_processed(&notification);
-        Ok(())
+        metrics::record_notification_processed(notification);
+        Ok(changed)
     }
 
     /// Process a committed chain by extracting and executing blocks.
     ///
     /// Returns `true` if any rollup blocks were processed.
-    async fn process_committed_chain(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
-        let shim = ExtractableChainShim::new(chain);
+    async fn process_committed_chain(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
         let extractor = Extractor::new(self.constants.clone());
-        let extracts: Vec<_> = extractor.extract_signet(&shim).collect();
+        let extracts: Vec<_> = extractor.extract_signet(chain.as_ref()).collect();
 
         let last_height = self.last_rollup_block()?;
 
@@ -375,26 +317,30 @@ where
         let _ = self.chain.send_reorg(notif);
     }
 
-    /// Update the status channel and block tags. This keeps the RPC node
-    /// in sync with the latest block information.
-    fn update_status(&self) -> eyre::Result<()> {
+    /// Update the status channel with the current rollup height.
+    fn update_status_channel(&self) -> eyre::Result<()> {
         let ru_height = self.last_rollup_block()?;
-
-        self.update_block_tags(ru_height)?;
         self.status.send_modify(|s| *s = NodeStatus::AtHeight(ru_height));
         Ok(())
     }
 
-    /// Update block tags (latest/safe/finalized) and notify reth of processed
-    /// height.
-    fn update_block_tags(&self, ru_height: u64) -> eyre::Result<()> {
+    /// Update block tags (latest/safe/finalized) and notify the host of
+    /// processed height.
+    fn update_block_tags(
+        &self,
+        safe_block_number: Option<u64>,
+        finalized_block_number: Option<u64>,
+    ) -> eyre::Result<()> {
+        let ru_height = self.last_rollup_block()?;
+
         // Safe height
-        let safe_heights = self.load_safe_block_heights(ru_height)?;
+        let safe_heights = self.load_safe_block_heights(ru_height, safe_block_number);
         let safe_ru_height = safe_heights.rollup;
         debug!(safe_ru_height, "calculated safe ru height");
 
         // Finalized height
-        let finalized_heights = self.load_finalized_block_heights(ru_height)?;
+        let finalized_heights =
+            self.load_finalized_block_heights(ru_height, finalized_block_number);
         debug!(
             finalized_host_height = finalized_heights.host,
             finalized_ru_height = finalized_heights.rollup,
@@ -404,7 +350,7 @@ where
         // Atomically update all three tags
         self.chain.tags().update_all(ru_height, safe_ru_height, finalized_heights.rollup);
 
-        // Notify reth that we've finished processing up to the finalized
+        // Notify the host that we've finished processing up to the finalized
         // height. Skip if finalized rollup height is still at genesis.
         if finalized_heights.rollup > 0 {
             self.update_highest_processed_height(finalized_heights.host)?;
@@ -427,19 +373,21 @@ where
     /// 2. The safe rollup equivalent is beyond the current rollup height.
     /// 3. The safe rollup equivalent is below the current rollup height (normal
     ///    case).
-    fn load_safe_block_heights(&self, ru_height: u64) -> eyre::Result<PairedHeights> {
-        let Some(safe_heights) =
-            self.host.provider().safe_block_number()?.and_then(|h| self.constants.pair_host(h))
-        else {
+    fn load_safe_block_heights(
+        &self,
+        ru_height: u64,
+        safe_block_number: Option<u64>,
+    ) -> PairedHeights {
+        let Some(safe_heights) = safe_block_number.and_then(|h| self.constants.pair_host(h)) else {
             // Host safe block is below rollup genesis — use genesis.
-            return Ok(PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 });
+            return PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 };
         };
 
         // Clamp to current rollup height if ahead.
         if safe_heights.rollup > ru_height {
-            Ok(self.constants.pair_ru(ru_height))
+            self.constants.pair_ru(ru_height)
         } else {
-            Ok(safe_heights)
+            safe_heights
         }
     }
 
@@ -451,56 +399,51 @@ where
     /// 2. The finalized rollup equivalent is beyond the current rollup height.
     /// 3. The finalized rollup equivalent is below the current rollup height
     ///    (normal case).
-    fn load_finalized_block_heights(&self, ru_height: u64) -> eyre::Result<PairedHeights> {
-        let Some(finalized_ru) = self
-            .host
-            .provider()
-            .finalized_block_number()?
-            .and_then(|h| self.constants.host_block_to_rollup_block_num(h))
+    fn load_finalized_block_heights(
+        &self,
+        ru_height: u64,
+        finalized_block_number: Option<u64>,
+    ) -> PairedHeights {
+        let Some(finalized_ru) =
+            finalized_block_number.and_then(|h| self.constants.host_block_to_rollup_block_num(h))
         else {
             // Host finalized block is below rollup genesis — use genesis.
-            return Ok(PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 });
+            return PairedHeights { host: self.constants.host_deploy_height(), rollup: 0 };
         };
 
         // Clamp to current rollup height if ahead.
         let ru = finalized_ru.min(ru_height);
-        Ok(self.constants.pair_ru(ru))
+        self.constants.pair_ru(ru)
     }
 
-    /// Update the host node with the highest processed host height for the
-    /// ExEx.
+    /// Update the host node with the highest processed host height.
     fn update_highest_processed_height(&self, finalized_host_height: u64) -> eyre::Result<()> {
         let adjusted_height = finalized_host_height.saturating_sub(1);
-        let adjusted_header = self
-            .host
-            .provider()
-            .sealed_header(adjusted_height)?
-            .expect("db inconsistent. no host header for adjusted height");
-
-        let hash = adjusted_header.hash();
-
         debug!(finalized_host_height = adjusted_height, "Sending FinishedHeight notification");
-        self.host.events.send(ExExEvent::FinishedHeight(alloy::eips::NumHash {
-            number: adjusted_height,
-            hash,
-        }))?;
+        self.notifier.send_finished_height(adjusted_height).map_err(|e| eyre::eyre!(e))?;
         Ok(())
     }
 
     /// Called when the host chain has reverted a block or set of blocks.
     ///
     /// Returns `true` if any rollup state was unwound.
-    #[instrument(skip_all, fields(first = chain.first().number(), tip = chain.tip().number()))]
-    pub async fn on_host_revert(&self, chain: &Arc<Chain<Host>>) -> eyre::Result<bool> {
+    #[instrument(skip_all, fields(
+        first = chain.first_number().unwrap_or(0),
+        tip = chain.tip_number().unwrap_or(0),
+    ))]
+    pub async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
+        let tip = chain.tip_number().unwrap_or(0);
+        let first = chain.first_number().unwrap_or(0);
+
         // If the end is before the RU genesis, nothing to do.
-        if chain.tip().number() <= self.constants.host_deploy_height() {
+        if tip <= self.constants.host_deploy_height() {
             return Ok(false);
         }
 
         // Target is the block BEFORE the first block in the chain, or 0.
         let target = self
             .constants
-            .host_block_to_rollup_block_num(chain.first().number())
+            .host_block_to_rollup_block_num(first)
             .unwrap_or_default()
             .saturating_sub(1);
 
