@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 signet-node.workspace = true
 signet-node-config = { workspace = true, features = ["test_utils"] }
+signet-rpc.workspace = true
 
 signet-blobber.workspace = true
 signet-cold = { workspace = true, features = ["in-memory"] }
