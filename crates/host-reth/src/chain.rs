@@ -2,7 +2,7 @@ use alloy::{consensus::Block, consensus::BlockHeader};
 use reth::primitives::{EthPrimitives, RecoveredBlock};
 use reth::providers::Chain;
 use signet_blobber::RecoveredBlockShim;
-use signet_extract::Extractable;
+use signet_extract::{BlockAndReceipts, Extractable};
 use signet_types::primitives::TransactionSigned;
 use std::sync::Arc;
 
@@ -27,7 +27,9 @@ impl Extractable for RethChain {
     type Block = RecoveredBlockShim;
     type Receipt = reth::primitives::Receipt;
 
-    fn blocks_and_receipts(&self) -> impl Iterator<Item = (&Self::Block, &Vec<Self::Receipt>)> {
+    fn blocks_and_receipts(
+        &self,
+    ) -> impl Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>> {
         self.inner.blocks_and_receipts().map(|(block, receipts)| {
             // SAFETY: `RecoveredBlockShim` is `#[repr(transparent)]` over
             // `RethRecovered`, so these types have identical memory layouts.
@@ -35,7 +37,7 @@ impl Extractable for RethChain {
             // `Arc<Chain>`), which outlives the returned iterator.
             let block =
                 unsafe { std::mem::transmute::<&RethRecovered, &RecoveredBlockShim>(block) };
-            (block, receipts)
+            BlockAndReceipts { block, receipts }
         })
     }
 
