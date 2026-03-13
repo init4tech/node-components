@@ -7,9 +7,9 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct RpcBlock {
     /// The recovered block (with senders).
-    pub block: RecoveredBlock,
+    pub(crate) block: RecoveredBlock,
     /// The receipts for this block's transactions.
-    pub receipts: Vec<ReceiptEnvelope>,
+    pub(crate) receipts: Vec<ReceiptEnvelope>,
 }
 
 impl RpcBlock {
