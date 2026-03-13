@@ -2,7 +2,7 @@
 
 use alloy::consensus::Block;
 use reth::providers::Chain;
-use signet_extract::{Extractable, HasTxns};
+use signet_extract::{BlockAndReceipts, Extractable, HasTxns};
 use signet_types::primitives::TransactionSigned;
 
 /// A type alias for Reth's recovered block with a signed transaction.
@@ -32,14 +32,16 @@ impl<'a> Extractable for ExtractableChainShim<'a> {
     type Block = RecoveredBlockShim;
     type Receipt = reth::primitives::Receipt;
 
-    fn blocks_and_receipts(&self) -> impl Iterator<Item = (&Self::Block, &Vec<Self::Receipt>)> {
+    fn blocks_and_receipts(
+        &self,
+    ) -> impl Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>> {
         self.chain.blocks_and_receipts().map(|(block, receipts)| {
             // SAFETY: because the shim is repr(transparent), the memory layout
             // of `RecoveredBlockShim` is the same as `RethRecovered`, so we
             // can safely transmute the reference.
             let block =
                 unsafe { std::mem::transmute::<&'a RethRecovered, &RecoveredBlockShim>(block) };
-            (block, receipts)
+            BlockAndReceipts { block, receipts }
         })
     }
 }

@@ -15,9 +15,7 @@ use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::Extractor;
 use signet_node_config::SignetNodeConfig;
-use signet_rpc::{
-    ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
-};
+use signet_rpc::{ChainNotifier, NewBlockNotification, ReorgNotification, RpcServerGuard};
 use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
@@ -365,16 +363,14 @@ where
 
     /// Send a reorg notification on the broadcast channel.
     fn notify_reorg(&self, drained: Vec<DrainedBlock>, common_ancestor: u64) {
-        let removed_blocks = drained
-            .into_iter()
-            .map(|d| {
-                let header = d.header.into_inner();
-                let logs =
-                    d.receipts.into_iter().flat_map(|r| r.receipt.logs).map(|l| l.inner).collect();
-                RemovedBlock { header, logs }
-            })
-            .collect();
-        let notif = ReorgNotification { common_ancestor, removed_blocks };
+        let mut removed_hashes = Vec::with_capacity(drained.len());
+        let mut removed_logs = Vec::new();
+        for d in drained {
+            removed_hashes.push(d.header.hash());
+            removed_logs
+                .extend(d.receipts.into_iter().flat_map(|r| r.receipt.logs).map(|l| l.inner));
+        }
+        let notif = ReorgNotification { common_ancestor, removed_hashes, removed_logs };
         // Ignore send errors — no subscribers is fine.
         let _ = self.chain.send_reorg(notif);
     }

@@ -18,7 +18,7 @@ mod eth;
 pub use eth::EthError;
 
 mod interest;
-pub use interest::{ChainEvent, NewBlockNotification, RemovedBlock, ReorgNotification};
+pub use interest::{ChainEvent, NewBlockNotification, ReorgNotification};
 
 mod debug;
 pub use debug::DebugError;

@@ -44,21 +44,21 @@ signet-rpc = { version = "0.16.0-rc.7", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.18.0-rc.8", features = ["alloy"] }
 
-signet-bundle = "0.16.0-rc.11"
-signet-constants = "0.16.0-rc.11"
-signet-evm = "0.16.0-rc.11"
-signet-extract = "0.16.0-rc.11"
-signet-test-utils = "0.16.0-rc.11"
-signet-tx-cache = "0.16.0-rc.11"
-signet-types = "0.16.0-rc.11"
-signet-zenith = "0.16.0-rc.11"
-signet-journal = "0.16.0-rc.11"
-signet-storage = "0.6.5"
-signet-cold = "0.6.5"
-signet-hot = "0.6.5"
-signet-hot-mdbx = "0.6.5"
-signet-cold-mdbx = "0.6.5"
-signet-storage-types = "0.6.5"
+signet-bundle = "0.16.0-rc.14"
+signet-constants = "0.16.0-rc.14"
+signet-evm = "0.16.0-rc.14"
+signet-extract = "0.16.0-rc.14"
+signet-test-utils = "0.16.0-rc.14"
+signet-tx-cache = "0.16.0-rc.14"
+signet-types = "0.16.0-rc.14"
+signet-zenith = "0.16.0-rc.14"
+signet-journal = "0.16.0-rc.14"
+signet-storage = "0.6.4"
+signet-cold = "0.6.4"
+signet-hot = "0.6.4"
+signet-hot-mdbx = "0.6.4"
+signet-cold-mdbx = "0.6.4"
+signet-storage-types = "0.6.4"
 
 # ajj
 ajj = { version = "0.6.0" }
@@ -114,14 +114,18 @@ url = "2.5.4"
 tempfile = "3.17.0"
 
 [patch.crates-io]
-# signet-bundle = { path = "../sdk/crates/bundle"}
-# signet-constants = { path = "../sdk/crates/constants"}
-# signet-evm = { path = "../sdk/crates/evm"}
-# signet-extract = { path = "../sdk/crates/extract"}
-# signet-journal = { path = "../sdk/crates/journal"}
-# signet-test-utils = { path = "../sdk/crates/test-utils"}
-# signet-tx-cache = { path = "../sdk/crates/tx-cache"}
-# signet-types = { path = "../sdk/crates/types"}
-# signet-zenith = { path = "../sdk/crates/zenith"}
+signet-cold = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-hot = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-storage = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-storage-types = { git = "https://github.com/init4tech/storage.git", branch = "james/eng-1978" }
+signet-bundle = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-constants = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-evm = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-extract = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-journal = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-test-utils = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-tx-cache = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-types = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
+signet-zenith = { git = "https://github.com/init4tech/signet-sdk.git", branch = "feat/extractable-metadata"}
 
 # init4-bin-base = { path = "../shared" }

@@ -6,10 +6,10 @@ use alloy::{
 use core::fmt;
 use eyre::{ContextCompat, WrapErr};
 use init4_bin_base::utils::calc::SlotCalculator;
-use signet_blobber::{CacheHandle, ExtractableChainShim};
+use signet_blobber::CacheHandle;
 use signet_constants::SignetSystemConstants;
 use signet_evm::{BlockResult, EthereumHardfork, EvmNeedsCfg, SignetDriver};
-use signet_extract::Extracts;
+use signet_extract::{Extractable, Extracts};
 use signet_hot::{
     db::HotDbRead,
     model::{HotKv, HotKvRead, RevmRead},
@@ -103,6 +103,11 @@ where
         Ok(trevm)
     }
 
+    /// Check if the given address should be aliased.
+    async fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+        self.alias_oracle.create()?.should_alias(address).await
+    }
+
     /// Process a single extracted block, returning an [`ExecutedBlock`].
     ///
     /// The caller is responsible for driving extraction (via [`Extractor`])
@@ -114,9 +119,9 @@ where
         host_height = block_extracts.host_block.number(),
         has_ru_block = block_extracts.submitted.is_some(),
     ))]
-    pub async fn process_block(
+    pub async fn process_block<C: Extractable>(
         &self,
-        block_extracts: &Extracts<'_, ExtractableChainShim<'_>>,
+        block_extracts: &Extracts<'_, C>,
     ) -> eyre::Result<ExecutedBlock> {
         metrics::record_extracts(block_extracts);
         self.run_evm(block_extracts).await
@@ -142,9 +147,9 @@ where
     /// Run the EVM for a single block extraction, returning the fully
     /// assembled [`ExecutedBlock`].
     #[instrument(skip_all)]
-    async fn run_evm(
+    async fn run_evm<C: Extractable>(
         &self,
-        block_extracts: &Extracts<'_, ExtractableChainShim<'_>>,
+        block_extracts: &Extracts<'_, C>,
     ) -> eyre::Result<ExecutedBlock> {
         let start_time = std::time::Instant::now();
         let spec_id = self.hardforks.spec_id();
@@ -180,13 +185,11 @@ where
             None => VecDeque::new(),
         };
 
-        // Determine which addresses need to be aliased. Create the oracle
-        // once so every address check sees the same host state snapshot.
-        let oracle = self.alias_oracle.create()?;
+        // Determine which addresses need to be aliased.
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if !to_alias.contains(&addr) && oracle.should_alias(addr)? {
+            if !to_alias.contains(&addr) && self.should_alias(addr).await? {
                 to_alias.insert(addr);
             }
         }
