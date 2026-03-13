@@ -103,11 +103,6 @@ where
         Ok(trevm)
     }
 
-    /// Check if the given address should be aliased.
-    async fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        self.alias_oracle.create()?.should_alias(address).await
-    }
-
     /// Process a single extracted block, returning an [`ExecutedBlock`].
     ///
     /// The caller is responsible for driving extraction (via [`Extractor`])
@@ -185,11 +180,13 @@ where
             None => VecDeque::new(),
         };
 
-        // Determine which addresses need to be aliased.
+        // Determine which addresses need to be aliased. Create the oracle
+        // once so every address check sees the same host state snapshot.
+        let oracle = self.alias_oracle.create()?;
         let mut to_alias: HashSet<Address> = Default::default();
         for transact in block_extracts.transacts() {
             let addr = transact.host_sender();
-            if !to_alias.contains(&addr) && self.should_alias(addr).await? {
+            if !to_alias.contains(&addr) && oracle.should_alias(addr).await? {
                 to_alias.insert(addr);
             }
         }
