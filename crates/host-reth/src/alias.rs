@@ -1,5 +1,8 @@
 use alloy::{consensus::constants::KECCAK_EMPTY, primitives::Address};
-use core::{fmt, future::{self, Future}};
+use core::{
+    fmt,
+    future::{self, Future},
+};
 use eyre::OptionExt;
 use reth::providers::{StateProviderBox, StateProviderFactory};
 use signet_block_processor::{AliasOracle, AliasOracleFactory};

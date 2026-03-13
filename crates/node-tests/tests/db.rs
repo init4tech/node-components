@@ -49,7 +49,6 @@ async fn test_genesis() {
         .with_notifier(decomposed.notifier)
         .with_storage(Arc::clone(&storage))
         .with_alias_oracle(Arc::clone(&alias_oracle))
-        .with_chain_name(decomposed.chain_name)
         .with_blob_cacher(blob_cacher)
         .with_serve_config(decomposed.serve_config)
         .with_rpc_config(decomposed.rpc_config)
