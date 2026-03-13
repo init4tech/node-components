@@ -71,13 +71,38 @@ impl AliasOracleFactory for Box<dyn StateProviderFactory> {
     type Oracle = StateProviderBox;
 
     fn create(&self) -> eyre::Result<Self::Oracle> {
-        // NB: This becomes a problem if anyone ever birthday attacks a
-        // contract/EOA pair (c.f. EIP-3607). In practice this is unlikely to
-        // happen for the foreseeable future, and if it does we can revisit
-        // this decision.
-        // We considered taking the host height as an argument to this method,
-        // but this would require all nodes to be archive nodes in order to
-        // sync, which is less than ideal
+        // ## Why `Latest` instead of a pinned host height
+        //
+        // We use `Latest` rather than pinning to a specific host block
+        // height because pinning would require every node to be an archive
+        // node in order to sync historical state, which is impractical.
+        //
+        // ## Why `Latest` is safe
+        //
+        // An EOA cannot become a non-delegation contract without a birthday
+        // attack (c.f. EIP-3607). CREATE and CREATE2 addresses are
+        // deterministic and cannot target an existing EOA. EIP-7702
+        // delegations are explicitly excluded by the `is_eip7702()` check
+        // in `should_alias`, so delegated EOAs are never aliased. This
+        // means the alias status of an address is stable across blocks
+        // under normal conditions, making `Latest` equivalent to any
+        // pinned height.
+        //
+        // ## The only risk: birthday attacks
+        //
+        // A birthday attack could produce a CREATE/CREATE2 collision with
+        // an existing EOA, causing `should_alias` to return a false
+        // positive. This is computationally infeasible for the foreseeable
+        // future (~2^80 work), and if it ever becomes practical we can
+        // revisit this decision.
+        //
+        // ## Over-aliasing vs under-aliasing
+        //
+        // Even in the birthday attack scenario, the result is
+        // over-aliasing (a false positive), which is benign: a transaction
+        // sender gets an aliased address when it shouldn't. The dangerous
+        // failure mode — under-aliasing — cannot occur here because
+        // contract bytecode is never removed once deployed.
         self.state_by_block_number_or_tag(alloy::eips::BlockNumberOrTag::Latest).map_err(Into::into)
     }
 }
