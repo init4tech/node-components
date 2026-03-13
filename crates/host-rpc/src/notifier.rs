@@ -91,7 +91,7 @@ where
             .get_block_by_number(number.into())
             .full()
             .await?
-            .ok_or(RpcHostError::SubscriptionClosed)?;
+            .ok_or(RpcHostError::MissingBlock(number))?;
 
         let rpc_receipts =
             self.provider.get_block_receipts(number.into()).await?.unwrap_or_default();
@@ -183,6 +183,11 @@ where
     ///
     /// Returns the block number where the chain diverged (the first block
     /// that differs), or `None` if the fork is deeper than the buffer.
+    ///
+    /// **Limitation:** This queries the RPC node for blocks on the new chain.
+    /// If the node hasn't fully switched to the new chain, it may return
+    /// stale blocks from the old chain, producing an incorrect fork point.
+    /// This is an inherent limitation of RPC-based reorg detection.
     async fn find_fork_point(&self, new_header: &RpcHeader) -> Result<Option<u64>, RpcHostError> {
         // Walk the new chain backward from the new header's parent.
         let mut check_hash = new_header.parent_hash();
@@ -205,7 +210,7 @@ where
                         .provider
                         .get_block_by_number(check_number.into())
                         .await?
-                        .ok_or(RpcHostError::SubscriptionClosed)?;
+                        .ok_or(RpcHostError::MissingBlock(check_number))?;
                     check_hash = parent.header().parent_hash();
                     check_number = check_number.saturating_sub(1);
                 }
@@ -358,6 +363,15 @@ where
     }
 }
 
+/// [`HostNotifier`] implementation for [`RpcHostNotifier`].
+///
+/// Note: this implementation never emits
+/// [`HostNotificationKind::ChainReverted`]. The `newHeads` WebSocket
+/// subscription only fires when a new block appears — a pure revert
+/// (blocks removed without a replacement chain) produces no new header and
+/// is therefore invisible to the subscription. Only
+/// [`HostNotificationKind::ChainCommitted`] and
+/// [`HostNotificationKind::ChainReorged`] are produced.
 impl<P> HostNotifier for RpcHostNotifier<P>
 where
     P: Provider + Clone + Send + Sync + 'static,
@@ -384,7 +398,7 @@ where
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
         if let Some(max) = max_blocks {
-            self.backfill_batch_size = max;
+            self.backfill_batch_size = max.max(1);
         }
     }
 

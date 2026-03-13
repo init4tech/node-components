@@ -11,6 +11,10 @@ pub enum RpcHostError {
     #[error("rpc error: {0}")]
     Rpc(#[from] RpcError<TransportErrorKind>),
 
+    /// The RPC node returned no block for the requested number.
+    #[error("missing block {0}")]
+    MissingBlock(u64),
+
     /// Reorg deeper than the block buffer.
     #[error("reorg depth {depth} exceeds buffer capacity {capacity}")]
     ReorgTooDeep {

@@ -18,6 +18,8 @@ impl fmt::Debug for RethAliasOracle {
 
 impl AliasOracle for RethAliasOracle {
     fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+        // Sync DB calls run inline on the async runtime. This matches reth's
+        // existing pattern of synchronous database access on async tasks.
         let result = (|| {
             // No account at this address.
             let Some(acct) = self.0.basic_account(&address)? else { return Ok(false) };
