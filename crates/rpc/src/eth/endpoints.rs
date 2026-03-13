@@ -1078,16 +1078,21 @@ where
         let fm = ctx.filter_manager();
         let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
 
-        // Handle any pending reorg watermark.
-        if let Some(watermark) = entry.handle_reorg() {
-            trace!(watermark, "filter reset due to reorg");
+        // Drain any pending reorg notifications, producing removed logs
+        // for log filters. `next_start_block` was already rewound eagerly
+        // when the reorg was received.
+        let removed = entry.drain_reorgs();
+        if !removed.is_empty() {
+            trace!(count = removed.len(), "drained removed logs from pending reorgs");
         }
 
         let latest = ctx.tags().latest();
         let start = entry.next_start_block();
 
         // Implicit reorg detection: if latest has moved backward past our
-        // window, a reorg occurred that we missed. Reset to avoid skipping.
+        // window, a reorg occurred that we missed (e.g. broadcast lagged).
+        // Reset to avoid skipping. Removed logs are unavailable in this
+        // degraded path.
         if latest + 1 < start {
             trace!(latest, start, "implicit reorg detected, resetting filter");
             entry.mark_polled(latest);
@@ -1123,7 +1128,15 @@ where
             let stream =
                 cold.stream_logs(resolved, max_logs, deadline).await.map_err(|e| e.to_string())?;
 
-            let logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
+            let mut logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
+
+            // Prepend removed logs so the client sees removals before
+            // the replacement data.
+            if !removed.is_empty() {
+                let mut combined = removed;
+                combined.append(&mut logs);
+                logs = combined;
+            }
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))

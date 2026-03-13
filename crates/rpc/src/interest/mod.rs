@@ -69,12 +69,14 @@ pub enum ChainEvent {
     Reorg(ReorgNotification),
 }
 
-/// Data from a single block removed during a chain reorganization.
+/// A block that was removed during a chain reorganization.
 #[derive(Debug, Clone)]
 pub struct RemovedBlock {
-    /// The header of the removed block.
-    pub header: alloy::consensus::Header,
-    /// Logs emitted by the removed block.
+    /// The block number.
+    pub number: u64,
+    /// The block hash.
+    pub hash: alloy::primitives::B256,
+    /// Logs emitted in the removed block.
     pub logs: Vec<alloy::primitives::Log>,
 }
 
@@ -83,6 +85,6 @@ pub struct RemovedBlock {
 pub struct ReorgNotification {
     /// The block number of the common ancestor (last block still valid).
     pub common_ancestor: u64,
-    /// Blocks removed by the reorg, each carrying its header and logs.
+    /// The blocks that were removed, ordered by block number.
     pub removed_blocks: Vec<RemovedBlock>,
 }

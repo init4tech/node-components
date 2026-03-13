@@ -368,10 +368,11 @@ where
         let removed_blocks = drained
             .into_iter()
             .map(|d| {
-                let header = d.header.into_inner();
+                let number = d.header.number();
+                let hash = d.header.hash();
                 let logs =
                     d.receipts.into_iter().flat_map(|r| r.receipt.logs).map(|l| l.inner).collect();
-                RemovedBlock { header, logs }
+                RemovedBlock { number, hash, logs }
             })
             .collect();
         let notif = ReorgNotification { common_ancestor, removed_blocks };
