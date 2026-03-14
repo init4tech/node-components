@@ -71,6 +71,15 @@ impl ActiveFilter {
         self.last_poll_time = Instant::now();
     }
 
+    /// Update the poll timestamp without advancing `next_start_block`.
+    ///
+    /// Used on early-return paths (implicit reorg, no new blocks) where
+    /// `compute_removed_logs` has already rewound `next_start_block` and
+    /// we must preserve that position for the next forward scan.
+    pub(crate) fn touch_poll_time(&mut self) {
+        self.last_poll_time = Instant::now();
+    }
+
     /// Get the next start block for the filter.
     pub(crate) const fn next_start_block(&self) -> u64 {
         self.next_start_block

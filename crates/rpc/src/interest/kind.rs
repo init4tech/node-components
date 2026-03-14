@@ -178,6 +178,7 @@ mod tests {
         assert_eq!(logs[0].inner.address, addr);
         assert_eq!(logs[0].block_hash, Some(block_hash));
         assert_eq!(logs[0].block_number, Some(11));
+        assert_eq!(logs[0].block_timestamp, Some(1_000_011));
     }
 
     #[test]

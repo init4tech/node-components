@@ -1095,7 +1095,7 @@ where
         // Return any removed logs we do have, then reset.
         if latest + 1 < start {
             trace!(latest, start, "implicit reorg detected, resetting filter");
-            entry.mark_polled(latest);
+            entry.touch_poll_time();
             return Ok(if removed.is_empty() {
                 entry.empty_output()
             } else {
@@ -1104,7 +1104,7 @@ where
         }
 
         if start > latest {
-            entry.mark_polled(latest);
+            entry.touch_poll_time();
             return Ok(if removed.is_empty() {
                 entry.empty_output()
             } else {
