@@ -1078,12 +1078,13 @@ where
         let fm = ctx.filter_manager();
         let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
 
-        // Drain any pending reorg notifications, producing removed logs
-        // for log filters. `next_start_block` was already rewound eagerly
-        // when the reorg was received.
-        let removed = entry.drain_reorgs();
+        // Scan the global reorg ring buffer for notifications received
+        // since this filter's last poll, then lazily compute removed logs
+        // and rewind `next_start_block`.
+        let reorgs = fm.reorgs_since(entry.last_poll_time());
+        let removed = entry.compute_removed_logs(&reorgs);
         if !removed.is_empty() {
-            trace!(count = removed.len(), "drained removed logs from pending reorgs");
+            trace!(count = removed.len(), "computed removed logs from reorg ring buffer");
         }
 
         let latest = ctx.tags().latest();
@@ -1091,17 +1092,24 @@ where
 
         // Implicit reorg detection: if latest has moved backward past our
         // window, a reorg occurred that we missed (e.g. broadcast lagged).
-        // Reset to avoid skipping. Removed logs are unavailable in this
-        // degraded path.
+        // Return any removed logs we do have, then reset.
         if latest + 1 < start {
             trace!(latest, start, "implicit reorg detected, resetting filter");
             entry.mark_polled(latest);
-            return Ok(entry.empty_output());
+            return Ok(if removed.is_empty() {
+                entry.empty_output()
+            } else {
+                FilterOutput::from(removed)
+            });
         }
 
         if start > latest {
             entry.mark_polled(latest);
-            return Ok(entry.empty_output());
+            return Ok(if removed.is_empty() {
+                entry.empty_output()
+            } else {
+                FilterOutput::from(removed)
+            });
         }
 
         let cold = ctx.cold();
@@ -1132,9 +1140,11 @@ where
 
             // Prepend removed logs so the client sees removals before
             // the replacement data.
-            let mut combined = removed;
-            combined.append(&mut logs);
-            logs = combined;
+            if !removed.is_empty() {
+                let mut combined = removed;
+                combined.append(&mut logs);
+                logs = combined;
+            }
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))

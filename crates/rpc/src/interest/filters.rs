@@ -7,8 +7,9 @@ use alloy::{
 };
 use dashmap::{DashMap, mapref::one::RefMut};
 use std::{
+    collections::VecDeque,
     sync::{
-        Arc, Weak,
+        Arc, RwLock, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -21,38 +22,34 @@ type FilterId = U64;
 /// Output of a polled filter: log entries or block hashes.
 pub(crate) type FilterOutput = EventBuffer<B256>;
 
-/// A pending reorg notification paired with the filter's
-/// `next_start_block` at the time the reorg was received.
-///
-/// The snapshot records which blocks the filter had already delivered,
-/// so [`ActiveFilter::drain_reorgs`] can determine which removed logs
-/// are relevant.
-type PendingReorg = (Arc<ReorgNotification>, u64);
+/// Maximum number of reorg notifications retained in the global ring
+/// buffer. At most one reorg per 12 seconds and a 5-minute stale filter
+/// TTL gives a worst case of 25 entries.
+const MAX_REORG_ENTRIES: usize = 25;
 
 /// An active filter.
 ///
 /// Records the filter details, the [`Instant`] at which the filter was last
-/// polled, and the first block whose contents should be considered. Tracks
-/// a `created_at` timestamp used to guard against stale reorg notifications.
+/// polled, and the first block whose contents should be considered.
+///
+/// `last_poll_time` doubles as the cursor into the global reorg ring
+/// buffer — at poll time the filter scans for reorgs received after
+/// this instant.
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveFilter {
     next_start_block: u64,
     last_poll_time: Instant,
-    created_at: Instant,
     kind: InterestKind,
-    pending_reorgs: Vec<PendingReorg>,
 }
 
 impl core::fmt::Display for ActiveFilter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "ActiveFilter {{ next_start_block: {}, ms_since_last_poll: {}, kind: {:?}, \
-             pending_reorgs: {} }}",
+            "ActiveFilter {{ next_start_block: {}, ms_since_last_poll: {}, kind: {:?} }}",
             self.next_start_block,
             self.last_poll_time.elapsed().as_millis(),
             self.kind,
-            self.pending_reorgs.len(),
         )
     }
 }
@@ -72,12 +69,16 @@ impl ActiveFilter {
     pub(crate) fn mark_polled(&mut self, current_block: u64) {
         self.next_start_block = current_block + 1;
         self.last_poll_time = Instant::now();
-        self.pending_reorgs.clear();
     }
 
     /// Get the next start block for the filter.
     pub(crate) const fn next_start_block(&self) -> u64 {
         self.next_start_block
+    }
+
+    /// Get the instant at which the filter was last polled (or created).
+    pub(crate) const fn last_poll_time(&self) -> Instant {
+        self.last_poll_time
     }
 
     /// Get the duration since the filter was last polled.
@@ -90,47 +91,34 @@ impl ActiveFilter {
         self.kind.empty_output()
     }
 
-    /// Record a reorg notification, eagerly rewinding `next_start_block`.
+    /// Compute removed logs from a sequence of reorg notifications.
     ///
-    /// The notification is stored (behind an [`Arc`]) alongside a snapshot
-    /// of the filter's `next_start_block` at the time of the reorg, so
-    /// that [`drain_reorgs`] can later determine which removed logs the
-    /// client has already seen.
+    /// Walks the reorgs in order, computing snapshots lazily from the
+    /// filter's current [`next_start_block`]. For each reorg, only logs
+    /// from blocks the filter had already delivered (block number below
+    /// the snapshot) are included.
     ///
-    /// If `received_at` is before the filter's creation time, the reorg
-    /// is silently skipped — the filter was installed after the reorg
-    /// occurred and its `next_start_block` already reflects the post-reorg
-    /// chain state.
+    /// Updates `next_start_block` to the rewound value so the subsequent
+    /// forward scan starts from the correct position.
     ///
-    /// [`drain_reorgs`]: Self::drain_reorgs
-    fn push_reorg(&mut self, reorg: Arc<ReorgNotification>, received_at: Instant) {
-        if self.created_at > received_at {
-            return;
-        }
-
-        let snapshot = self.next_start_block;
-        self.next_start_block = self.next_start_block.min(reorg.common_ancestor + 1);
-        self.pending_reorgs.push((reorg, snapshot));
-    }
-
-    /// Drain pending reorgs, returning matched removed logs with
-    /// `removed: true`.
-    ///
-    /// For each pending reorg, only logs from blocks the filter had
-    /// already delivered (block number below the snapshot) are included.
     /// Block filters return an empty vec — the Ethereum JSON-RPC spec
     /// does not define `removed` semantics for block filters.
-    pub(crate) fn drain_reorgs(&mut self) -> Vec<Log> {
-        let reorgs = std::mem::take(&mut self.pending_reorgs);
-
+    ///
+    /// [`next_start_block`]: Self::next_start_block
+    pub(crate) fn compute_removed_logs(&mut self, reorgs: &[Arc<ReorgNotification>]) -> Vec<Log> {
         let Some(filter) = self.kind.as_filter() else {
+            for reorg in reorgs {
+                self.next_start_block = self.next_start_block.min(reorg.common_ancestor + 1);
+            }
             return Vec::new();
         };
 
         let mut removed = Vec::new();
-        for (notification, snapshot_start) in reorgs {
+        for notification in reorgs {
+            let snapshot = self.next_start_block;
+            self.next_start_block = self.next_start_block.min(notification.common_ancestor + 1);
             for block in &notification.removed_blocks {
-                if block.number >= snapshot_start {
+                if block.number >= snapshot {
                     continue;
                 }
                 for log in &block.logs {
@@ -159,13 +147,18 @@ impl ActiveFilter {
 pub(crate) struct FilterManagerInner {
     current_id: AtomicU64,
     filters: DashMap<FilterId, ActiveFilter>,
+    reorgs: RwLock<VecDeque<(Instant, Arc<ReorgNotification>)>>,
 }
 
 impl FilterManagerInner {
     /// Create a new filter manager.
     fn new() -> Self {
         // Start from 1, as 0 is weird in quantity encoding.
-        Self { current_id: AtomicU64::new(1), filters: DashMap::new() }
+        Self {
+            current_id: AtomicU64::new(1),
+            filters: DashMap::new(),
+            reorgs: RwLock::new(VecDeque::new()),
+        }
     }
 
     /// Get the next filter ID.
@@ -180,15 +173,12 @@ impl FilterManagerInner {
 
     fn install(&self, current_block: u64, kind: InterestKind) -> FilterId {
         let id = self.next_id();
-        let now = Instant::now();
         let _ = self.filters.insert(
             id,
             ActiveFilter {
                 next_start_block: current_block + 1,
-                last_poll_time: now,
-                created_at: now,
+                last_poll_time: Instant::now(),
                 kind,
-                pending_reorgs: Vec::new(),
             },
         );
         id
@@ -209,15 +199,30 @@ impl FilterManagerInner {
         self.filters.remove(&id)
     }
 
-    /// Apply a reorg notification to all active filters.
+    /// Append a reorg notification to the global ring buffer.
     ///
-    /// Each filter records the shared `Arc<ReorgNotification>` alongside
-    /// a snapshot of its current `next_start_block`, then eagerly rewinds.
-    /// Filters created after `received_at` are skipped (race guard).
-    pub(crate) fn apply_reorg(&self, reorg: Arc<ReorgNotification>, received_at: Instant) {
-        self.filters
-            .iter_mut()
-            .for_each(|mut entry| entry.value_mut().push_reorg(Arc::clone(&reorg), received_at));
+    /// Evicts the oldest entry when the buffer is full. The
+    /// [`Arc<ReorgNotification>`] is shared across all poll-time readers.
+    pub(crate) fn push_reorg(&self, reorg: ReorgNotification) {
+        let entry = (Instant::now(), Arc::new(reorg));
+        let mut buf = self.reorgs.write().unwrap();
+        if buf.len() >= MAX_REORG_ENTRIES {
+            buf.pop_front();
+        }
+        buf.push_back(entry);
+    }
+
+    /// Return all reorg notifications received after `since`.
+    ///
+    /// Clones the [`Arc`]s under a brief read lock and returns them.
+    pub(crate) fn reorgs_since(&self, since: Instant) -> Vec<Arc<ReorgNotification>> {
+        self.reorgs
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(received_at, _)| *received_at > since)
+            .map(|(_, reorg)| Arc::clone(reorg))
+            .collect()
     }
 
     /// Clean stale filters that have not been polled in a while.
@@ -232,11 +237,16 @@ impl FilterManagerInner {
 /// Filters are stored in a [`DashMap`] that maps filter IDs to active filters.
 /// Filter IDs are assigned sequentially, starting from 1.
 ///
+/// Reorg notifications are stored in a global ring buffer (capped at
+/// [`MAX_REORG_ENTRIES`]). Filters compute their removed logs lazily at
+/// poll time by scanning the buffer for entries received since the last
+/// poll.
+///
 /// Calling [`Self::new`] spawns two background workers:
 /// - An OS thread that periodically cleans stale filters (using a separate
 ///   thread to avoid [`DashMap::retain`] deadlock).
-/// - A tokio task that listens for reorg broadcasts and eagerly propagates
-///   them to all active filters.
+/// - A tokio task that listens for reorg broadcasts and appends them to
+///   the global ring buffer.
 ///
 /// Both workers hold [`Weak`] references and self-terminate when the
 /// manager is dropped.
@@ -249,8 +259,8 @@ impl FilterManager {
     /// Create a new filter manager.
     ///
     /// Spawns a cleanup thread for stale filters and a tokio task that
-    /// listens for [`ChainEvent::Reorg`] events and propagates reorg
-    /// notifications to all active filters.
+    /// listens for [`ChainEvent::Reorg`] events and appends them to the
+    /// global ring buffer.
     pub(crate) fn new(
         chain_events: &broadcast::Sender<ChainEvent>,
         clean_interval: Duration,
@@ -305,8 +315,8 @@ impl FilterCleanTask {
     }
 }
 
-/// Task that listens for reorg events and propagates them to all active
-/// filters.
+/// Task that listens for reorg events and appends them to the global
+/// ring buffer.
 ///
 /// Uses a [`Weak`] reference to self-terminate when the [`FilterManager`]
 /// is dropped.
@@ -338,10 +348,8 @@ impl FilterReorgTask {
 
             let ChainEvent::Reorg(reorg) = event else { continue };
 
-            let received_at = Instant::now();
-            let reorg = Arc::new(reorg);
             let Some(manager) = self.manager.upgrade() else { break };
-            manager.apply_reorg(reorg, received_at);
+            manager.push_reorg(reorg);
         }
     }
 }
@@ -356,9 +364,7 @@ mod tests {
         ActiveFilter {
             next_start_block: start,
             last_poll_time: Instant::now(),
-            created_at: Instant::now(),
             kind: InterestKind::Block,
-            pending_reorgs: Vec::new(),
         }
     }
 
@@ -366,9 +372,7 @@ mod tests {
         ActiveFilter {
             next_start_block: start,
             last_poll_time: Instant::now(),
-            created_at: Instant::now(),
             kind: InterestKind::Log(Box::new(Filter::new().address(addr))),
-            pending_reorgs: Vec::new(),
         }
     }
 
@@ -390,43 +394,26 @@ mod tests {
     }
 
     #[test]
-    fn push_reorg_skips_future_filters() {
+    fn compute_removed_logs_rewinds_start_block() {
         let mut f = block_filter(10);
-        // received_at is before the filter was created.
-        let received_at = f.created_at - Duration::from_secs(1);
-        let reorg = Arc::new(reorg_notification(5, vec![]));
-
-        f.push_reorg(reorg, received_at);
-
-        assert!(f.pending_reorgs.is_empty());
-        assert_eq!(f.next_start_block, 10);
-    }
-
-    #[test]
-    fn push_reorg_rewinds_start_block() {
-        let mut f = block_filter(10);
-        let received_at = Instant::now();
         let reorg = Arc::new(reorg_notification(7, vec![]));
 
-        f.push_reorg(reorg, received_at);
+        f.compute_removed_logs(&[reorg]);
 
         assert_eq!(f.next_start_block, 8);
-        assert_eq!(f.pending_reorgs.len(), 1);
     }
 
     #[test]
-    fn drain_reorgs_matches_removed_logs() {
+    fn compute_removed_logs_matches_removed() {
         let addr = address!("0x0000000000000000000000000000000000000001");
         let mut f = log_filter(11, addr);
-        let received_at = Instant::now();
 
         let reorg = Arc::new(reorg_notification(
             8,
             vec![removed_block(9, vec![test_log(addr)]), removed_block(10, vec![test_log(addr)])],
         ));
 
-        f.push_reorg(reorg, received_at);
-        let removed = f.drain_reorgs();
+        let removed = f.compute_removed_logs(&[reorg]);
 
         assert_eq!(removed.len(), 2);
         assert!(removed.iter().all(|l| l.removed));
@@ -434,11 +421,10 @@ mod tests {
     }
 
     #[test]
-    fn drain_reorgs_skips_undelivered_blocks() {
+    fn compute_removed_logs_skips_undelivered_blocks() {
         let addr = address!("0x0000000000000000000000000000000000000001");
         // Filter has only delivered up to block 10 (next_start = 11).
         let mut f = log_filter(11, addr);
-        let received_at = Instant::now();
 
         // Reorg removes blocks 10, 11, 12. Only block 10 was delivered.
         let reorg = Arc::new(reorg_notification(
@@ -450,27 +436,23 @@ mod tests {
             ],
         ));
 
-        f.push_reorg(reorg, received_at);
-        let removed = f.drain_reorgs();
+        let removed = f.compute_removed_logs(&[reorg]);
 
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].block_number, Some(10));
     }
 
     #[test]
-    fn drain_reorgs_cascading() {
+    fn compute_removed_logs_cascading() {
         let addr = address!("0x0000000000000000000000000000000000000001");
         // Filter has delivered up to block 100 (next_start = 101).
         let mut f = log_filter(101, addr);
-        let received_at = Instant::now();
 
         // Reorg A: rewinds to 98, removes 99-100.
         let reorg_a = Arc::new(reorg_notification(
             98,
             vec![removed_block(99, vec![test_log(addr)]), removed_block(100, vec![test_log(addr)])],
         ));
-        f.push_reorg(reorg_a, received_at);
-        assert_eq!(f.next_start_block, 99);
 
         // Reorg B: rewinds to 95, removes 96-103.
         let reorg_b = Arc::new(reorg_notification(
@@ -486,25 +468,22 @@ mod tests {
                 removed_block(103, vec![test_log(addr)]),
             ],
         ));
-        f.push_reorg(reorg_b, received_at);
-        assert_eq!(f.next_start_block, 96);
 
-        let removed = f.drain_reorgs();
+        let removed = f.compute_removed_logs(&[reorg_a, reorg_b]);
 
         // Reorg A: snapshot=101, blocks 99-100 < 101 → 2 logs.
         // Reorg B: snapshot=99, blocks 96-98 < 99 → 3 logs.
         // Blocks 99-103 from reorg B are >= 99 → skipped.
         assert_eq!(removed.len(), 5);
+        assert_eq!(f.next_start_block, 96);
     }
 
     #[test]
-    fn drain_reorgs_block_filter_empty() {
+    fn compute_removed_logs_block_filter_empty() {
         let mut f = block_filter(10);
-        let received_at = Instant::now();
         let reorg = Arc::new(reorg_notification(5, vec![removed_block(6, vec![])]));
 
-        f.push_reorg(reorg, received_at);
-        let removed = f.drain_reorgs();
+        let removed = f.compute_removed_logs(&[reorg]);
 
         assert!(removed.is_empty());
         // But the rewind still happened.
@@ -512,46 +491,46 @@ mod tests {
     }
 
     #[test]
-    fn drain_reorgs_clears_pending() {
-        let addr = address!("0x0000000000000000000000000000000000000001");
-        let mut f = log_filter(11, addr);
-        let received_at = Instant::now();
-        let reorg = Arc::new(reorg_notification(8, vec![removed_block(9, vec![test_log(addr)])]));
-
-        f.push_reorg(reorg, received_at);
-        let first = f.drain_reorgs();
-        assert_eq!(first.len(), 1);
-
-        let second = f.drain_reorgs();
-        assert!(second.is_empty());
+    fn push_reorg_evicts_oldest() {
+        let inner = FilterManagerInner::new();
+        for i in 0..MAX_REORG_ENTRIES + 5 {
+            inner.push_reorg(reorg_notification(i as u64, vec![]));
+        }
+        let buf = inner.reorgs.read().unwrap();
+        assert_eq!(buf.len(), MAX_REORG_ENTRIES);
+        // Oldest surviving entry should be the 6th push (index 5).
+        assert_eq!(buf[0].1.common_ancestor, 5);
     }
 
     #[test]
-    fn apply_reorg_propagates_with_race_guard() {
+    fn reorgs_since_filters_by_time() {
         let inner = FilterManagerInner::new();
-        inner.install_block_filter(20);
-        inner.install_block_filter(30);
+        let before = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        inner.push_reorg(reorg_notification(10, vec![]));
+        let mid = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        inner.push_reorg(reorg_notification(8, vec![]));
 
-        let received_at = Instant::now();
-        let reorg = Arc::new(reorg_notification(15, vec![]));
-        inner.apply_reorg(reorg, received_at);
+        let all = inner.reorgs_since(before);
+        assert_eq!(all.len(), 2);
 
-        inner.filters.iter().for_each(|entry| {
-            assert_eq!(entry.value().pending_reorgs.len(), 1);
-            assert_eq!(entry.value().next_start_block, 16);
-        });
+        let recent = inner.reorgs_since(mid);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].common_ancestor, 8);
+    }
 
-        // A filter installed after the reorg should not have it.
-        let late_id = inner.install_block_filter(50);
-        // Re-apply same reorg with the old timestamp.
-        let reorg2 = Arc::new(reorg_notification(15, vec![]));
-        inner.apply_reorg(reorg2, received_at);
+    #[test]
+    fn reorgs_since_skips_pre_creation_reorgs() {
+        let inner = FilterManagerInner::new();
+        inner.push_reorg(reorg_notification(5, vec![]));
+        std::thread::sleep(Duration::from_millis(5));
 
-        let late = inner.filters.get(&late_id).unwrap();
-        // The late filter was created after received_at, so it should
-        // have no pending reorgs from this event.
-        assert!(late.pending_reorgs.is_empty());
-        assert_eq!(late.next_start_block, 51);
+        let id = inner.install_block_filter(20);
+        let filter = inner.filters.get(&id).unwrap();
+
+        let reorgs = inner.reorgs_since(filter.last_poll_time);
+        assert!(reorgs.is_empty());
     }
 }
 
