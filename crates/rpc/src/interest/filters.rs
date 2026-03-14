@@ -32,7 +32,8 @@ type PendingReorg = (Arc<ReorgNotification>, u64);
 /// An active filter.
 ///
 /// Records the filter details, the [`Instant`] at which the filter was last
-/// polled, and the first block whose contents should be considered.
+/// polled, and the first block whose contents should be considered. Tracks
+/// a `created_at` timestamp used to guard against stale reorg notifications.
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveFilter {
     next_start_block: u64,
@@ -231,9 +232,14 @@ impl FilterManagerInner {
 /// Filters are stored in a [`DashMap`] that maps filter IDs to active filters.
 /// Filter IDs are assigned sequentially, starting from 1.
 ///
-/// Calling [`Self::new`] spawns a task that periodically cleans stale filters.
-/// This task runs on a separate thread to avoid [`DashMap::retain`] deadlock.
-/// See [`DashMap`] documentation for more information.
+/// Calling [`Self::new`] spawns two background workers:
+/// - An OS thread that periodically cleans stale filters (using a separate
+///   thread to avoid [`DashMap::retain`] deadlock).
+/// - A tokio task that listens for reorg broadcasts and eagerly propagates
+///   them to all active filters.
+///
+/// Both workers hold [`Weak`] references and self-terminate when the
+/// manager is dropped.
 #[derive(Debug, Clone)]
 pub(crate) struct FilterManager {
     inner: Arc<FilterManagerInner>,

@@ -1132,11 +1132,9 @@ where
 
             // Prepend removed logs so the client sees removals before
             // the replacement data.
-            if !removed.is_empty() {
-                let mut combined = removed;
-                combined.append(&mut logs);
-                logs = combined;
-            }
+            let mut combined = removed;
+            combined.append(&mut logs);
+            logs = combined;
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))
