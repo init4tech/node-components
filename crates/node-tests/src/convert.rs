@@ -1,147 +1,26 @@
-use alloy::consensus::ReceiptEnvelope;
-use signet_evm::ExecutionOutcome;
-use signet_types::primitives::{RecoveredBlock, SealedBlock};
+use signet_node_types::{HostNotification, HostNotificationKind};
+use signet_test_utils::chain::Chain;
 use std::sync::Arc;
 
-/// Utility trait to convert a type to a Reth primitive type.
-/// This is used mainly where we need to convert to a reth primitive type
-/// because reth does not support the alloy equivalents.
-pub trait ToRethPrimitive {
-    /// The Reth primitive type that the type can be converted to.
-    type RethPrimitive;
-
-    /// Convert the type to a Reth primitive type.
-    fn to_reth(self) -> Self::RethPrimitive;
-}
-
-// Reth does not preserve envelope status for receipts, so
-// the DB model will not support envelopes.
-impl ToRethPrimitive for ReceiptEnvelope {
-    type RethPrimitive = reth::primitives::Receipt;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        let success = self.is_success();
-        let cumulative_gas_used = self.cumulative_gas_used();
-        let tx_type = match self.tx_type() {
-            alloy::consensus::TxType::Legacy => reth::primitives::TxType::Legacy,
-            alloy::consensus::TxType::Eip2930 => reth::primitives::TxType::Eip2930,
-            alloy::consensus::TxType::Eip1559 => reth::primitives::TxType::Eip1559,
-            alloy::consensus::TxType::Eip4844 => reth::primitives::TxType::Eip4844,
-            alloy::consensus::TxType::Eip7702 => reth::primitives::TxType::Eip7702,
-        };
-
-        let r = match self {
-            ReceiptEnvelope::Legacy(r)
-            | ReceiptEnvelope::Eip2930(r)
-            | ReceiptEnvelope::Eip1559(r)
-            | ReceiptEnvelope::Eip4844(r) => r,
-            _ => panic!("unsupported receipt type"),
-        };
-
-        reth::primitives::Receipt { tx_type, success, cumulative_gas_used, logs: r.receipt.logs }
-    }
-}
-
-impl ToRethPrimitive for SealedBlock {
-    type RethPrimitive = reth::primitives::SealedBlock<reth::primitives::Block>;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        let hash = self.header.hash();
-        let header = self.header.into_inner();
-        let body = reth::primitives::BlockBody {
-            transactions: self.transactions,
-            ommers: vec![],
-            withdrawals: None,
-        };
-        reth::primitives::SealedBlock::new_unchecked(
-            reth::primitives::Block::new(header, body),
-            hash,
-        )
-    }
-}
-
-impl ToRethPrimitive for RecoveredBlock {
-    type RethPrimitive = reth::primitives::RecoveredBlock<reth::primitives::Block>;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        let hash = self.header.hash();
-        let senders: Vec<_> = self.senders().collect();
-        let header = self.header.into_inner();
-        let transactions = self.transactions.into_iter().map(|r| r.into_inner()).collect();
-        let body = reth::primitives::BlockBody { transactions, ommers: vec![], withdrawals: None };
-        let block = reth::primitives::Block::new(header, body);
-        reth::primitives::RecoveredBlock::new(block, senders, hash)
-    }
-}
-
-impl ToRethPrimitive for signet_test_utils::chain::Chain {
-    type RethPrimitive = reth::providers::Chain;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        reth::providers::Chain::new(
-            self.blocks.to_reth(),
-            self.execution_outcome.to_reth(),
-            Default::default(),
-        )
-    }
-}
-
-impl<T> ToRethPrimitive for Vec<T>
-where
-    T: ToRethPrimitive,
-{
-    type RethPrimitive = Vec<T::RethPrimitive>;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        self.into_iter().map(ToRethPrimitive::to_reth).collect()
-    }
-}
-
-impl ToRethPrimitive for ExecutionOutcome {
-    type RethPrimitive = reth::providers::ExecutionOutcome;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        let (bundle, receipts, first_block) = self.into_parts();
-
-        reth::providers::ExecutionOutcome {
-            bundle,
-            receipts: receipts.into_iter().map(ToRethPrimitive::to_reth).collect(),
-            first_block,
-            requests: vec![],
+/// Convert a test [`ExExNotification`] into a [`HostNotification`].
+///
+/// Safe and finalized block numbers are set to `None` since the test
+/// harness does not exercise block tag logic.
+///
+/// [`ExExNotification`]: signet_test_utils::specs::ExExNotification
+pub fn to_host_notification(
+    notif: &signet_test_utils::specs::ExExNotification,
+) -> HostNotification<Chain> {
+    let kind = match notif {
+        signet_test_utils::specs::ExExNotification::Committed { new } => {
+            HostNotificationKind::ChainCommitted { new: Arc::clone(new) }
         }
-    }
-}
-
-impl ToRethPrimitive for signet_test_utils::specs::ExExNotification {
-    type RethPrimitive = reth_exex::ExExNotification;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        match self {
-            signet_test_utils::specs::ExExNotification::Committed { new } => {
-                reth_exex::ExExNotification::ChainCommitted { new: new.to_reth() }
-            }
-            signet_test_utils::specs::ExExNotification::Reorged { old, new } => {
-                reth_exex::ExExNotification::ChainReorged { old: old.to_reth(), new: new.to_reth() }
-            }
-            signet_test_utils::specs::ExExNotification::Reverted { old } => {
-                reth_exex::ExExNotification::ChainReverted { old: old.to_reth() }
-            }
+        signet_test_utils::specs::ExExNotification::Reorged { old, new } => {
+            HostNotificationKind::ChainReorged { old: Arc::clone(old), new: Arc::clone(new) }
         }
-    }
-}
-
-impl<T: ToRethPrimitive + Clone> ToRethPrimitive for Arc<T> {
-    type RethPrimitive = Arc<T::RethPrimitive>;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        Arc::new(ToRethPrimitive::to_reth((*self).clone()))
-    }
-}
-
-impl<T: Clone + ToRethPrimitive> ToRethPrimitive for &T {
-    type RethPrimitive = T::RethPrimitive;
-
-    fn to_reth(self) -> Self::RethPrimitive {
-        ToRethPrimitive::to_reth(self.clone())
-    }
+        signet_test_utils::specs::ExExNotification::Reverted { old } => {
+            HostNotificationKind::ChainReverted { old: Arc::clone(old) }
+        }
+    };
+    HostNotification { kind, safe_block_number: None, finalized_block_number: None }
 }

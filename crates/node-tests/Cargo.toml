@@ -9,12 +9,13 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+signet-blobber = { workspace = true, features = ["test-utils"] }
 signet-node.workspace = true
 signet-node-config = { workspace = true, features = ["test_utils"] }
+signet-node-types.workspace = true
 
 signet-cold = { workspace = true, features = ["in-memory"] }
 signet-constants.workspace = true
-signet-evm.workspace = true
 signet-genesis.workspace = true
 signet-hot = { workspace = true, features = ["in-memory"] }
 signet-storage.workspace = true
@@ -26,11 +27,11 @@ signet-zenith.workspace = true
 alloy.workspace = true
 
 reth.workspace = true
-reth-exex.workspace = true
 reth-exex-test-utils.workspace = true
-reth-node-api.workspace = true
 
 eyre.workspace = true
+reqwest.workspace = true
+signet-rpc.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
