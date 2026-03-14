@@ -113,14 +113,15 @@ impl InterestKind {
             .flat_map(|block| {
                 let hash = block.hash;
                 let number = block.number;
-                block.logs.iter().map(move |log| (hash, number, log))
+                let timestamp = block.timestamp;
+                block.logs.iter().map(move |log| (hash, number, timestamp, log))
             })
-            .filter(|(_, _, log)| filter.matches(log))
-            .map(|(hash, number, log)| Log {
+            .filter(|(_, _, _, log)| filter.matches(log))
+            .map(|(hash, number, timestamp, log)| Log {
                 inner: log.clone(),
                 block_hash: Some(hash),
                 block_number: Some(number),
-                block_timestamp: None,
+                block_timestamp: Some(timestamp),
                 transaction_hash: None,
                 transaction_index: None,
                 log_index: None,
@@ -153,7 +154,7 @@ mod tests {
         hash: B256,
         logs: Vec<alloy::primitives::Log>,
     ) -> crate::interest::RemovedBlock {
-        crate::interest::RemovedBlock { number, hash, logs }
+        crate::interest::RemovedBlock { number, hash, timestamp: 1_000_000 + number, logs }
     }
 
     #[test]

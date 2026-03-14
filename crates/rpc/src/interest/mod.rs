@@ -81,6 +81,8 @@ pub struct RemovedBlock {
     pub number: u64,
     /// The block hash.
     pub hash: alloy::primitives::B256,
+    /// The block timestamp.
+    pub timestamp: u64,
     /// Logs emitted in the removed block.
     pub logs: Vec<alloy::primitives::Log>,
 }

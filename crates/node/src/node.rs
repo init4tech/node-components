@@ -370,9 +370,10 @@ where
             .map(|d| {
                 let number = d.header.number();
                 let hash = d.header.hash();
+                let timestamp = d.header.timestamp();
                 let logs =
                     d.receipts.into_iter().flat_map(|r| r.receipt.logs).map(|l| l.inner).collect();
-                RemovedBlock { number, hash, logs }
+                RemovedBlock { number, hash, timestamp, logs }
             })
             .collect();
         let notif = ReorgNotification { common_ancestor, removed_blocks };

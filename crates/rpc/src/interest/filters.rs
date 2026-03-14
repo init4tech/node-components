@@ -141,7 +141,7 @@ impl ActiveFilter {
                         inner: log.clone(),
                         block_hash: Some(block.hash),
                         block_number: Some(block.number),
-                        block_timestamp: None,
+                        block_timestamp: Some(block.timestamp),
                         transaction_hash: None,
                         transaction_index: None,
                         log_index: None,
@@ -384,6 +384,7 @@ mod tests {
         RemovedBlock {
             number,
             hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            timestamp: 1_000_000 + number,
             logs,
         }
     }
