@@ -101,7 +101,11 @@ impl<H: HotKv> StorageRpcCtx<H> {
         config: StorageRpcConfig,
     ) -> Self {
         let tracing_semaphore = Arc::new(Semaphore::new(config.max_tracing_requests));
-        let filter_manager = FilterManager::new(config.stale_filter_ttl, config.stale_filter_ttl);
+        let filter_manager = FilterManager::new(
+            &chain.notif_sender(),
+            config.stale_filter_ttl,
+            config.stale_filter_ttl,
+        );
         let sub_manager = SubscriptionManager::new(chain.notif_sender(), config.stale_filter_ttl);
         let gas_cache = GasOracleCache::new();
         Self {

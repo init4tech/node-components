@@ -25,11 +25,16 @@
 //! reference to the `Arc<Inner>`, so they self-terminate once all
 //! strong references are dropped.
 //!
-//! OS threads are used (rather than tokio tasks) because
+//! OS threads are used for cleanup (rather than tokio tasks) because
 //! [`DashMap::retain`] can deadlock if called from an async context
 //! that also holds a `DashMap` read guard on the same shard. Running
 //! cleanup on a dedicated OS thread ensures the retain lock is never
 //! contended with an in-flight async handler.
+//!
+//! [`FilterManager`] additionally spawns a tokio task that listens
+//! for [`ChainEvent::Reorg`] broadcasts and eagerly propagates reorg
+//! notifications to all active filters. This task does not call
+//! `retain`, so it is safe to run in an async context.
 //!
 //! [`Weak`]: std::sync::Weak
 //! [`DashMap`]: dashmap::DashMap
@@ -69,12 +74,16 @@ pub enum ChainEvent {
     Reorg(ReorgNotification),
 }
 
-/// Data from a single block removed during a chain reorganization.
+/// A block that was removed during a chain reorganization.
 #[derive(Debug, Clone)]
 pub struct RemovedBlock {
-    /// The header of the removed block.
-    pub header: alloy::consensus::Header,
-    /// Logs emitted by the removed block.
+    /// The block number.
+    pub number: u64,
+    /// The block hash.
+    pub hash: alloy::primitives::B256,
+    /// The block timestamp.
+    pub timestamp: u64,
+    /// Logs emitted in the removed block.
     pub logs: Vec<alloy::primitives::Log>,
 }
 
@@ -83,6 +92,6 @@ pub struct RemovedBlock {
 pub struct ReorgNotification {
     /// The block number of the common ancestor (last block still valid).
     pub common_ancestor: u64,
-    /// Blocks removed by the reorg, each carrying its header and logs.
+    /// The blocks that were removed, ordered by block number.
     pub removed_blocks: Vec<RemovedBlock>,
 }

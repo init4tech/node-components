@@ -109,21 +109,23 @@ impl InterestKind {
 
         let logs: VecDeque<Log> = reorg
             .removed_blocks
-            .into_iter()
+            .iter()
             .flat_map(|block| {
-                let block_hash = block.header.hash_slow();
-                let block_number = block.header.number;
-                let block_timestamp = block.header.timestamp;
-                block.logs.into_iter().filter(move |log| filter.matches(log)).map(move |log| Log {
-                    inner: log,
-                    block_hash: Some(block_hash),
-                    block_number: Some(block_number),
-                    block_timestamp: Some(block_timestamp),
-                    transaction_hash: None,
-                    transaction_index: None,
-                    log_index: None,
-                    removed: true,
-                })
+                let hash = block.hash;
+                let number = block.number;
+                let timestamp = block.timestamp;
+                block.logs.iter().map(move |log| (hash, number, timestamp, log))
+            })
+            .filter(|(_, _, _, log)| filter.matches(log))
+            .map(|(hash, number, timestamp, log)| Log {
+                inner: log.clone(),
+                block_hash: Some(hash),
+                block_number: Some(number),
+                block_timestamp: Some(timestamp),
+                transaction_hash: None,
+                transaction_index: None,
+                log_index: None,
+                removed: true,
             })
             .collect();
 
@@ -134,7 +136,6 @@ impl InterestKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interest::RemovedBlock;
     use alloy::primitives::{Address, B256, Bytes, LogData, address, b256};
 
     fn test_log(addr: Address, topic: B256) -> alloy::primitives::Log {
@@ -144,27 +145,29 @@ mod tests {
         }
     }
 
-    fn test_header(number: u64) -> alloy::consensus::Header {
-        alloy::consensus::Header { number, timestamp: 1_000_000 + number, ..Default::default() }
-    }
-
     fn test_filter(addr: Address) -> Filter {
         Filter::new().address(addr)
+    }
+
+    fn test_removed_block(
+        number: u64,
+        hash: B256,
+        logs: Vec<alloy::primitives::Log>,
+    ) -> crate::interest::RemovedBlock {
+        crate::interest::RemovedBlock { number, hash, timestamp: 1_000_000 + number, logs }
     }
 
     #[test]
     fn filter_reorg_for_sub_matches_logs() {
         let addr = address!("0x0000000000000000000000000000000000000001");
         let topic = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let block_hash =
+            b256!("0x0000000000000000000000000000000000000000000000000000000000000099");
 
-        let header = test_header(11);
         let kind = InterestKind::Log(Box::new(test_filter(addr)));
         let reorg = ReorgNotification {
             common_ancestor: 10,
-            removed_blocks: vec![RemovedBlock {
-                header: header.clone(),
-                logs: vec![test_log(addr, topic)],
-            }],
+            removed_blocks: vec![test_removed_block(11, block_hash, vec![test_log(addr, topic)])],
         };
 
         let buf = kind.filter_reorg_for_sub(reorg);
@@ -173,9 +176,9 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert!(logs[0].removed);
         assert_eq!(logs[0].inner.address, addr);
-        assert_eq!(logs[0].block_hash.unwrap(), header.hash_slow());
-        assert_eq!(logs[0].block_number.unwrap(), 11);
-        assert_eq!(logs[0].block_timestamp.unwrap(), 1_000_011);
+        assert_eq!(logs[0].block_hash, Some(block_hash));
+        assert_eq!(logs[0].block_number, Some(11));
+        assert_eq!(logs[0].block_timestamp, Some(1_000_011));
     }
 
     #[test]
@@ -183,14 +186,13 @@ mod tests {
         let addr = address!("0x0000000000000000000000000000000000000001");
         let other = address!("0x0000000000000000000000000000000000000002");
         let topic = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let block_hash =
+            b256!("0x0000000000000000000000000000000000000000000000000000000000000099");
 
         let kind = InterestKind::Log(Box::new(test_filter(addr)));
         let reorg = ReorgNotification {
             common_ancestor: 10,
-            removed_blocks: vec![RemovedBlock {
-                header: test_header(11),
-                logs: vec![test_log(other, topic)],
-            }],
+            removed_blocks: vec![test_removed_block(11, block_hash, vec![test_log(other, topic)])],
         };
 
         let buf = kind.filter_reorg_for_sub(reorg);
@@ -200,9 +202,12 @@ mod tests {
 
     #[test]
     fn filter_reorg_for_sub_block_returns_empty() {
+        let block_hash =
+            b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+
         let reorg = ReorgNotification {
             common_ancestor: 10,
-            removed_blocks: vec![RemovedBlock { header: test_header(11), logs: vec![] }],
+            removed_blocks: vec![test_removed_block(11, block_hash, vec![])],
         };
 
         let buf = InterestKind::Block.filter_reorg_for_sub(reorg);
