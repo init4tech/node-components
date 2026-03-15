@@ -224,7 +224,7 @@ where
         reverted = notification.reverted_chain().map(|c| c.len()).unwrap_or_default(),
         committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
-    pub async fn on_notification(
+    pub(crate) async fn on_notification(
         &self,
         notification: &HostNotification<N::Chain>,
     ) -> eyre::Result<bool> {
@@ -388,7 +388,12 @@ where
         first = chain.first_number().unwrap_or(0),
         tip = chain.tip_number().unwrap_or(0),
     ))]
-    pub async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
+    pub(crate) async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
+        // NB: `unwrap_or(0)` is safe here because a non-empty chain always
+        // has a first/tip block. If an invariant violation causes `None`,
+        // the `0` fallback results in `drain_above(0)` which drains all
+        // rollup state — a loud, obvious failure rather than silent
+        // corruption.
         let tip = chain.tip_number().unwrap_or(0);
         let first = chain.first_number().unwrap_or(0);
 

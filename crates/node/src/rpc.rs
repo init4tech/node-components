@@ -15,7 +15,7 @@ where
     AliasOracle: AliasOracleFactory,
 {
     /// Start the RPC server.
-    pub async fn start_rpc(&mut self) -> eyre::Result<()> {
+    pub(crate) async fn start_rpc(&mut self) -> eyre::Result<()> {
         let guard = self.launch_rpc().await?;
         self.rpc_handle = Some(guard);
         info!("launched rpc server");

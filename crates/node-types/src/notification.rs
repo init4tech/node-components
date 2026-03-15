@@ -2,7 +2,28 @@ use signet_extract::Extractable;
 use std::sync::Arc;
 
 /// A notification from the host chain, bundling a chain event with
-/// point-in-time block tag data.
+/// point-in-time block tag data. The safe/finalized block numbers are
+/// intentionally snapshotted at notification creation time rather than
+/// fetched live, because rollup safe/finalized tags are only updated
+/// after block processing completes.
+///
+/// # Examples
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use signet_node_types::{HostNotification, HostNotificationKind};
+/// # fn example<C: signet_extract::Extractable>(chain: Arc<C>) {
+/// let notification = HostNotification {
+///     kind: HostNotificationKind::ChainCommitted { new: chain },
+///     safe_block_number: Some(100),
+///     finalized_block_number: Some(90),
+/// };
+///
+/// // Access the committed chain via the shortcut method.
+/// assert!(notification.committed_chain().is_some());
+/// assert!(notification.reverted_chain().is_none());
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct HostNotification<C> {
     /// The chain event (commit, revert, or reorg).
@@ -29,6 +50,19 @@ impl<C: Extractable> HostNotification<C> {
 }
 
 /// The kind of chain event in a [`HostNotification`].
+///
+/// # Examples
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use signet_node_types::HostNotificationKind;
+/// # fn example<C: signet_extract::Extractable>(old: Arc<C>, new: Arc<C>) {
+/// let kind = HostNotificationKind::ChainReorged {
+///     old: old.clone(),
+///     new: new.clone(),
+/// };
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub enum HostNotificationKind<C> {
     /// A new chain segment was committed.

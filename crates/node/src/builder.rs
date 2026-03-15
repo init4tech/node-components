@@ -33,18 +33,50 @@ pub struct NotAStorage;
 /// - A [`StorageRpcConfig`], via [`Self::with_rpc_config`].
 /// - A `reqwest::Client`, via [`Self::with_client`].
 ///   - If not set, a default client will be created.
-pub struct SignetNodeBuilder<Notifier = (), Storage = NotAStorage, Aof = NotAnAof> {
+///
+/// # Examples
+///
+/// ```no_run
+/// # use signet_node::builder::SignetNodeBuilder;
+/// # fn example(
+/// #     config: signet_node_config::SignetNodeConfig,
+/// #     notifier: impl signet_node_types::HostNotifier,
+/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<signet_hot::db::MemoryHotKv>>,
+/// #     alias_oracle: impl signet_block_processor::AliasOracleFactory,
+/// #     blob_cacher: signet_blobber::CacheHandle,
+/// #     serve_config: signet_rpc::ServeConfig,
+/// #     rpc_config: signet_rpc::StorageRpcConfig,
+/// # ) {
+/// let builder = SignetNodeBuilder::new(config)
+///     .with_notifier(notifier)
+///     .with_storage(storage)
+///     .with_alias_oracle(alias_oracle)
+///     .with_blob_cacher(blob_cacher)
+///     .with_serve_config(serve_config)
+///     .with_rpc_config(rpc_config);
+/// # }
+/// ```
+pub struct SignetNodeBuilder<
+    Notifier = (),
+    Storage = NotAStorage,
+    Aof = NotAnAof,
+    Bc = (),
+    Sc = (),
+    Rc = (),
+> {
     config: SignetNodeConfig,
     alias_oracle: Option<Aof>,
     notifier: Option<Notifier>,
     storage: Option<Storage>,
     client: Option<reqwest::Client>,
-    blob_cacher: Option<CacheHandle>,
-    serve_config: Option<ServeConfig>,
-    rpc_config: Option<StorageRpcConfig>,
+    blob_cacher: Option<Bc>,
+    serve_config: Option<Sc>,
+    rpc_config: Option<Rc>,
 }
 
-impl<Notifier, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Notifier, Storage, Aof> {
+impl<Notifier, Storage, Aof, Bc, Sc, Rc> core::fmt::Debug
+    for SignetNodeBuilder<Notifier, Storage, Aof, Bc, Sc, Rc>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SignetNodeBuilder").finish_non_exhaustive()
     }
@@ -66,12 +98,12 @@ impl SignetNodeBuilder {
     }
 }
 
-impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
+impl<Notifier, Storage, Aof, Bc, Sc, Rc> SignetNodeBuilder<Notifier, Storage, Aof, Bc, Sc, Rc> {
     /// Set the [`UnifiedStorage`] backend for the signet node.
     pub fn with_storage<H: HotKv>(
         self,
         storage: Arc<UnifiedStorage<H>>,
-    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H>>, Aof> {
+    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H>>, Aof, Bc, Sc, Rc> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
@@ -85,7 +117,10 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     }
 
     /// Set the [`HostNotifier`] for the signet node.
-    pub fn with_notifier<N: HostNotifier>(self, notifier: N) -> SignetNodeBuilder<N, Storage, Aof> {
+    pub fn with_notifier<N: HostNotifier>(
+        self,
+        notifier: N,
+    ) -> SignetNodeBuilder<N, Storage, Aof, Bc, Sc, Rc> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
@@ -102,7 +137,7 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     pub fn with_alias_oracle<NewAof: AliasOracleFactory>(
         self,
         alias_oracle: NewAof,
-    ) -> SignetNodeBuilder<Notifier, Storage, NewAof> {
+    ) -> SignetNodeBuilder<Notifier, Storage, NewAof, Bc, Sc, Rc> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: Some(alias_oracle),
@@ -122,25 +157,59 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     }
 
     /// Set the pre-built blob cacher handle.
-    pub fn with_blob_cacher(mut self, blob_cacher: CacheHandle) -> Self {
-        self.blob_cacher = Some(blob_cacher);
-        self
+    pub fn with_blob_cacher(
+        self,
+        blob_cacher: CacheHandle,
+    ) -> SignetNodeBuilder<Notifier, Storage, Aof, CacheHandle, Sc, Rc> {
+        SignetNodeBuilder {
+            config: self.config,
+            alias_oracle: self.alias_oracle,
+            notifier: self.notifier,
+            storage: self.storage,
+            client: self.client,
+            blob_cacher: Some(blob_cacher),
+            serve_config: self.serve_config,
+            rpc_config: self.rpc_config,
+        }
     }
 
     /// Set the RPC transport configuration.
-    pub fn with_serve_config(mut self, serve_config: ServeConfig) -> Self {
-        self.serve_config = Some(serve_config);
-        self
+    pub fn with_serve_config(
+        self,
+        serve_config: ServeConfig,
+    ) -> SignetNodeBuilder<Notifier, Storage, Aof, Bc, ServeConfig, Rc> {
+        SignetNodeBuilder {
+            config: self.config,
+            alias_oracle: self.alias_oracle,
+            notifier: self.notifier,
+            storage: self.storage,
+            client: self.client,
+            blob_cacher: self.blob_cacher,
+            serve_config: Some(serve_config),
+            rpc_config: self.rpc_config,
+        }
     }
 
     /// Set the RPC behaviour configuration.
-    pub const fn with_rpc_config(mut self, rpc_config: StorageRpcConfig) -> Self {
-        self.rpc_config = Some(rpc_config);
-        self
+    pub fn with_rpc_config(
+        self,
+        rpc_config: StorageRpcConfig,
+    ) -> SignetNodeBuilder<Notifier, Storage, Aof, Bc, Sc, StorageRpcConfig> {
+        SignetNodeBuilder {
+            config: self.config,
+            alias_oracle: self.alias_oracle,
+            notifier: self.notifier,
+            storage: self.storage,
+            client: self.client,
+            blob_cacher: self.blob_cacher,
+            serve_config: self.serve_config,
+            rpc_config: Some(rpc_config),
+        }
     }
 }
 
-impl<N, H, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H>>, Aof>
+impl<N, H, Aof>
+    SignetNodeBuilder<N, Arc<UnifiedStorage<H>>, Aof, CacheHandle, ServeConfig, StorageRpcConfig>
 where
     N: HostNotifier,
     H: HotKv + Clone + Send + Sync + 'static,
@@ -199,9 +268,9 @@ where
             self.storage.unwrap(),
             self.alias_oracle.unwrap(),
             self.client.unwrap(),
-            self.blob_cacher.ok_or_eyre("Blob cacher must be set")?,
-            self.serve_config.ok_or_eyre("Serve config must be set")?,
-            self.rpc_config.ok_or_eyre("RPC config must be set")?,
+            self.blob_cacher.unwrap(),
+            self.serve_config.unwrap(),
+            self.rpc_config.unwrap(),
         )
     }
 }

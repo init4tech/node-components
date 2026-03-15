@@ -11,6 +11,25 @@ use signet_extract::Extractable;
 /// # Implementors
 ///
 /// - `signet-host-reth`: wraps reth's `ExExContext`
+///
+/// # Implementing
+///
+/// Implementations must uphold the following contract:
+///
+/// 1. **`set_head`** — called once at startup before the first
+///    [`next_notification`]. The backend must resolve the block number to a
+///    hash (falling back to genesis if the number is not yet available) and
+///    begin delivering notifications from that point.
+/// 2. **`next_notification`** — must yield notifications in host-chain order.
+///    Returning `None` signals a clean shutdown.
+/// 3. **`set_backfill_thresholds`** — may be called at any time. Passing
+///    `None` should restore the backend's default batch size.
+/// 4. **`send_finished_height`** — may be called after processing each
+///    notification batch. The backend resolves the block number to a hash
+///    internally. Sending a height that has already been acknowledged is a
+///    no-op.
+///
+/// [`next_notification`]: HostNotifier::next_notification
 pub trait HostNotifier {
     /// A chain segment — contiguous blocks with receipts.
     type Chain: Extractable;
