@@ -10,10 +10,10 @@ pub fn rpc_config_from_args(args: &RpcServerArgs) -> StorageRpcConfig {
     StorageRpcConfig::builder()
         .rpc_gas_cap(args.rpc_gas_cap)
         .max_tracing_requests(args.rpc_max_tracing_requests)
-        .gas_oracle_block_count(gpo.blocks as u64)
-        .gas_oracle_percentile(gpo.percentile as f64)
-        .ignore_price(Some(gpo.ignore_price as u128))
-        .max_price(Some(gpo.max_price as u128))
+        .gas_oracle_block_count(u64::from(gpo.blocks))
+        .gas_oracle_percentile(f64::from(gpo.percentile))
+        .ignore_price(Some(u128::from(gpo.ignore_price)))
+        .max_price(Some(u128::from(gpo.max_price)))
         .build()
 }
 
@@ -30,5 +30,60 @@ pub fn serve_config_from_args(args: &RpcServerArgs) -> ServeConfig {
         ws,
         ws_cors: args.ws_allowed_origins.clone(),
         ipc,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::{rpc_config_from_args, serve_config_from_args};
+    use reth::args::RpcServerArgs;
+
+    #[test]
+    fn rpc_config_from_default_args() {
+        let args = RpcServerArgs::default();
+        let gpo = &args.gas_price_oracle;
+        let config = rpc_config_from_args(&args);
+
+        assert_eq!(config.rpc_gas_cap, args.rpc_gas_cap);
+        assert_eq!(config.max_tracing_requests, args.rpc_max_tracing_requests);
+        assert_eq!(config.gas_oracle_block_count, u64::from(gpo.blocks));
+        assert_eq!(config.gas_oracle_percentile, f64::from(gpo.percentile));
+        assert_eq!(config.ignore_price, Some(u128::from(gpo.ignore_price)));
+        assert_eq!(config.max_price, Some(u128::from(gpo.max_price)));
+    }
+
+    #[test]
+    fn serve_config_http_disabled_by_default() {
+        let args = RpcServerArgs::default();
+        let config = serve_config_from_args(&args);
+
+        assert!(config.http.is_empty());
+        assert!(config.ws.is_empty());
+    }
+
+    #[test]
+    fn serve_config_http_enabled() {
+        let args = RpcServerArgs { http: true, ..Default::default() };
+        let config = serve_config_from_args(&args);
+
+        assert_eq!(config.http.len(), 1);
+        assert_eq!(config.http[0].port(), args.http_port);
+    }
+
+    #[test]
+    fn serve_config_ws_enabled() {
+        let args = RpcServerArgs { ws: true, ..Default::default() };
+        let config = serve_config_from_args(&args);
+
+        assert_eq!(config.ws.len(), 1);
+        assert_eq!(config.ws[0].port(), args.ws_port);
+    }
+
+    #[test]
+    fn serve_config_ipc_enabled_by_default() {
+        let args = RpcServerArgs::default();
+        let config = serve_config_from_args(&args);
+
+        assert!(config.ipc.is_some());
     }
 }

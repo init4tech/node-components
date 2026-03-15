@@ -16,7 +16,7 @@ use reth_stages_types::ExecutionStageThresholds;
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier};
 use signet_rpc::{ServeConfig, StorageRpcConfig};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, error};
 
 /// Reth ExEx implementation of [`HostNotifier`].
 ///
@@ -59,6 +59,22 @@ impl<Host: FullNodeComponents> core::fmt::Debug for DecomposedContext<Host> {
 /// Decompose a reth [`ExExContext`] into a [`RethHostNotifier`] and
 /// associated configuration values.
 ///
+/// This is the primary entry point for integrating with reth's ExEx
+/// framework. Typical usage in an ExEx `init` function:
+///
+/// ```ignore
+/// # // Requires ExExContext — shown for API illustration only.
+/// use signet_host_reth::decompose_exex_context;
+///
+/// async fn init(ctx: ExExContext<Node>) -> eyre::Result<()> {
+///     let decomposed = decompose_exex_context(ctx);
+///     // decomposed.notifier implements HostNotifier
+///     // decomposed.serve_config / rpc_config are reth-free
+///     // decomposed.pool is the transaction pool handle
+///     Ok(())
+/// }
+/// ```
+///
 /// This splits the ExEx context into:
 /// - A [`RethHostNotifier`] (implements [`HostNotifier`])
 /// - A [`ServeConfig`] (plain RPC server config)
@@ -100,8 +116,22 @@ where
         };
 
         // Read safe/finalized from the provider at notification time.
-        let safe_block_number = self.provider.safe_block_number().ok().flatten();
-        let finalized_block_number = self.provider.finalized_block_number().ok().flatten();
+        let safe_block_number = self
+            .provider
+            .safe_block_number()
+            .inspect_err(|e| {
+                debug!(%e, "failed to read safe block number from provider");
+            })
+            .ok()
+            .flatten();
+        let finalized_block_number = self
+            .provider
+            .finalized_block_number()
+            .inspect_err(|e| {
+                debug!(%e, "failed to read finalized block number from provider");
+            })
+            .ok()
+            .flatten();
 
         let kind = match notification {
             reth_exex::ExExNotification::ChainCommitted { new } => {
@@ -125,6 +155,7 @@ where
         let head = self
             .provider
             .sealed_header(block_number)
+            .inspect_err(|e| error!(block_number, %e, "failed to look up header for set_head"))
             .expect("failed to look up header for set_head")
             .map(|h| BlockNumHash { number: block_number, hash: h.hash() })
             .unwrap_or_else(|| {
@@ -132,6 +163,7 @@ where
                 let genesis = self
                     .provider
                     .sealed_header(0)
+                    .inspect_err(|e| error!(%e, "failed to look up genesis header"))
                     .expect("failed to look up genesis header")
                     .expect("genesis header missing");
                 BlockNumHash { number: 0, hash: genesis.hash() }

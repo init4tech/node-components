@@ -34,14 +34,7 @@ async fn test_genesis() {
 
     let storage = Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
 
-    let blob_cacher = signet_blobber::BlobFetcher::builder()
-        .with_config(cfg.block_extractor())
-        .unwrap()
-        .with_pool(decomposed.pool)
-        .with_client(reqwest::Client::new())
-        .build_cache()
-        .unwrap()
-        .spawn::<alloy::consensus::SimpleCoder>();
+    let blob_cacher = signet_node_tests::test_blob_cacher(&cfg, decomposed.pool);
 
     let alias_oracle: Arc<Mutex<HashSet<_>>> = Arc::new(Mutex::new(HashSet::default()));
 

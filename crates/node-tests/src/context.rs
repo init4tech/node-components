@@ -152,15 +152,7 @@ impl SignetTestContext {
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
-        // Build the blob cacher from the decomposed pool
-        let blob_cacher = signet_blobber::BlobFetcher::builder()
-            .with_config(cfg.block_extractor())
-            .unwrap()
-            .with_pool(decomposed.pool)
-            .with_client(reqwest::Client::new())
-            .build_cache()
-            .unwrap()
-            .spawn::<alloy::consensus::SimpleCoder>();
+        let blob_cacher = crate::test_blob_cacher(&cfg, decomposed.pool);
 
         // Build serve config from the Signet test config rather than the
         // reth defaults (which have IPC/HTTP disabled).

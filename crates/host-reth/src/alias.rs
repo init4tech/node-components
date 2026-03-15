@@ -73,13 +73,15 @@ impl AliasOracleFactory for RethAliasOracleFactory {
     type Oracle = RethAliasOracle;
 
     fn create(&self) -> eyre::Result<Self::Oracle> {
-        // NB: This becomes a problem if anyone ever birthday attacks a
-        // contract/EOA pair (c.f. EIP-3607). In practice this is unlikely to
-        // happen for the foreseeable future, and if it does we can revisit
-        // this decision.
-        // We considered taking the host height as an argument to this method,
-        // but this would require all nodes to be archive nodes in order to
-        // sync, which is less than ideal
+        // We use `Latest` rather than a pinned host height because pinning
+        // would require every node to be an archive node, which is impractical.
+        //
+        // This is safe because alias status is stable across blocks: an EOA
+        // cannot become a non-delegation contract without a birthday attack
+        // (c.f. EIP-3607), and EIP-7702 delegations are excluded by
+        // `is_eip7702()`. Even in the (computationally infeasible ~2^80)
+        // birthday attack scenario, the result is a benign false-positive
+        // (over-aliasing), never a dangerous false-negative.
         self.0
             .state_by_block_number_or_tag(alloy::eips::BlockNumberOrTag::Latest)
             .map(RethAliasOracle)
