@@ -18,6 +18,7 @@ use reth::transaction_pool::{TransactionOrigin, TransactionPool, test_utils::Moc
 use reth_exex_test_utils::{Adapter, TestExExHandle};
 use reth_node_api::FullNodeComponents;
 use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
+use signet_host_reth::decompose_exex_context;
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
@@ -104,6 +105,9 @@ impl SignetTestContext {
         let (ctx, handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
         let components = ctx.components.clone();
 
+        // Decompose the ExEx context into notifier + configs
+        let decomposed = decompose_exex_context(ctx);
+
         // set up Signet Node storage
         let constants = cfg.constants().unwrap();
 
@@ -148,10 +152,26 @@ impl SignetTestContext {
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
+        let blob_cacher = crate::test_blob_cacher(&cfg, decomposed.pool);
+
+        // Build serve config from the Signet test config rather than the
+        // reth defaults (which have IPC/HTTP disabled).
+        let serve_config = signet_rpc::ServeConfig {
+            http: vec![],
+            http_cors: None,
+            ws: vec![],
+            ws_cors: None,
+            ipc: cfg.ipc_endpoint().map(ToOwned::to_owned),
+        };
+
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
-            .with_ctx(ctx)
+            .with_notifier(decomposed.notifier)
             .with_storage(Arc::clone(&storage))
             .with_alias_oracle(Arc::clone(&alias_oracle))
+            .with_blob_cacher(blob_cacher)
+            .with_serve_config(serve_config)
+            .with_rpc_config(decomposed.rpc_config)
+            .with_client(reqwest::Client::new())
             .build()
             .await
             .unwrap();

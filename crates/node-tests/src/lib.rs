@@ -14,6 +14,9 @@
 /// Test constants.
 pub mod constants;
 
+/// Blob cacher test utilities.
+mod blob_test_utils;
+pub use blob_test_utils::test_blob_cacher;
 /// Test context.
 mod context;
 pub use context::{BalanceChecks, NonceChecks, SignetTestContext};

@@ -1,0 +1,24 @@
+use reth_exex::ExExEvent;
+
+/// Errors from the [`RethHostNotifier`](crate::RethHostNotifier).
+#[derive(Debug, thiserror::Error)]
+pub enum RethHostError {
+    /// A notification stream error forwarded from reth.
+    #[error("notification stream error: {0}")]
+    Notification(#[source] Box<dyn core::error::Error + Send + Sync>),
+    /// The provider failed to look up a header or block tag.
+    #[error("provider error: {0}")]
+    Provider(#[from] reth::providers::ProviderError),
+    /// Failed to send an ExEx event back to the host.
+    #[error("failed to send ExEx event")]
+    EventSend(#[from] tokio::sync::mpsc::error::SendError<ExExEvent>),
+    /// A required header was missing from the provider.
+    #[error("missing header for block {0}")]
+    MissingHeader(u64),
+}
+
+impl From<eyre::Report> for RethHostError {
+    fn from(e: eyre::Report) -> Self {
+        Self::Notification(e.into())
+    }
+}

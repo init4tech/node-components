@@ -1,5 +1,7 @@
+use alloy::primitives::map::HashSet;
 use serial_test::serial;
 use signet_cold::mem::MemColdBackend;
+use signet_host_reth::decompose_exex_context;
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
@@ -7,7 +9,7 @@ use signet_hot::{
 use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[serial]
 #[tokio::test]
@@ -18,6 +20,8 @@ async fn test_genesis() {
 
     let chain_spec: Arc<_> = cfg.chain_spec().clone();
     assert_eq!(chain_spec.genesis().config.chain_id, consts.unwrap().ru_chain_id());
+
+    let decomposed = decompose_exex_context(ctx);
 
     let cancel_token = CancellationToken::new();
     let hot = MemKv::new();
@@ -30,9 +34,18 @@ async fn test_genesis() {
 
     let storage = Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
 
+    let blob_cacher = signet_node_tests::test_blob_cacher(&cfg, decomposed.pool);
+
+    let alias_oracle: Arc<Mutex<HashSet<_>>> = Arc::new(Mutex::new(HashSet::default()));
+
     let (_, _) = SignetNodeBuilder::new(cfg.clone())
-        .with_ctx(ctx)
+        .with_notifier(decomposed.notifier)
         .with_storage(Arc::clone(&storage))
+        .with_alias_oracle(Arc::clone(&alias_oracle))
+        .with_blob_cacher(blob_cacher)
+        .with_serve_config(decomposed.serve_config)
+        .with_rpc_config(decomposed.rpc_config)
+        .with_client(reqwest::Client::new())
         .build()
         .await
         .unwrap();
