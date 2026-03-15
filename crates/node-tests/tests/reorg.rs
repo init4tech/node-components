@@ -415,10 +415,13 @@ async fn test_multi_block_reorg_log_filter() {
         ctx.revert_block(block3).await.unwrap();
         ctx.revert_block(block2).await.unwrap();
 
-        // Poll: empty (watermark rewinds start to 2, but latest=1).
+        // Poll: removed logs for blocks 4, 3, 2 (reorg ring buffer).
+        // Watermark rewinds start to 2, latest=1 → no forward scan,
+        // but the removed logs are still returned.
         let logs: Vec<Log<LogData>> =
             ctx.alloy_provider.get_filter_changes(filter_id).await.unwrap();
-        assert!(logs.is_empty());
+        assert_eq!(logs.len(), 3);
+        assert!(logs.iter().all(|l| l.removed));
 
         // Rebuild blocks 2, 3 (increment each → count 1, 2).
         let _new_b2 = process_increment(&ctx, addr).await;
@@ -523,10 +526,13 @@ async fn test_multiple_reorgs_between_polls() {
         // DO NOT POLL between reorg 1 and reorg 2 — this is the key.
         // The filter now has watermark=3 from the min() of both reorgs.
 
-        // Poll: empty (watermark+1=4, but latest=3 → start > latest).
+        // Poll: removed logs from both reorgs (block 5 from reorg 1,
+        // block 4 from reorg 3). Reorg 2's block 5 is skipped because
+        // it was never delivered (number >= snapshot after rewind).
         let logs: Vec<Log<LogData>> =
             ctx.alloy_provider.get_filter_changes(filter_id).await.unwrap();
-        assert!(logs.is_empty());
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|l| l.removed));
 
         // Rebuild blocks 4, 5 (count 3, 4).
         let _new_b4 = process_increment(&ctx, addr).await;
