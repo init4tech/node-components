@@ -1,5 +1,8 @@
 use alloy::{consensus::constants::KECCAK_EMPTY, primitives::Address};
-use core::fmt;
+use core::{
+    fmt,
+    future::{self, Future},
+};
 use eyre::OptionExt;
 use reth::providers::{StateProviderBox, StateProviderFactory};
 use signet_block_processor::{AliasOracle, AliasOracleFactory};
@@ -16,9 +19,9 @@ impl fmt::Debug for RethAliasOracle {
     }
 }
 
-impl AliasOracle for RethAliasOracle {
-    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        // No account at this address.
+impl RethAliasOracle {
+    /// Synchronously check whether the given address should be aliased.
+    fn check_alias(&self, address: Address) -> eyre::Result<bool> {
         let Some(acct) = self.0.basic_account(&address)? else { return Ok(false) };
         // Get the bytecode hash for this account.
         let bch = match acct.bytecode_hash {
@@ -38,6 +41,13 @@ impl AliasOracle for RethAliasOracle {
 
         // If not a 7702 delegation contract, alias it.
         Ok(!code.is_eip7702())
+    }
+}
+
+impl AliasOracle for RethAliasOracle {
+    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+        let result = self.check_alias(address);
+        future::ready(result)
     }
 }
 
