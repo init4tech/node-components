@@ -9,31 +9,24 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+signet-blobber.workspace = true
 signet-block-processor.workspace = true
 signet-cold.workspace = true
 signet-evm.workspace = true
 signet-extract.workspace = true
 signet-genesis.workspace = true
-signet-node-config.workspace = true
-signet-rpc.workspace = true
 signet-hot.workspace = true
+signet-node-config.workspace = true
+signet-node-types.workspace = true
+signet-rpc.workspace = true
 signet-storage.workspace = true
-
-signet-blobber.workspace = true
 signet-tx-cache.workspace = true
 signet-types.workspace = true
 
 alloy.workspace = true
-
-reth.workspace = true
-reth-exex.workspace = true
-reth-node-api.workspace = true
-reth-stages-types.workspace = true
-
 trevm.workspace = true
 
 eyre.workspace = true
-futures-util.workspace = true
 metrics.workspace = true
 reqwest.workspace = true
 tokio.workspace = true

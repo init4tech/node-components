@@ -11,15 +11,8 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod builder;
-pub use builder::SignetNodeBuilder;
+mod notification;
+pub use notification::{HostNotification, HostNotificationKind};
 
-mod metrics;
-
-mod node;
-pub use node::SignetNode;
-
-mod rpc;
-
-mod status;
-pub use status::NodeStatus;
+mod notifier;
+pub use notifier::HostNotifier;

@@ -36,9 +36,9 @@ impl<'a> Extractable for ExtractableChainShim<'a> {
         &self,
     ) -> impl Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>> {
         self.chain.blocks_and_receipts().map(|(block, receipts)| {
-            // SAFETY: `RecoveredBlockShim` is `#[repr(transparent)]` over a
-            // single `RethRecovered` field, guaranteeing identical memory
-            // layout. This makes the reference transmute sound.
+            // SAFETY: because the shim is repr(transparent), the memory layout
+            // of `RecoveredBlockShim` is the same as `RethRecovered`, so we
+            // can safely transmute the reference.
             let block =
                 unsafe { std::mem::transmute::<&'a RethRecovered, &RecoveredBlockShim>(block) };
             BlockAndReceipts { block, receipts }

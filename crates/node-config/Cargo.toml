@@ -18,8 +18,6 @@ init4-bin-base.workspace = true
 
 reth.workspace = true
 reth-chainspec.workspace = true
-reth-exex.workspace = true
-reth-node-api.workspace = true
 alloy.workspace = true
 
 eyre.workspace = true
