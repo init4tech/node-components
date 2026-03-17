@@ -1,31 +1,27 @@
 //! Filter management for `eth_newFilter` / `eth_getFilterChanges`.
 
-use crate::interest::{ChainEvent, InterestKind, ReorgNotification, buffer::EventBuffer};
+use crate::{
+    config::ChainNotifier,
+    interest::{InterestKind, ReorgNotification, buffer::EventBuffer},
+};
 use alloy::{
     primitives::{B256, U64},
     rpc::types::{Filter, Log},
 };
 use dashmap::{DashMap, mapref::one::RefMut};
 use std::{
-    collections::VecDeque,
     sync::{
-        Arc, RwLock, Weak,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
-use tokio::sync::broadcast;
 use tracing::trace;
 
 type FilterId = U64;
 
 /// Output of a polled filter: log entries or block hashes.
 pub(crate) type FilterOutput = EventBuffer<B256>;
-
-/// Maximum number of reorg notifications retained in the global ring
-/// buffer. At most one reorg per 12 seconds and a 5-minute stale filter
-/// TTL gives a worst case of 25 entries.
-const MAX_REORG_ENTRIES: usize = 25;
 
 /// An active filter.
 ///
@@ -149,18 +145,13 @@ impl ActiveFilter {
 pub(crate) struct FilterManagerInner {
     current_id: AtomicU64,
     filters: DashMap<FilterId, ActiveFilter>,
-    reorgs: RwLock<VecDeque<(Instant, Arc<ReorgNotification>)>>,
 }
 
 impl FilterManagerInner {
     /// Create a new filter manager.
     fn new() -> Self {
         // Start from 1, as 0 is weird in quantity encoding.
-        Self {
-            current_id: AtomicU64::new(1),
-            filters: DashMap::new(),
-            reorgs: RwLock::new(VecDeque::new()),
-        }
+        Self { current_id: AtomicU64::new(1), filters: DashMap::new() }
     }
 
     /// Get the next filter ID.
@@ -201,32 +192,6 @@ impl FilterManagerInner {
         self.filters.remove(&id)
     }
 
-    /// Append a reorg notification to the global ring buffer.
-    ///
-    /// Evicts the oldest entry when the buffer is full. The
-    /// [`Arc<ReorgNotification>`] is shared across all poll-time readers.
-    pub(crate) fn push_reorg(&self, reorg: ReorgNotification) {
-        let entry = (Instant::now(), Arc::new(reorg));
-        let mut buf = self.reorgs.write().unwrap();
-        if buf.len() >= MAX_REORG_ENTRIES {
-            buf.pop_front();
-        }
-        buf.push_back(entry);
-    }
-
-    /// Return all reorg notifications received after `since`.
-    ///
-    /// Clones the [`Arc`]s under a brief read lock and returns them.
-    pub(crate) fn reorgs_since(&self, since: Instant) -> Vec<Arc<ReorgNotification>> {
-        self.reorgs
-            .read()
-            .unwrap()
-            .iter()
-            .filter(|(received_at, _)| *received_at > since)
-            .map(|(_, reorg)| Arc::clone(reorg))
-            .collect()
-    }
-
     /// Clean stale filters that have not been polled in a while.
     fn clean_stale(&self, older_than: Duration) {
         self.filters.retain(|_, filter| filter.time_since_last_poll() < older_than);
@@ -239,40 +204,38 @@ impl FilterManagerInner {
 /// Filters are stored in a [`DashMap`] that maps filter IDs to active filters.
 /// Filter IDs are assigned sequentially, starting from 1.
 ///
-/// Reorg notifications are stored in a global ring buffer (capped at
-/// [`MAX_REORG_ENTRIES`]). Filters compute their removed logs lazily at
-/// poll time by scanning the buffer for entries received since the last
-/// poll.
+/// Reorg notifications are read from the [`ChainNotifier`]'s ring buffer
+/// at poll time. Filters compute their removed logs lazily by scanning
+/// for entries received since the last poll.
 ///
-/// Calling [`Self::new`] spawns two background workers:
-/// - An OS thread that periodically cleans stale filters (using a separate
-///   thread to avoid [`DashMap::retain`] deadlock).
-/// - A tokio task that listens for reorg broadcasts and appends them to
-///   the global ring buffer.
-///
-/// Both workers hold [`Weak`] references and self-terminate when the
-/// manager is dropped.
+/// Calling [`Self::new`] spawns an OS thread that periodically cleans
+/// stale filters (using a separate thread to avoid [`DashMap::retain`]
+/// deadlock). The worker holds a [`Weak`] reference and self-terminates
+/// when the manager is dropped.
 #[derive(Debug, Clone)]
 pub(crate) struct FilterManager {
     inner: Arc<FilterManagerInner>,
+    chain: ChainNotifier,
 }
 
 impl FilterManager {
     /// Create a new filter manager.
     ///
-    /// Spawns a cleanup thread for stale filters and a tokio task that
-    /// listens for [`ChainEvent::Reorg`] events and appends them to the
-    /// global ring buffer.
-    pub(crate) fn new(
-        chain_events: &broadcast::Sender<ChainEvent>,
-        clean_interval: Duration,
-        age_limit: Duration,
-    ) -> Self {
+    /// Spawns a cleanup thread for stale filters. Reorg notifications
+    /// are read directly from the [`ChainNotifier`]'s ring buffer at
+    /// poll time — no background listener is needed.
+    pub(crate) fn new(chain: ChainNotifier, clean_interval: Duration, age_limit: Duration) -> Self {
         let inner = Arc::new(FilterManagerInner::new());
-        let manager = Self { inner };
+        let manager = Self { inner, chain };
         FilterCleanTask::new(Arc::downgrade(&manager.inner), clean_interval, age_limit).spawn();
-        FilterReorgTask::new(Arc::downgrade(&manager.inner), chain_events.subscribe()).spawn();
         manager
+    }
+
+    /// Return all reorg notifications received after `since`.
+    ///
+    /// Delegates to [`ChainNotifier::reorgs_since`].
+    pub(crate) fn reorgs_since(&self, since: Instant) -> Vec<Arc<ReorgNotification>> {
+        self.chain.reorgs_since(since)
     }
 }
 
@@ -314,45 +277,6 @@ impl FilterCleanTask {
                 }
             }
         });
-    }
-}
-
-/// Task that listens for reorg events and appends them to the global
-/// ring buffer.
-///
-/// Uses a [`Weak`] reference to self-terminate when the [`FilterManager`]
-/// is dropped.
-struct FilterReorgTask {
-    manager: Weak<FilterManagerInner>,
-    rx: broadcast::Receiver<ChainEvent>,
-}
-
-impl FilterReorgTask {
-    const fn new(manager: Weak<FilterManagerInner>, rx: broadcast::Receiver<ChainEvent>) -> Self {
-        Self { manager, rx }
-    }
-
-    /// Spawn the listener as a tokio task.
-    fn spawn(self) {
-        tokio::spawn(self.run());
-    }
-
-    async fn run(mut self) {
-        loop {
-            let event = match self.rx.recv().await {
-                Ok(event) => event,
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    trace!(skipped, "filter reorg listener missed notifications");
-                    continue;
-                }
-                Err(_) => break,
-            };
-
-            let ChainEvent::Reorg(reorg) = event else { continue };
-
-            let Some(manager) = self.manager.upgrade() else { break };
-            manager.push_reorg(reorg);
-        }
     }
 }
 
@@ -514,49 +438,6 @@ mod tests {
         assert!(removed.is_empty());
         // But the rewind still happened.
         assert_eq!(f.next_start_block, 6);
-    }
-
-    #[test]
-    fn push_reorg_evicts_oldest() {
-        let inner = FilterManagerInner::new();
-        for i in 0..MAX_REORG_ENTRIES + 5 {
-            inner.push_reorg(reorg_notification(i as u64, vec![]));
-        }
-        let buf = inner.reorgs.read().unwrap();
-        assert_eq!(buf.len(), MAX_REORG_ENTRIES);
-        // Oldest surviving entry should be the 6th push (index 5).
-        assert_eq!(buf[0].1.common_ancestor, 5);
-    }
-
-    #[test]
-    fn reorgs_since_filters_by_time() {
-        let inner = FilterManagerInner::new();
-        let before = Instant::now();
-        std::thread::sleep(Duration::from_millis(5));
-        inner.push_reorg(reorg_notification(10, vec![]));
-        let mid = Instant::now();
-        std::thread::sleep(Duration::from_millis(5));
-        inner.push_reorg(reorg_notification(8, vec![]));
-
-        let all = inner.reorgs_since(before);
-        assert_eq!(all.len(), 2);
-
-        let recent = inner.reorgs_since(mid);
-        assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].common_ancestor, 8);
-    }
-
-    #[test]
-    fn reorgs_since_skips_pre_creation_reorgs() {
-        let inner = FilterManagerInner::new();
-        inner.push_reorg(reorg_notification(5, vec![]));
-        std::thread::sleep(Duration::from_millis(5));
-
-        let id = inner.install_block_filter(20);
-        let filter = inner.filters.get(&id).unwrap();
-
-        let reorgs = inner.reorgs_since(filter.last_poll_time);
-        assert!(reorgs.is_empty());
     }
 }
 

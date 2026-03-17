@@ -31,10 +31,11 @@
 //! cleanup on a dedicated OS thread ensures the retain lock is never
 //! contended with an in-flight async handler.
 //!
-//! [`FilterManager`] additionally spawns a tokio task that listens
-//! for [`ChainEvent::Reorg`] broadcasts and eagerly propagates reorg
-//! notifications to all active filters. This task does not call
-//! `retain`, so it is safe to run in an async context.
+//! [`FilterManager`] reads reorg notifications directly from the
+//! [`ChainNotifier`]'s ring buffer at poll time — no background
+//! listener task is needed.
+//!
+//! [`ChainNotifier`]: crate::ChainNotifier
 //!
 //! [`Weak`]: std::sync::Weak
 //! [`DashMap`]: dashmap::DashMap
