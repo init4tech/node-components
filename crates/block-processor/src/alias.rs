@@ -1,15 +1,16 @@
 use alloy::primitives::{Address, map::HashSet};
+use core::future::{self, Future};
 use std::sync::{Arc, Mutex};
 
 /// Simple trait to allow checking if an address should be aliased.
 pub trait AliasOracle {
     /// Returns true if the given address is an alias.
-    fn should_alias(&self, address: Address) -> eyre::Result<bool>;
+    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send;
 }
 
 impl AliasOracle for HashSet<Address> {
-    fn should_alias(&self, address: Address) -> eyre::Result<bool> {
-        Ok(self.contains(&address))
+    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+        future::ready(Ok(self.contains(&address)))
     }
 }
 
