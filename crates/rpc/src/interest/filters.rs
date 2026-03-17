@@ -1,9 +1,12 @@
 //! Filter management for `eth_newFilter` / `eth_getFilterChanges`.
 
-use crate::interest::{InterestKind, buffer::EventBuffer};
+use crate::{
+    config::ChainNotifier,
+    interest::{InterestKind, ReorgNotification, buffer::EventBuffer},
+};
 use alloy::{
     primitives::{B256, U64},
-    rpc::types::Filter,
+    rpc::types::{Filter, Log},
 };
 use dashmap::{DashMap, mapref::one::RefMut};
 use std::{
@@ -24,7 +27,11 @@ pub(crate) type FilterOutput = EventBuffer<B256>;
 ///
 /// Records the filter details, the [`Instant`] at which the filter was last
 /// polled, and the first block whose contents should be considered.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `last_poll_time` doubles as the cursor into the global reorg ring
+/// buffer — at poll time the filter scans for reorgs received after
+/// this instant.
+#[derive(Debug, Clone)]
 pub(crate) struct ActiveFilter {
     next_start_block: u64,
     last_poll_time: Instant,
@@ -38,7 +45,7 @@ impl core::fmt::Display for ActiveFilter {
             "ActiveFilter {{ next_start_block: {}, ms_since_last_poll: {}, kind: {:?} }}",
             self.next_start_block,
             self.last_poll_time.elapsed().as_millis(),
-            self.kind
+            self.kind,
         )
     }
 }
@@ -60,9 +67,23 @@ impl ActiveFilter {
         self.last_poll_time = Instant::now();
     }
 
+    /// Update the poll timestamp without advancing `next_start_block`.
+    ///
+    /// Used on early-return paths (implicit reorg, no new blocks) where
+    /// `compute_removed_logs` has already rewound `next_start_block` and
+    /// we must preserve that position for the next forward scan.
+    pub(crate) fn touch_poll_time(&mut self) {
+        self.last_poll_time = Instant::now();
+    }
+
     /// Get the next start block for the filter.
     pub(crate) const fn next_start_block(&self) -> u64 {
         self.next_start_block
+    }
+
+    /// Get the instant at which the filter was last polled (or created).
+    pub(crate) const fn last_poll_time(&self) -> Instant {
+        self.last_poll_time
     }
 
     /// Get the duration since the filter was last polled.
@@ -73,6 +94,49 @@ impl ActiveFilter {
     /// Return an empty output of the same kind as this filter.
     pub(crate) const fn empty_output(&self) -> FilterOutput {
         self.kind.empty_output()
+    }
+
+    /// Compute removed logs from a sequence of reorg notifications.
+    ///
+    /// Walks the reorgs in order, computing snapshots lazily from the
+    /// filter's current [`next_start_block`]. For each reorg, only logs
+    /// from blocks the filter had already delivered (block number below
+    /// the snapshot) are included.
+    ///
+    /// Updates `next_start_block` to the rewound value so the subsequent
+    /// forward scan starts from the correct position.
+    ///
+    /// Block filters return an empty vec — the Ethereum JSON-RPC spec
+    /// does not define `removed` semantics for block filters.
+    ///
+    /// [`next_start_block`]: Self::next_start_block
+    pub(crate) fn compute_removed_logs(&mut self, reorgs: &[Arc<ReorgNotification>]) -> Vec<Log> {
+        let Some(filter) = self.kind.as_filter() else {
+            for reorg in reorgs {
+                self.next_start_block = self.next_start_block.min(reorg.common_ancestor + 1);
+            }
+            return Vec::new();
+        };
+
+        let mut removed = Vec::new();
+        for notification in reorgs {
+            let snapshot = self.next_start_block;
+            self.next_start_block = self.next_start_block.min(notification.common_ancestor + 1);
+            for block in &notification.removed_blocks {
+                if block.number >= snapshot {
+                    continue;
+                }
+                for log in &block.logs {
+                    if !filter.matches(&log.inner) {
+                        continue;
+                    }
+                    let mut log = log.clone();
+                    log.removed = true;
+                    removed.push(log);
+                }
+            }
+        }
+        removed
     }
 }
 
@@ -102,10 +166,14 @@ impl FilterManagerInner {
 
     fn install(&self, current_block: u64, kind: InterestKind) -> FilterId {
         let id = self.next_id();
-        let next_start_block = current_block + 1;
-        let _ = self
-            .filters
-            .insert(id, ActiveFilter { next_start_block, last_poll_time: Instant::now(), kind });
+        let _ = self.filters.insert(
+            id,
+            ActiveFilter {
+                next_start_block: current_block + 1,
+                last_poll_time: Instant::now(),
+                kind,
+            },
+        );
         id
     }
 
@@ -136,21 +204,38 @@ impl FilterManagerInner {
 /// Filters are stored in a [`DashMap`] that maps filter IDs to active filters.
 /// Filter IDs are assigned sequentially, starting from 1.
 ///
-/// Calling [`Self::new`] spawns a task that periodically cleans stale filters.
-/// This task runs on a separate thread to avoid [`DashMap::retain`] deadlock.
-/// See [`DashMap`] documentation for more information.
+/// Reorg notifications are read from the [`ChainNotifier`]'s ring buffer
+/// at poll time. Filters compute their removed logs lazily by scanning
+/// for entries received since the last poll.
+///
+/// Calling [`Self::new`] spawns an OS thread that periodically cleans
+/// stale filters (using a separate thread to avoid [`DashMap::retain`]
+/// deadlock). The worker holds a [`Weak`] reference and self-terminates
+/// when the manager is dropped.
 #[derive(Debug, Clone)]
 pub(crate) struct FilterManager {
     inner: Arc<FilterManagerInner>,
+    chain: ChainNotifier,
 }
 
 impl FilterManager {
-    /// Create a new filter manager. Spawn a task to clean stale filters.
-    pub(crate) fn new(clean_interval: Duration, age_limit: Duration) -> Self {
+    /// Create a new filter manager.
+    ///
+    /// Spawns a cleanup thread for stale filters. Reorg notifications
+    /// are read directly from the [`ChainNotifier`]'s ring buffer at
+    /// poll time — no background listener is needed.
+    pub(crate) fn new(chain: ChainNotifier, clean_interval: Duration, age_limit: Duration) -> Self {
         let inner = Arc::new(FilterManagerInner::new());
-        let manager = Self { inner };
+        let manager = Self { inner, chain };
         FilterCleanTask::new(Arc::downgrade(&manager.inner), clean_interval, age_limit).spawn();
         manager
+    }
+
+    /// Return all reorg notifications received after `since`.
+    ///
+    /// Delegates to [`ChainNotifier::reorgs_since`].
+    pub(crate) fn reorgs_since(&self, since: Instant) -> Vec<Arc<ReorgNotification>> {
+        self.chain.reorgs_since(since)
     }
 }
 
@@ -192,6 +277,167 @@ impl FilterCleanTask {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interest::{InterestKind, RemovedBlock};
+    use alloy::primitives::{Address, B256, Bytes, LogData, address, b256};
+
+    fn block_filter(start: u64) -> ActiveFilter {
+        ActiveFilter {
+            next_start_block: start,
+            last_poll_time: Instant::now(),
+            kind: InterestKind::Block,
+        }
+    }
+
+    fn log_filter(start: u64, addr: Address) -> ActiveFilter {
+        ActiveFilter {
+            next_start_block: start,
+            last_poll_time: Instant::now(),
+            kind: InterestKind::Log(Box::new(Filter::new().address(addr))),
+        }
+    }
+
+    fn test_log(addr: Address, number: u64, hash: B256) -> Log {
+        Log {
+            inner: alloy::primitives::Log {
+                address: addr,
+                data: LogData::new_unchecked(vec![], Bytes::new()),
+            },
+            block_hash: Some(hash),
+            block_number: Some(number),
+            block_timestamp: Some(1_000_000 + number),
+            transaction_hash: Some(B256::ZERO),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        }
+    }
+
+    fn reorg_notification(ancestor: u64, removed: Vec<RemovedBlock>) -> ReorgNotification {
+        ReorgNotification { common_ancestor: ancestor, removed_blocks: removed }
+    }
+
+    fn removed_block(number: u64, logs: Vec<Log>) -> RemovedBlock {
+        RemovedBlock {
+            number,
+            hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            timestamp: 1_000_000 + number,
+            logs,
+        }
+    }
+
+    #[test]
+    fn compute_removed_logs_rewinds_start_block() {
+        let mut f = block_filter(10);
+        let reorg = Arc::new(reorg_notification(7, vec![]));
+
+        f.compute_removed_logs(&[reorg]);
+
+        assert_eq!(f.next_start_block, 8);
+    }
+
+    #[test]
+    fn compute_removed_logs_matches_removed() {
+        let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        let mut f = log_filter(11, addr);
+
+        let reorg = Arc::new(reorg_notification(
+            8,
+            vec![
+                removed_block(9, vec![test_log(addr, 9, hash)]),
+                removed_block(10, vec![test_log(addr, 10, hash)]),
+            ],
+        ));
+
+        let removed = f.compute_removed_logs(&[reorg]);
+
+        assert_eq!(removed.len(), 2);
+        assert!(removed.iter().all(|l| l.removed));
+        assert!(removed.iter().all(|l| l.inner.address == addr));
+        // Verify RPC metadata is preserved through clone-and-set path.
+        assert!(removed.iter().all(|l| l.transaction_hash == Some(B256::ZERO)));
+        assert!(removed.iter().all(|l| l.log_index == Some(0)));
+    }
+
+    #[test]
+    fn compute_removed_logs_skips_undelivered_blocks() {
+        let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        // Filter has only delivered up to block 10 (next_start = 11).
+        let mut f = log_filter(11, addr);
+
+        // Reorg removes blocks 10, 11, 12. Only block 10 was delivered.
+        let reorg = Arc::new(reorg_notification(
+            9,
+            vec![
+                removed_block(10, vec![test_log(addr, 10, hash)]),
+                removed_block(11, vec![test_log(addr, 11, hash)]),
+                removed_block(12, vec![test_log(addr, 12, hash)]),
+            ],
+        ));
+
+        let removed = f.compute_removed_logs(&[reorg]);
+
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].block_number, Some(10));
+    }
+
+    #[test]
+    fn compute_removed_logs_cascading() {
+        let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
+        // Filter has delivered up to block 100 (next_start = 101).
+        let mut f = log_filter(101, addr);
+
+        // Reorg A: rewinds to 98, removes 99-100.
+        let reorg_a = Arc::new(reorg_notification(
+            98,
+            vec![
+                removed_block(99, vec![test_log(addr, 99, hash)]),
+                removed_block(100, vec![test_log(addr, 100, hash)]),
+            ],
+        ));
+
+        // Reorg B: rewinds to 95, removes 96-103.
+        let reorg_b = Arc::new(reorg_notification(
+            95,
+            vec![
+                removed_block(96, vec![test_log(addr, 96, hash)]),
+                removed_block(97, vec![test_log(addr, 97, hash)]),
+                removed_block(98, vec![test_log(addr, 98, hash)]),
+                removed_block(99, vec![test_log(addr, 99, hash)]),
+                removed_block(100, vec![test_log(addr, 100, hash)]),
+                removed_block(101, vec![test_log(addr, 101, hash)]),
+                removed_block(102, vec![test_log(addr, 102, hash)]),
+                removed_block(103, vec![test_log(addr, 103, hash)]),
+            ],
+        ));
+
+        let removed = f.compute_removed_logs(&[reorg_a, reorg_b]);
+
+        // Reorg A: snapshot=101, blocks 99-100 < 101 → 2 logs.
+        // Reorg B: snapshot=99, blocks 96-98 < 99 → 3 logs.
+        // Blocks 99-103 from reorg B are >= 99 → skipped.
+        assert_eq!(removed.len(), 5);
+        assert_eq!(f.next_start_block, 96);
+    }
+
+    #[test]
+    fn compute_removed_logs_block_filter_empty() {
+        let mut f = block_filter(10);
+        let reorg = Arc::new(reorg_notification(5, vec![removed_block(6, vec![])]));
+
+        let removed = f.compute_removed_logs(&[reorg]);
+
+        assert!(removed.is_empty());
+        // But the rewind still happened.
+        assert_eq!(f.next_start_block, 6);
     }
 }
 
