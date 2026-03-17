@@ -371,8 +371,7 @@ where
                 let number = d.header.number();
                 let hash = d.header.hash();
                 let timestamp = d.header.timestamp();
-                let logs =
-                    d.receipts.into_iter().flat_map(|r| r.receipt.logs).map(|l| l.inner).collect();
+                let logs = d.receipts.into_iter().flat_map(|r| r.receipt.logs).collect();
                 RemovedBlock { number, hash, timestamp, logs }
             })
             .collect();

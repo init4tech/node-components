@@ -84,7 +84,13 @@ pub struct RemovedBlock {
     /// The block timestamp.
     pub timestamp: u64,
     /// Logs emitted in the removed block.
-    pub logs: Vec<alloy::primitives::Log>,
+    ///
+    /// Uses the RPC log type so that `transaction_hash` and `log_index`
+    /// from the original receipts can be preserved, as required by the
+    /// Ethereum JSON-RPC spec for removed logs. These fields are
+    /// populated when cold storage has indexed the block; otherwise the
+    /// vec may be empty.
+    pub logs: Vec<alloy::rpc::types::Log>,
 }
 
 /// Notification sent when a chain reorganization is detected.

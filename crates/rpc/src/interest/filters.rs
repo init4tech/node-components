@@ -131,19 +131,12 @@ impl ActiveFilter {
                     continue;
                 }
                 for log in &block.logs {
-                    if !filter.matches(log) {
+                    if !filter.matches(&log.inner) {
                         continue;
                     }
-                    removed.push(Log {
-                        inner: log.clone(),
-                        block_hash: Some(block.hash),
-                        block_number: Some(block.number),
-                        block_timestamp: Some(block.timestamp),
-                        transaction_hash: None,
-                        transaction_index: None,
-                        log_index: None,
-                        removed: true,
-                    });
+                    let mut log = log.clone();
+                    log.removed = true;
+                    removed.push(log);
                 }
             }
         }
@@ -367,7 +360,7 @@ impl FilterReorgTask {
 mod tests {
     use super::*;
     use crate::interest::{InterestKind, RemovedBlock};
-    use alloy::primitives::{Address, Bytes, LogData, address, b256};
+    use alloy::primitives::{Address, B256, Bytes, LogData, address, b256};
 
     fn block_filter(start: u64) -> ActiveFilter {
         ActiveFilter {
@@ -385,15 +378,27 @@ mod tests {
         }
     }
 
-    fn test_log(addr: Address) -> alloy::primitives::Log {
-        alloy::primitives::Log { address: addr, data: LogData::new_unchecked(vec![], Bytes::new()) }
+    fn test_log(addr: Address, number: u64, hash: B256) -> Log {
+        Log {
+            inner: alloy::primitives::Log {
+                address: addr,
+                data: LogData::new_unchecked(vec![], Bytes::new()),
+            },
+            block_hash: Some(hash),
+            block_number: Some(number),
+            block_timestamp: Some(1_000_000 + number),
+            transaction_hash: Some(B256::ZERO),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        }
     }
 
     fn reorg_notification(ancestor: u64, removed: Vec<RemovedBlock>) -> ReorgNotification {
         ReorgNotification { common_ancestor: ancestor, removed_blocks: removed }
     }
 
-    fn removed_block(number: u64, logs: Vec<alloy::primitives::Log>) -> RemovedBlock {
+    fn removed_block(number: u64, logs: Vec<Log>) -> RemovedBlock {
         RemovedBlock {
             number,
             hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000001"),
@@ -415,11 +420,15 @@ mod tests {
     #[test]
     fn compute_removed_logs_matches_removed() {
         let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
         let mut f = log_filter(11, addr);
 
         let reorg = Arc::new(reorg_notification(
             8,
-            vec![removed_block(9, vec![test_log(addr)]), removed_block(10, vec![test_log(addr)])],
+            vec![
+                removed_block(9, vec![test_log(addr, 9, hash)]),
+                removed_block(10, vec![test_log(addr, 10, hash)]),
+            ],
         ));
 
         let removed = f.compute_removed_logs(&[reorg]);
@@ -427,11 +436,15 @@ mod tests {
         assert_eq!(removed.len(), 2);
         assert!(removed.iter().all(|l| l.removed));
         assert!(removed.iter().all(|l| l.inner.address == addr));
+        // Verify RPC metadata is preserved through clone-and-set path.
+        assert!(removed.iter().all(|l| l.transaction_hash == Some(B256::ZERO)));
+        assert!(removed.iter().all(|l| l.log_index == Some(0)));
     }
 
     #[test]
     fn compute_removed_logs_skips_undelivered_blocks() {
         let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
         // Filter has only delivered up to block 10 (next_start = 11).
         let mut f = log_filter(11, addr);
 
@@ -439,9 +452,9 @@ mod tests {
         let reorg = Arc::new(reorg_notification(
             9,
             vec![
-                removed_block(10, vec![test_log(addr)]),
-                removed_block(11, vec![test_log(addr)]),
-                removed_block(12, vec![test_log(addr)]),
+                removed_block(10, vec![test_log(addr, 10, hash)]),
+                removed_block(11, vec![test_log(addr, 11, hash)]),
+                removed_block(12, vec![test_log(addr, 12, hash)]),
             ],
         ));
 
@@ -454,27 +467,31 @@ mod tests {
     #[test]
     fn compute_removed_logs_cascading() {
         let addr = address!("0x0000000000000000000000000000000000000001");
+        let hash = b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
         // Filter has delivered up to block 100 (next_start = 101).
         let mut f = log_filter(101, addr);
 
         // Reorg A: rewinds to 98, removes 99-100.
         let reorg_a = Arc::new(reorg_notification(
             98,
-            vec![removed_block(99, vec![test_log(addr)]), removed_block(100, vec![test_log(addr)])],
+            vec![
+                removed_block(99, vec![test_log(addr, 99, hash)]),
+                removed_block(100, vec![test_log(addr, 100, hash)]),
+            ],
         ));
 
         // Reorg B: rewinds to 95, removes 96-103.
         let reorg_b = Arc::new(reorg_notification(
             95,
             vec![
-                removed_block(96, vec![test_log(addr)]),
-                removed_block(97, vec![test_log(addr)]),
-                removed_block(98, vec![test_log(addr)]),
-                removed_block(99, vec![test_log(addr)]),
-                removed_block(100, vec![test_log(addr)]),
-                removed_block(101, vec![test_log(addr)]),
-                removed_block(102, vec![test_log(addr)]),
-                removed_block(103, vec![test_log(addr)]),
+                removed_block(96, vec![test_log(addr, 96, hash)]),
+                removed_block(97, vec![test_log(addr, 97, hash)]),
+                removed_block(98, vec![test_log(addr, 98, hash)]),
+                removed_block(99, vec![test_log(addr, 99, hash)]),
+                removed_block(100, vec![test_log(addr, 100, hash)]),
+                removed_block(101, vec![test_log(addr, 101, hash)]),
+                removed_block(102, vec![test_log(addr, 102, hash)]),
+                removed_block(103, vec![test_log(addr, 103, hash)]),
             ],
         ));
 
