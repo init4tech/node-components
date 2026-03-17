@@ -1,27 +1,25 @@
-use alloy::primitives::map::HashSet;
 use serial_test::serial;
 use signet_cold::mem::MemColdBackend;
-use signet_host_reth::decompose_exex_context;
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
 };
 use signet_node::SignetNodeBuilder;
 use signet_node_config::test_utils::test_config;
+use signet_node_tests::TestHostNotifier;
+use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[serial]
 #[tokio::test]
 async fn test_genesis() {
     let cfg = test_config();
     let consts = cfg.constants();
-    let (ctx, _) = reth_exex_test_utils::test_exex_context().await.unwrap();
 
     let chain_spec: Arc<_> = cfg.chain_spec().clone();
     assert_eq!(chain_spec.genesis().config.chain_id, consts.unwrap().ru_chain_id());
-
-    let decomposed = decompose_exex_context(ctx);
 
     let cancel_token = CancellationToken::new();
     let hot = MemKv::new();
@@ -34,18 +32,34 @@ async fn test_genesis() {
 
     let storage = Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
 
-    let blob_cacher = signet_node_tests::test_blob_cacher(&cfg, decomposed.pool);
+    // Create a dummy notifier (not used, we only check genesis loading)
+    let (_sender, receiver) = mpsc::unbounded_channel();
+    let notifier = TestHostNotifier::new(receiver);
 
-    let alias_oracle: Arc<Mutex<HashSet<_>>> = Arc::new(Mutex::new(HashSet::default()));
+    // Build a dummy blob cacher
+    let blob_cacher = signet_blobber::BlobFetcher::builder()
+        .with_test_pool()
+        .with_explorer_url("https://example.com")
+        .with_client(reqwest::Client::new())
+        .build_cache()
+        .unwrap()
+        .spawn();
 
     let (_, _) = SignetNodeBuilder::new(cfg.clone())
-        .with_notifier(decomposed.notifier)
+        .with_notifier(notifier)
         .with_storage(Arc::clone(&storage))
-        .with_alias_oracle(Arc::clone(&alias_oracle))
+        .with_alias_oracle(Arc::new(std::sync::Mutex::new(alloy::primitives::map::HashSet::<
+            alloy::primitives::Address,
+        >::default())))
         .with_blob_cacher(blob_cacher)
-        .with_serve_config(decomposed.serve_config)
-        .with_rpc_config(decomposed.rpc_config)
-        .with_client(reqwest::Client::new())
+        .with_serve_config(ServeConfig {
+            http: vec![],
+            http_cors: None,
+            ws: vec![],
+            ws_cors: None,
+            ipc: cfg.ipc_endpoint().map(ToOwned::to_owned),
+        })
+        .with_rpc_config(StorageRpcConfig::default())
         .build()
         .await
         .unwrap();
