@@ -32,7 +32,7 @@ use revm_inspectors::access_list::AccessListInspector;
 use serde::Serialize;
 use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
-use tracing::{Instrument, debug, trace_span};
+use tracing::{Instrument, debug, trace, trace_span};
 use trevm::{
     EstimationResult, revm::context::result::ExecutionResult, revm::database::DBErrorMarker,
 };
@@ -1078,12 +1078,38 @@ where
         let fm = ctx.filter_manager();
         let mut entry = fm.get_mut(id).ok_or_else(|| format!("filter not found: {id}"))?;
 
+        // Scan the global reorg ring buffer for notifications received
+        // since this filter's last poll, then lazily compute removed logs
+        // and rewind `next_start_block`.
+        let reorgs = fm.reorgs_since(entry.last_poll_time());
+        let removed = entry.compute_removed_logs(&reorgs);
+        if !removed.is_empty() {
+            trace!(count = removed.len(), "computed removed logs from reorg ring buffer");
+        }
+
         let latest = ctx.tags().latest();
         let start = entry.next_start_block();
 
+        // Implicit reorg detection: if latest has moved backward past our
+        // window, a reorg occurred that we missed (e.g. broadcast lagged).
+        // Return any removed logs we do have, then reset.
+        if latest + 1 < start {
+            trace!(latest, start, "implicit reorg detected, resetting filter");
+            entry.touch_poll_time();
+            return Ok(if removed.is_empty() {
+                entry.empty_output()
+            } else {
+                FilterOutput::from(removed)
+            });
+        }
+
         if start > latest {
-            entry.mark_polled(latest);
-            return Ok(entry.empty_output());
+            entry.touch_poll_time();
+            return Ok(if removed.is_empty() {
+                entry.empty_output()
+            } else {
+                FilterOutput::from(removed)
+            });
         }
 
         let cold = ctx.cold();
@@ -1110,7 +1136,15 @@ where
             let stream =
                 cold.stream_logs(resolved, max_logs, deadline).await.map_err(|e| e.to_string())?;
 
-            let logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
+            let mut logs = collect_log_stream(stream).await.map_err(|e| e.to_string())?;
+
+            // Prepend removed logs so the client sees removals before
+            // the replacement data.
+            if !removed.is_empty() {
+                let mut combined = removed;
+                combined.append(&mut logs);
+                logs = combined;
+            }
 
             entry.mark_polled(latest);
             Ok(FilterOutput::from(logs))
