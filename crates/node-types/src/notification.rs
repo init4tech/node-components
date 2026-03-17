@@ -1,4 +1,3 @@
-use signet_extract::Extractable;
 use std::sync::Arc;
 
 /// A notification from the host chain, bundling a chain event with
@@ -12,7 +11,7 @@ use std::sync::Arc;
 /// ```
 /// # use std::sync::Arc;
 /// # use signet_node_types::{HostNotification, HostNotificationKind};
-/// # fn example<C: signet_extract::Extractable>(chain: Arc<C>) {
+/// # fn example<C: core::fmt::Debug>(chain: Arc<C>) {
 /// let notification = HostNotification {
 ///     kind: HostNotificationKind::ChainCommitted { new: chain },
 ///     safe_block_number: Some(100),
@@ -35,7 +34,7 @@ pub struct HostNotification<C> {
     pub finalized_block_number: Option<u64>,
 }
 
-impl<C: Extractable> HostNotification<C> {
+impl<C> HostNotification<C> {
     /// Returns the committed chain, if any. Shortcut for
     /// `self.kind.committed_chain()`.
     pub const fn committed_chain(&self) -> Option<&Arc<C>> {
@@ -56,7 +55,7 @@ impl<C: Extractable> HostNotification<C> {
 /// ```
 /// # use std::sync::Arc;
 /// # use signet_node_types::HostNotificationKind;
-/// # fn example<C: signet_extract::Extractable>(old: Arc<C>, new: Arc<C>) {
+/// # fn example<C: core::fmt::Debug>(old: Arc<C>, new: Arc<C>) {
 /// let kind = HostNotificationKind::ChainReorged {
 ///     old: old.clone(),
 ///     new: new.clone(),
@@ -85,7 +84,7 @@ pub enum HostNotificationKind<C> {
     },
 }
 
-impl<C: Extractable> HostNotificationKind<C> {
+impl<C> HostNotificationKind<C> {
     /// Returns the committed chain, if any.
     ///
     /// Returns `Some` for [`ChainCommitted`] and [`ChainReorged`], `None`

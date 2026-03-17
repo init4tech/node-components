@@ -184,10 +184,9 @@ where
         self.status.send_modify(|s| *s = NodeStatus::AtHeight(last_rollup_block));
 
         // Set the head position and backfill thresholds on the notifier
-        let host_height = if last_rollup_block == 0 {
-            self.constants.host_deploy_height()
-        } else {
-            self.constants.pair_ru(last_rollup_block).host
+        let host_height = match last_rollup_block {
+            0 => self.constants.host_deploy_height(),
+            n => self.constants.pair_ru(n).host,
         };
         self.notifier.set_head(host_height);
         self.notifier.set_backfill_thresholds(self.config.backfill_max_blocks());
@@ -206,7 +205,9 @@ where
                 .await
                 .wrap_err("error while processing notification")?;
             if changed {
+                let ru_height = self.last_rollup_block()?;
                 self.update_block_tags(
+                    ru_height,
                     notification.safe_block_number,
                     notification.finalized_block_number,
                 )?;
@@ -326,11 +327,10 @@ where
     /// processed height.
     fn update_block_tags(
         &self,
+        ru_height: u64,
         safe_block_number: Option<u64>,
         finalized_block_number: Option<u64>,
     ) -> eyre::Result<()> {
-        let ru_height = self.last_rollup_block()?;
-
         // Safe height
         let safe_heights = self.clamp_host_heights(ru_height, safe_block_number);
         let safe_ru_height = safe_heights.rollup;

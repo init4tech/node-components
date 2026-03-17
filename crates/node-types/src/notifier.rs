@@ -30,7 +30,7 @@ use signet_extract::Extractable;
 ///    no-op.
 ///
 /// [`next_notification`]: HostNotifier::next_notification
-pub trait HostNotifier {
+pub trait HostNotifier: Send + Sync {
     /// A chain segment — contiguous blocks with receipts.
     type Chain: Extractable;
 
