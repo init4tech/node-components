@@ -47,7 +47,10 @@ poll time. The broadcast channel remains for push subscriptions only.
 
 Add fields:
 
-- `reorgs: RwLock<VecDeque<(Instant, Arc<ReorgNotification>)>>`
+- `reorgs: Arc<RwLock<VecDeque<(Instant, Arc<ReorgNotification>)>>>`
+
+The `Arc` wrapper is required because `ChainNotifier` derives `Clone`
+and all existing fields are `Arc`-backed.
 
 Add constant:
 
@@ -56,7 +59,10 @@ Add constant:
 Modify `send_reorg`:
 
 - Write `Arc<ReorgNotification>` to the ring buffer (evicting oldest if
-  full) **before** broadcasting on the channel.
+  full) **before** broadcasting on the channel. The ring buffer write is
+  the authoritative store; the broadcast `Err` only means "no push
+  subscribers" and does not affect the buffer. Return type stays the same
+  for backward compatibility.
 
 Add method:
 
@@ -109,7 +115,8 @@ Becomes:
 d.receipts.into_iter().flat_map(|r| r.receipt.logs).collect()
 ```
 
-The `ColdReceipt` already stores `ConsensusReceipt<RpcLog>` with
+The `ColdReceipt` already stores `Receipt<RpcLog>` (where `RpcLog` is
+re-exported from alloy as `alloy::rpc::types::Log`) with
 `transaction_hash` and `log_index` populated.
 
 ### Consumer: compute_removed_logs (filters.rs)
@@ -136,8 +143,8 @@ in kind.rs) to construct `alloy::rpc::types::Log` instead of
 | File | Change |
 |------|--------|
 | `crates/rpc/src/config/chain_notifier.rs` | Add ring buffer, `reorgs_since`, modify `send_reorg` |
-| `crates/rpc/src/interest/filters.rs` | Remove `FilterReorgTask`, reorg fields; store `ChainNotifier`; update `compute_removed_logs` |
-| `crates/rpc/src/interest/mod.rs` | Change `RemovedBlock.logs` type |
+| `crates/rpc/src/interest/filters.rs` | Remove `FilterReorgTask`, reorg fields; store `ChainNotifier`; update `compute_removed_logs`; update `FilterManager` doc comment (now one background worker, not two) |
+| `crates/rpc/src/interest/mod.rs` | Change `RemovedBlock.logs` type; update module-level docs (remove `FilterReorgTask` description) |
 | `crates/rpc/src/interest/kind.rs` | Update `filter_reorg_for_sub` to use rpc log directly |
 | `crates/rpc/src/config/ctx.rs` | Pass `ChainNotifier` to `FilterManager::new` |
 | `crates/node/src/node.rs` | Stop stripping log wrapper in `notify_reorg` |
