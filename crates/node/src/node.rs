@@ -386,17 +386,12 @@ where
     ///
     /// Returns `true` if any rollup state was unwound.
     #[instrument(skip_all, fields(
-        first = chain.first_number().unwrap_or(0),
-        tip = chain.tip_number().unwrap_or(0),
+        first = chain.first_number(),
+        tip = chain.tip_number(),
     ))]
     pub(crate) async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
-        // NB: `unwrap_or(0)` is safe here because a non-empty chain always
-        // has a first/tip block. If an invariant violation causes `None`,
-        // the `0` fallback results in `drain_above(0)` which drains all
-        // rollup state — a loud, obvious failure rather than silent
-        // corruption.
-        let tip = chain.tip_number().unwrap_or(0);
-        let first = chain.first_number().unwrap_or(0);
+        let tip = chain.tip_number();
+        let first = chain.first_number();
 
         // If the end is before the RU genesis, nothing to do.
         if tip <= self.constants.host_deploy_height() {
