@@ -1,0 +1,13 @@
+[package]
+name = "signet-node-types"
+description = "Trait abstractions for the signet node's host chain interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+signet-extract.workspace = true

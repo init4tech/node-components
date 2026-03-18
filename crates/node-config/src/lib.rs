@@ -14,7 +14,8 @@
 mod core;
 pub use core::{SIGNET_NODE_DEFAULT_HTTP_PORT, SignetNodeConfig};
 
-mod rpc;
+// NB: RPC config merging (previously `merge_rpc_configs`) is now the
+// responsibility of the host adapter crate (e.g. `signet-host-reth`).
 
 mod storage;
 pub use storage::StorageConfig;

@@ -7,8 +7,8 @@
 //!   - Number of reorgs processed
 
 use metrics::{Counter, counter, describe_counter};
-use reth::primitives::NodePrimitives;
-use reth_exex::ExExNotification;
+use signet_extract::Extractable;
+use signet_node_types::HostNotification;
 use std::sync::LazyLock;
 
 const NOTIFICATION_RECEIVED: &str = "signet.node.notification_received";
@@ -66,14 +66,14 @@ fn inc_reorgs_processed() {
     reorgs_processed().increment(1);
 }
 
-pub(crate) fn record_notification_received<N: NodePrimitives>(notification: &ExExNotification<N>) {
+pub(crate) fn record_notification_received<C: Extractable>(notification: &HostNotification<C>) {
     inc_notifications_received();
     if notification.reverted_chain().is_some() {
         inc_reorgs_received();
     }
 }
 
-pub(crate) fn record_notification_processed<N: NodePrimitives>(notification: &ExExNotification<N>) {
+pub(crate) fn record_notification_processed<C: Extractable>(notification: &HostNotification<C>) {
     inc_notifications_processed();
     if notification.reverted_chain().is_some() {
         inc_reorgs_processed();
