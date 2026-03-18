@@ -37,11 +37,11 @@ pub struct NotAStorage;
 /// # Examples
 ///
 /// ```no_run
-/// # use signet_node::builder::SignetNodeBuilder;
-/// # fn example(
+/// # use signet_node::SignetNodeBuilder;
+/// # fn example<H: signet_storage::HotKv>(
 /// #     config: signet_node_config::SignetNodeConfig,
 /// #     notifier: impl signet_node_types::HostNotifier,
-/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<signet_hot::db::MemoryHotKv>>,
+/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H>>,
 /// #     alias_oracle: impl signet_block_processor::AliasOracleFactory,
 /// #     blob_cacher: signet_blobber::CacheHandle,
 /// #     serve_config: signet_rpc::ServeConfig,
