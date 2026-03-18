@@ -68,10 +68,14 @@ fn inc_reorgs_processed() {
 
 pub(crate) fn record_notification_received<C: Extractable>(notification: &HostNotification<C>) {
     inc_notifications_received();
-    notification.reverted_chain().inspect(|_| inc_reorgs_received());
+    if notification.reverted_chain().is_some() {
+        inc_reorgs_received();
+    }
 }
 
 pub(crate) fn record_notification_processed<C: Extractable>(notification: &HostNotification<C>) {
     inc_notifications_processed();
-    notification.reverted_chain().inspect(|_| inc_reorgs_processed());
+    if notification.reverted_chain().is_some() {
+        inc_reorgs_processed();
+    }
 }

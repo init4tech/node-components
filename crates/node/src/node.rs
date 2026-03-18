@@ -225,7 +225,7 @@ where
         reverted = notification.reverted_chain().map(|c| c.len()).unwrap_or_default(),
         committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
-    pub(crate) async fn on_notification(
+    pub async fn on_notification(
         &self,
         notification: &HostNotification<N::Chain>,
     ) -> eyre::Result<bool> {
@@ -389,7 +389,7 @@ where
         first = chain.first_number(),
         tip = chain.tip_number(),
     ))]
-    pub(crate) async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
+    pub async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
         let tip = chain.tip_number();
         let first = chain.first_number();
 

@@ -262,15 +262,17 @@ where
         mut self,
     ) -> eyre::Result<(SignetNode<N, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
         self.prebuild().await?;
+        // NB: Notifier, Storage, and Aof are enforced by typestate generics.
+        // The remaining fields are set via `Option` and checked at runtime.
         SignetNode::new_unsafe(
-            self.notifier.unwrap(),
+            self.notifier.expect("enforced by typestate"),
             self.config,
-            self.storage.unwrap(),
-            self.alias_oracle.unwrap(),
-            self.client.unwrap(),
-            self.blob_cacher.unwrap(),
-            self.serve_config.unwrap(),
-            self.rpc_config.unwrap(),
+            self.storage.expect("enforced by typestate"),
+            self.alias_oracle.expect("enforced by typestate"),
+            self.client.expect("set by prebuild"),
+            self.blob_cacher.ok_or_eyre("blob cacher must be set")?,
+            self.serve_config.ok_or_eyre("serve config must be set")?,
+            self.rpc_config.ok_or_eyre("rpc config must be set")?,
         )
     }
 }
