@@ -3,7 +3,7 @@ use crate::{
     config::{rpc_config_from_args, serve_config_from_args},
     error::RethHostError,
 };
-use alloy::eips::BlockNumHash;
+use alloy::{consensus::BlockHeader, eips::BlockNumHash};
 use futures_util::StreamExt;
 use reth::{
     chainspec::EthChainSpec,
@@ -13,7 +13,7 @@ use reth::{
 use reth_exex::{ExExContext, ExExEvent, ExExNotifications, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_stages_types::ExecutionStageThresholds;
-use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier};
+use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_rpc::{ServeConfig, StorageRpcConfig};
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -138,13 +138,12 @@ where
                 HostNotificationKind::ChainCommitted { new: Arc::new(RethChain::new(new)) }
             }
             reth_exex::ExExNotification::ChainReverted { old } => {
-                HostNotificationKind::ChainReverted { old: Arc::new(RethChain::new(old)) }
+                let old = RevertRange::new(old.first().number(), old.tip().number());
+                HostNotificationKind::ChainReverted { old }
             }
             reth_exex::ExExNotification::ChainReorged { old, new } => {
-                HostNotificationKind::ChainReorged {
-                    old: Arc::new(RethChain::new(old)),
-                    new: Arc::new(RethChain::new(new)),
-                }
+                let old = RevertRange::new(old.first().number(), old.tip().number());
+                HostNotificationKind::ChainReorged { old, new: Arc::new(RethChain::new(new)) }
             }
         };
 

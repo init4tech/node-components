@@ -12,7 +12,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod notification;
-pub use notification::{HostNotification, HostNotificationKind};
+pub use notification::{HostNotification, HostNotificationKind, RevertRange};
 
 mod notifier;
 pub use notifier::HostNotifier;
