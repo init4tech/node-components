@@ -1,6 +1,6 @@
 use crate::{NodeStatus, metrics};
 use alloy::consensus::BlockHeader;
-use eyre::Context;
+use eyre::{Context, OptionExt};
 use signet_blobber::CacheHandle;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
@@ -408,7 +408,10 @@ where
         // state: the range tip must be at or above the host block that
         // produced our current rollup tip.
         let rollup_tip = self.last_rollup_block()?;
-        let range_tip_ru = self.constants.host_block_to_rollup_block_num(tip).unwrap_or_default();
+        let range_tip_ru = self
+            .constants
+            .host_block_to_rollup_block_num(tip)
+            .ok_or_eyre("revert range tip does not map to a rollup block number")?;
         eyre::ensure!(
             range_tip_ru >= rollup_tip,
             "revert range tip (host {tip}, rollup {range_tip_ru}) \
