@@ -12,7 +12,8 @@ contains current work.
 - `cargo clippy -p <crate> --no-default-features --all-targets` - lint without
 - `cargo t -p <crate>` - test specific crate
 
-Pre-commit: clippy (both feature sets where applicable) + fmt. Never use `cargo check/build`.
+Pre-push: clippy (both feature sets where applicable) + fmt. Never use `cargo check/build`.
+These checks apply before any push — new commits, rebases, cherry-picks, etc.
 
 ## Style
 
