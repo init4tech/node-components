@@ -46,8 +46,9 @@ impl ToRethPrimitive for SealedBlock {
     type RethPrimitive = reth::primitives::SealedBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let (header, hash) = self.header.into_parts();
-        let body = alloy::consensus::BlockBody {
+        let hash = self.header.hash();
+        let header = self.header.into_inner();
+        let body = reth::primitives::BlockBody {
             transactions: self.transactions,
             ommers: vec![],
             withdrawals: None,
@@ -63,21 +64,13 @@ impl ToRethPrimitive for RecoveredBlock {
     type RethPrimitive = reth::primitives::RecoveredBlock<reth::primitives::Block>;
 
     fn to_reth(self) -> Self::RethPrimitive {
-        let (header, hash) = self.header.into_parts();
-        let (senders, transactions): (Vec<_>, Vec<_>) = self
-            .transactions
-            .into_iter()
-            .map(|r| {
-                let (tx, sender) = r.into_parts();
-                (sender, tx)
-            })
-            .unzip();
-        let body = alloy::consensus::BlockBody { transactions, ommers: vec![], withdrawals: None };
-        reth::primitives::RecoveredBlock::new(
-            reth::primitives::Block::new(header, body),
-            senders,
-            hash,
-        )
+        let hash = self.header.hash();
+        let senders: Vec<_> = self.senders().collect();
+        let header = self.header.into_inner();
+        let transactions = self.transactions.into_iter().map(|r| r.into_inner()).collect();
+        let body = reth::primitives::BlockBody { transactions, ommers: vec![], withdrawals: None };
+        let block = reth::primitives::Block::new(header, body);
+        reth::primitives::RecoveredBlock::new(block, senders, hash)
     }
 }
 
@@ -86,8 +79,8 @@ impl ToRethPrimitive for signet_test_utils::chain::Chain {
 
     fn to_reth(self) -> Self::RethPrimitive {
         reth::providers::Chain::new(
-            self.blocks.to_reth(),
-            self.execution_outcome.to_reth(),
+            self.blocks().to_vec().to_reth(),
+            self.execution_outcome().clone().to_reth(),
             Default::default(),
         )
     }

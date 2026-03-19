@@ -224,10 +224,10 @@ impl SignetTestContext {
             // the expected height is either the last committed block, or the
             // first reverted block - 1, or 0 if neither exist
             let expected_height = committed_chain
-                .and_then(|c| c.blocks.last().map(|b| b.number()))
+                .and_then(|c| c.blocks().last().map(|b| b.number()))
                 .or_else(|| {
                     reverted_chain
-                        .and_then(|c| c.blocks.first().map(|b| b.number().saturating_sub(1)))
+                        .and_then(|c| c.blocks().first().map(|b| b.number().saturating_sub(1)))
                 })
                 .unwrap_or(0)
                 .saturating_sub(self.constants().host_deploy_height());
