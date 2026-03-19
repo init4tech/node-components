@@ -17,4 +17,5 @@ signet-types.workspace = true
 alloy.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true

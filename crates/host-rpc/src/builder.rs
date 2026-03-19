@@ -1,11 +1,6 @@
 use crate::{RpcHostError, RpcHostNotifier};
 use alloy::providers::Provider;
-use std::collections::VecDeque;
-
-/// Default block buffer capacity.
-const DEFAULT_BUFFER_CAPACITY: usize = 64;
-/// Default backfill batch size.
-const DEFAULT_BACKFILL_BATCH_SIZE: u64 = 32;
+use tracing::warn;
 
 /// Builder for [`RpcHostNotifier`].
 ///
@@ -15,6 +10,7 @@ const DEFAULT_BACKFILL_BATCH_SIZE: u64 = 32;
 /// let notifier = RpcHostNotifierBuilder::new(provider)
 ///     .with_buffer_capacity(128)
 ///     .with_backfill_batch_size(64)
+///     .with_genesis_timestamp(1_606_824_023)
 ///     .build()
 ///     .await?;
 /// ```
@@ -34,8 +30,8 @@ where
     pub const fn new(provider: P) -> Self {
         Self {
             provider,
-            buffer_capacity: DEFAULT_BUFFER_CAPACITY,
-            backfill_batch_size: DEFAULT_BACKFILL_BATCH_SIZE,
+            buffer_capacity: crate::DEFAULT_BUFFER_CAPACITY,
+            backfill_batch_size: crate::DEFAULT_BACKFILL_BATCH_SIZE,
             genesis_timestamp: 0,
         }
     }
@@ -60,20 +56,18 @@ where
 
     /// Build the notifier, establishing the `newHeads` WebSocket subscription.
     pub async fn build(self) -> Result<RpcHostNotifier<P>, RpcHostError> {
+        if self.genesis_timestamp == 0 {
+            warn!("genesis_timestamp not set; epoch calculations will use Unix epoch");
+        }
         let sub = self.provider.subscribe_blocks().await?;
         let header_sub = sub.into_stream();
 
-        Ok(RpcHostNotifier {
-            provider: self.provider,
+        Ok(RpcHostNotifier::new(
+            self.provider,
             header_sub,
-            block_buffer: VecDeque::with_capacity(self.buffer_capacity),
-            buffer_capacity: self.buffer_capacity,
-            cached_safe: None,
-            cached_finalized: None,
-            last_tag_epoch: None,
-            backfill_from: None,
-            backfill_batch_size: self.backfill_batch_size,
-            genesis_timestamp: self.genesis_timestamp,
-        })
+            self.buffer_capacity,
+            self.backfill_batch_size,
+            self.genesis_timestamp,
+        ))
     }
 }

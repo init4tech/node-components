@@ -1,4 +1,7 @@
-use alloy::consensus::{BlockHeader, ReceiptEnvelope};
+use alloy::{
+    consensus::{BlockHeader, ReceiptEnvelope},
+    primitives::B256,
+};
 use signet_extract::{BlockAndReceipts, Extractable};
 use signet_types::primitives::RecoveredBlock;
 use std::sync::Arc;
@@ -19,12 +22,12 @@ impl RpcBlock {
     }
 
     /// The block hash.
-    pub const fn hash(&self) -> alloy::primitives::B256 {
+    pub const fn hash(&self) -> B256 {
         self.block.header.hash()
     }
 
     /// The parent block hash.
-    pub fn parent_hash(&self) -> alloy::primitives::B256 {
+    pub fn parent_hash(&self) -> B256 {
         self.block.parent_hash()
     }
 }
@@ -40,8 +43,9 @@ pub struct RpcChainSegment {
 }
 
 impl RpcChainSegment {
-    /// Create a new segment from a list of blocks.
-    pub const fn new(blocks: Vec<Arc<RpcBlock>>) -> Self {
+    /// Create a new segment from a non-empty list of blocks.
+    pub(crate) fn new(blocks: Vec<Arc<RpcBlock>>) -> Self {
+        debug_assert!(!blocks.is_empty(), "RpcChainSegment must be non-empty");
         Self { blocks }
     }
 }
@@ -57,11 +61,11 @@ impl Extractable for RpcChainSegment {
     }
 
     fn first_number(&self) -> u64 {
-        self.blocks.first().map(|b| b.number()).unwrap_or(0)
+        self.blocks.first().map(|b| b.number()).expect("RpcChainSegment must be non-empty")
     }
 
     fn tip_number(&self) -> u64 {
-        self.blocks.last().map(|b| b.number()).unwrap_or(0)
+        self.blocks.last().map(|b| b.number()).expect("RpcChainSegment must be non-empty")
     }
 
     fn len(&self) -> usize {

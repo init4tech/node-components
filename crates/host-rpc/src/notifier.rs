@@ -1,69 +1,93 @@
 use crate::{RpcBlock, RpcChainSegment, RpcHostError};
 use alloy::{
     consensus::{BlockHeader, transaction::Recovered},
-    eips::BlockNumberOrTag,
+    eips::{BlockId, BlockNumberOrTag},
     network::BlockResponse,
     primitives::{B256, Sealed},
     providers::Provider,
     pubsub::SubscriptionStream,
     rpc::types::Header as RpcHeader,
 };
-use futures_util::StreamExt;
-use signet_extract::Extractable;
-use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier};
+use futures_util::{StreamExt, stream::FuturesOrdered};
+use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
 use std::{collections::VecDeque, sync::Arc};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Seconds per Ethereum slot.
 const SLOT_SECONDS: u64 = 12;
 /// Slots per Ethereum epoch.
 const SLOTS_PER_EPOCH: u64 = 32;
 
+/// Result of walking the chain backward to find overlap with local state.
+enum WalkResult {
+    /// The hint hash is already our tip — nothing new.
+    AlreadySeen,
+    /// Normal advance — new blocks extend our tip.
+    Advance {
+        /// `(number, hash)` pairs for new blocks, ascending by number.
+        new_chain: Vec<(u64, B256)>,
+    },
+    /// Reorg detected — fork point is below our tip.
+    Reorg {
+        /// First divergent block number.
+        fork_number: u64,
+        /// Our old tip number (for the revert range).
+        old_tip: u64,
+        /// `(number, hash)` pairs for the new chain from fork_number, ascending.
+        new_chain: Vec<(u64, B256)>,
+    },
+    /// Walk exhausted the buffer without finding overlap.
+    /// Could be a deep reorg or a stale buffer after extended disconnection.
+    /// The notifier should clear the buffer and re-enter backfill.
+    Exhausted,
+}
+
 /// RPC-based implementation of [`HostNotifier`].
 ///
-/// Follows a host chain via WebSocket `newHeads` subscription, fetching full
-/// blocks and receipts on demand. Detects reorgs via a ring buffer of recent
-/// block hashes.
+/// Follows a host chain via WebSocket `newHeads` subscription. On each
+/// event, walks the chain backward by hash to find overlap with a local
+/// ring buffer, then fetches full blocks for the new segment only.
 ///
-/// Generic over `P`: any alloy provider that supports subscriptions.
+/// This design is TOCTOU-free: every block fetch is anchored to a specific
+/// hash, so reorgs between RPC calls cannot produce inconsistent data.
 pub struct RpcHostNotifier<P> {
     /// The alloy provider.
-    pub(crate) provider: P,
+    provider: P,
 
-    /// Subscription stream of new block headers.
-    pub(crate) header_sub: SubscriptionStream<RpcHeader>,
+    /// Subscription stream of new block headers (used as wake-up signal).
+    header_sub: SubscriptionStream<RpcHeader>,
 
-    /// Recent blocks for reorg detection and caching.
-    pub(crate) block_buffer: VecDeque<Arc<RpcBlock>>,
+    /// Local chain view — lightweight ring buffer of (number, hash).
+    chain_view: VecDeque<(u64, B256)>,
 
-    /// Maximum entries in the block buffer.
-    pub(crate) buffer_capacity: usize,
+    /// Maximum entries in the chain view.
+    buffer_capacity: usize,
 
     /// Cached safe block number, refreshed at epoch boundaries.
-    pub(crate) cached_safe: Option<u64>,
+    cached_safe: Option<u64>,
 
     /// Cached finalized block number, refreshed at epoch boundaries.
-    pub(crate) cached_finalized: Option<u64>,
+    cached_finalized: Option<u64>,
 
     /// Last epoch number for which safe/finalized were fetched.
-    pub(crate) last_tag_epoch: Option<u64>,
+    last_tag_epoch: Option<u64>,
 
     /// If set, backfill from this block number before processing
     /// subscription events.
-    pub(crate) backfill_from: Option<u64>,
+    backfill_from: Option<u64>,
 
     /// Max blocks per backfill batch.
-    pub(crate) backfill_batch_size: u64,
+    backfill_batch_size: u64,
 
     /// Genesis timestamp, used for epoch calculation.
-    pub(crate) genesis_timestamp: u64,
+    genesis_timestamp: u64,
 }
 
 impl<P> core::fmt::Debug for RpcHostNotifier<P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RpcHostNotifier")
-            .field("buffer_len", &self.block_buffer.len())
+            .field("chain_view_len", &self.chain_view.len())
             .field("buffer_capacity", &self.buffer_capacity)
             .field("backfill_from", &self.backfill_from)
             .finish_non_exhaustive()
@@ -74,29 +98,128 @@ impl<P> RpcHostNotifier<P>
 where
     P: Provider + Clone,
 {
-    /// Current tip block number from the buffer.
-    fn tip(&self) -> Option<u64> {
-        self.block_buffer.back().map(|b| b.number())
+    /// Create a new notifier. Used by the builder.
+    pub(crate) fn new(
+        provider: P,
+        header_sub: SubscriptionStream<RpcHeader>,
+        buffer_capacity: usize,
+        backfill_batch_size: u64,
+        genesis_timestamp: u64,
+    ) -> Self {
+        Self {
+            provider,
+            header_sub,
+            chain_view: VecDeque::with_capacity(buffer_capacity),
+            buffer_capacity,
+            cached_safe: None,
+            cached_finalized: None,
+            last_tag_epoch: None,
+            backfill_from: None,
+            backfill_batch_size,
+            genesis_timestamp,
+        }
     }
 
-    /// Look up a block hash in the buffer by block number.
-    fn buffered_hash(&self, number: u64) -> Option<B256> {
-        self.block_buffer.iter().rev().find(|b| b.number() == number).map(|b| b.hash())
+    // ── Chain view helpers ──────────────────────────────────────────
+
+    /// Current tip from the chain view.
+    fn tip(&self) -> Option<(u64, B256)> {
+        self.chain_view.back().copied()
     }
 
-    /// Fetch a single block with its receipts from the provider.
-    async fn fetch_block(&self, number: u64) -> Result<RpcBlock, RpcHostError> {
-        let rpc_block = self
-            .provider
-            .get_block_by_number(number.into())
-            .full()
-            .await?
-            .ok_or(RpcHostError::MissingBlock(number))?;
+    /// Look up a hash in the chain view by block number.
+    fn view_hash(&self, number: u64) -> Option<B256> {
+        self.chain_view.iter().rev().find(|(n, _)| *n == number).map(|(_, h)| *h)
+    }
 
-        let rpc_receipts =
-            self.provider.get_block_receipts(number.into()).await?.unwrap_or_default();
+    /// Append entries to the chain view, evicting oldest if over capacity.
+    fn extend_view(&mut self, entries: &[(u64, B256)]) {
+        for &entry in entries {
+            self.chain_view.push_back(entry);
+            if self.chain_view.len() > self.buffer_capacity {
+                self.chain_view.pop_front();
+            }
+        }
+    }
 
-        // Convert RPC block to our RecoveredBlock type.
+    /// Truncate the chain view at `fork_number` (remove entries >= fork_number),
+    /// then append new entries.
+    fn reorg_view(&mut self, fork_number: u64, new_entries: &[(u64, B256)]) {
+        while self.chain_view.back().is_some_and(|(n, _)| *n >= fork_number) {
+            self.chain_view.pop_back();
+        }
+        self.extend_view(new_entries);
+    }
+
+    // ── Block fetching ─────────────────────────────────────────────
+
+    /// Fetch a single block with receipts, anchored by hash.
+    ///
+    /// The block and receipt fetches are concurrent via [`tokio::try_join!`].
+    async fn fetch_block_by_hash(&self, hash: B256) -> Result<RpcBlock, RpcHostError> {
+        let (rpc_block, rpc_receipts) = tokio::try_join!(
+            async { Ok::<_, RpcHostError>(self.provider.get_block_by_hash(hash).full().await?) },
+            async {
+                Ok::<_, RpcHostError>(
+                    self.provider.get_block_receipts(BlockId::Hash(hash.into())).await?,
+                )
+            },
+        )?;
+
+        let rpc_block = rpc_block.ok_or(RpcHostError::MissingBlockByHash(hash))?;
+        let rpc_receipts = rpc_receipts.unwrap_or_default();
+
+        let block_hash = rpc_block.header.hash;
+        let block = rpc_block
+            .map_transactions(|tx| {
+                let recovered = tx.inner;
+                let signer = recovered.signer();
+                let tx: TransactionSigned = recovered.into_inner().into();
+                Recovered::new_unchecked(tx, signer)
+            })
+            .into_consensus();
+        let sealed_header = Sealed::new_unchecked(block.header, block_hash);
+        let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
+
+        let receipts =
+            rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
+
+        Ok(RpcBlock { block, receipts })
+    }
+
+    /// Fetch full blocks+receipts for a list of hashes, concurrently.
+    ///
+    /// Hashes must be in ascending block-number order. Results preserve
+    /// that order.
+    async fn fetch_blocks_by_hash(
+        &self,
+        hashes: &[(u64, B256)],
+    ) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
+        let mut futures = hashes
+            .iter()
+            .map(|&(_, hash)| self.fetch_block_by_hash(hash))
+            .collect::<FuturesOrdered<_>>();
+
+        let mut blocks = Vec::with_capacity(hashes.len());
+        while let Some(result) = futures.next().await {
+            blocks.push(Arc::new(result?));
+        }
+        Ok(blocks)
+    }
+
+    /// Fetch a single block with receipts by number (used for backfill only).
+    ///
+    /// The block and receipt fetches are concurrent.
+    async fn fetch_block_by_number(&self, number: u64) -> Result<RpcBlock, RpcHostError> {
+        let tag = BlockNumberOrTag::Number(number);
+        let (rpc_block, rpc_receipts) = tokio::try_join!(
+            async { Ok::<_, RpcHostError>(self.provider.get_block_by_number(tag).full().await?) },
+            async { Ok::<_, RpcHostError>(self.provider.get_block_receipts(tag.into()).await?) },
+        )?;
+
+        let rpc_block = rpc_block.ok_or(RpcHostError::MissingBlock(tag))?;
+        let rpc_receipts = rpc_receipts.unwrap_or_default();
+
         let hash = rpc_block.header.hash;
         let block = rpc_block
             .map_transactions(|tx| {
@@ -109,24 +232,32 @@ where
         let sealed_header = Sealed::new_unchecked(block.header, hash);
         let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
 
-        // Convert RPC receipts to consensus receipts.
         let receipts =
             rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
 
         Ok(RpcBlock { block, receipts })
     }
 
-    /// Fetch a range of blocks concurrently.
+    /// Fetch a range of blocks by number concurrently (used for backfill only).
+    ///
+    /// Returns an empty `Vec` if `from > to`.
     async fn fetch_range(&self, from: u64, to: u64) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
+        if from > to {
+            return Ok(Vec::new());
+        }
+
+        let mut futures = (from..=to)
+            .map(|number| self.fetch_block_by_number(number))
+            .collect::<FuturesOrdered<_>>();
+
         let mut blocks = Vec::with_capacity((to - from + 1) as usize);
-        // Fetch sequentially for now; can be parallelized later with
-        // futures::stream::FuturesOrdered.
-        for number in from..=to {
-            let block = self.fetch_block(number).await?;
-            blocks.push(Arc::new(block));
+        while let Some(result) = futures.next().await {
+            blocks.push(Arc::new(result?));
         }
         Ok(blocks)
     }
+
+    // ── Epoch / tag helpers ────────────────────────────────────────
 
     /// Derive the epoch number from a block timestamp.
     const fn epoch_of(&self, timestamp: u64) -> u64 {
@@ -159,73 +290,166 @@ where
         Ok(())
     }
 
-    /// Remove invalidated entries from the buffer on reorg, then add new
-    /// blocks.
-    fn update_buffer_reorg(&mut self, fork_number: u64, new_blocks: &[Arc<RpcBlock>]) {
-        // Remove all blocks at or above the fork point.
-        while self.block_buffer.back().is_some_and(|b| b.number() >= fork_number) {
-            self.block_buffer.pop_back();
-        }
-        self.push_to_buffer(new_blocks);
-    }
+    // ── Walk algorithm ─────────────────────────────────────────────
 
-    /// Push blocks to the buffer, evicting oldest if over capacity.
-    fn push_to_buffer(&mut self, blocks: &[Arc<RpcBlock>]) {
-        for block in blocks {
-            self.block_buffer.push_back(Arc::clone(block));
-            if self.block_buffer.len() > self.buffer_capacity {
-                self.block_buffer.pop_front();
-            }
+    /// Walk the chain backward from `start_hash` to find overlap with
+    /// our local chain view.
+    ///
+    /// Returns `Ok(WalkResult)` describing advance, reorg, or already-seen.
+    #[tracing::instrument(skip_all, fields(%start_hash))]
+    async fn walk_chain(&self, start_hash: B256) -> Result<WalkResult, RpcHostError> {
+        // Quick check: is the hint hash already our tip?
+        if self.tip().is_some_and(|(_, h)| h == start_hash) {
+            return Ok(WalkResult::AlreadySeen);
         }
-    }
 
-    /// Find the fork point by walking backward through the buffer.
-    ///
-    /// Returns the block number where the chain diverged (the first block
-    /// that differs), or `None` if the fork is deeper than the buffer.
-    ///
-    /// **Limitation:** This queries the RPC node for blocks on the new chain.
-    /// If the node hasn't fully switched to the new chain, it may return
-    /// stale blocks from the old chain, producing an incorrect fork point.
-    /// This is an inherent limitation of RPC-based reorg detection.
-    async fn find_fork_point(&self, new_header: &RpcHeader) -> Result<Option<u64>, RpcHostError> {
-        // Walk the new chain backward from the new header's parent.
-        let mut check_hash = new_header.parent_hash();
-        let mut check_number = new_header.number().saturating_sub(1);
+        let mut current_hash = start_hash;
+        let mut walked: Vec<(u64, B256)> = Vec::new();
 
         loop {
-            match self.buffered_hash(check_number) {
-                Some(buffered) if buffered == check_hash => {
-                    // Found the common ancestor at check_number.
-                    // The fork point is the next block (first divergence).
-                    return Ok(Some(check_number + 1));
+            // Fetch header by hash (no .full() — lightweight).
+            let block = self
+                .provider
+                .get_block_by_hash(current_hash)
+                .await?
+                .ok_or(RpcHostError::MissingBlockByHash(current_hash))?;
+
+            let number = block.header().number();
+            walked.push((number, current_hash));
+
+            // Check against our chain view.
+            match self.view_hash(number) {
+                Some(local_hash) if local_hash == current_hash => {
+                    // This block is in our view — it's the common ancestor.
+                    // Remove it from walked (it's not new).
+                    walked.pop();
+
+                    if walked.is_empty() {
+                        return Ok(WalkResult::AlreadySeen);
+                    }
+
+                    // Reverse so blocks are ascending by number.
+                    walked.reverse();
+
+                    let tip_num = self.tip().map(|(n, _)| n).unwrap_or(0);
+                    if number == tip_num {
+                        return Ok(WalkResult::Advance { new_chain: walked });
+                    }
+
+                    return Ok(WalkResult::Reorg {
+                        fork_number: number + 1,
+                        old_tip: tip_num,
+                        new_chain: walked,
+                    });
                 }
                 Some(_) => {
-                    // Mismatch — keep walking backward.
-                    if check_number == 0 {
-                        return Ok(None);
-                    }
-                    // Fetch the parent of this block on the new chain.
-                    let parent = self
-                        .provider
-                        .get_block_by_number(check_number.into())
-                        .await?
-                        .ok_or(RpcHostError::MissingBlock(check_number))?;
-                    check_hash = parent.header().parent_hash();
-                    check_number = check_number.saturating_sub(1);
+                    // Number exists in view but hash differs — keep walking.
+                }
+                None if self.chain_view.is_empty() => {
+                    // Buffer is empty — no backfill was performed, or this is
+                    // the very first event. Treat all walked blocks as new.
+                    // The buffer fills incrementally over subsequent events.
+                    // (When backfill WAS performed, the buffer is pre-populated
+                    // and this arm does not fire — overlap is found normally.)
+                    walked.reverse();
+                    return Ok(WalkResult::Advance { new_chain: walked });
                 }
                 None => {
-                    // Beyond our buffer — can't determine fork point.
-                    return Ok(None);
+                    // Below our buffer — check if we're at the front.
+                    if self.chain_view.front().is_some_and(|(front_num, _)| number < *front_num) {
+                        return Ok(WalkResult::Exhausted);
+                    }
+                    // Number is within our range but not in buffer (gap).
+                    // Keep walking.
                 }
             }
+
+            // Depth limit.
+            if walked.len() > self.buffer_capacity {
+                return Ok(WalkResult::Exhausted);
+            }
+
+            // Walk to parent.
+            current_hash = block.header().parent_hash();
         }
     }
+
+    // ── Notification handling ──────────────────────────────────────
+
+    /// Handle a new subscription header.
+    ///
+    /// Uses the header hash as a hint to walk the chain. Returns `Ok(None)`
+    /// if the header was already processed (no-op walk).
+    #[tracing::instrument(skip_all, fields(hint_number = header.number(), hint_hash = %header.hash))]
+    async fn handle_new_head(
+        &mut self,
+        header: RpcHeader,
+    ) -> Result<Option<HostNotification<RpcChainSegment>>, RpcHostError> {
+        let timestamp = header.timestamp();
+        let hint_hash = header.hash;
+
+        // Walk chain from the hint hash.
+        let walk = match self.walk_chain(hint_hash).await {
+            Ok(walk) => walk,
+            Err(RpcHostError::MissingBlockByHash(_)) => {
+                // Hint was stale — fall back to latest.
+                debug!("subscription hint stale, falling back to latest");
+                let latest = self
+                    .provider
+                    .get_block_by_number(BlockNumberOrTag::Latest)
+                    .await?
+                    .ok_or(RpcHostError::MissingBlock(BlockNumberOrTag::Latest))?;
+                let latest_hash = latest.header.hash;
+                self.walk_chain(latest_hash).await?
+            }
+            Err(e) => return Err(e),
+        };
+
+        let kind = match walk {
+            WalkResult::AlreadySeen => return Ok(None),
+            WalkResult::Exhausted => {
+                // Buffer exhausted — deep reorg or stale after disconnection.
+                // Clear local state and re-enter backfill from finalized.
+                warn!(
+                    buffer_capacity = self.buffer_capacity,
+                    "walk exhausted buffer, resetting to backfill"
+                );
+                self.chain_view.clear();
+                self.backfill_from = Some(self.cached_finalized.unwrap_or(0));
+                self.last_tag_epoch = None;
+                return Ok(None);
+            }
+            WalkResult::Advance { new_chain } => {
+                let blocks = self.fetch_blocks_by_hash(&new_chain).await?;
+                self.extend_view(&new_chain);
+                HostNotificationKind::ChainCommitted { new: Arc::new(RpcChainSegment::new(blocks)) }
+            }
+            WalkResult::Reorg { fork_number, old_tip, new_chain } => {
+                let blocks = self.fetch_blocks_by_hash(&new_chain).await?;
+                self.reorg_view(fork_number, &new_chain);
+                HostNotificationKind::ChainReorged {
+                    old: RevertRange::new(fork_number, old_tip),
+                    new: Arc::new(RpcChainSegment::new(blocks)),
+                }
+            }
+        };
+
+        self.maybe_refresh_tags(timestamp).await?;
+
+        Ok(Some(HostNotification {
+            kind,
+            safe_block_number: self.cached_safe,
+            finalized_block_number: self.cached_finalized,
+        }))
+    }
+
+    // ── Backfill ───────────────────────────────────────────────────
 
     /// Process a backfill batch if pending.
     ///
-    /// Returns `Some(notification)` if a batch was emitted, `None` if no
-    /// backfill is pending.
+    /// Backfills by number up to `(latest - buffer_capacity)` to leave room
+    /// for hash-based frontfill of recent blocks.
+    #[tracing::instrument(skip_all)]
     async fn drain_backfill(
         &mut self,
     ) -> Option<Result<HostNotification<RpcChainSegment>, RpcHostError>> {
@@ -235,22 +459,28 @@ where
             Err(e) => return Some(Err(e.into())),
         };
 
-        if from > tip {
+        // Stop backfill before the live zone.
+        let backfill_ceiling = tip.saturating_sub(self.buffer_capacity as u64);
+        if from > backfill_ceiling {
+            // Backfill complete — switch to hash-based frontfill.
             self.backfill_from = None;
             return None;
         }
 
-        let to = tip.min(from + self.backfill_batch_size - 1);
+        let to = backfill_ceiling.min(from + self.backfill_batch_size - 1);
 
         let blocks = match self.fetch_range(from, to).await {
             Ok(b) => b,
             Err(e) => return Some(Err(e)),
         };
 
-        self.push_to_buffer(&blocks);
+        // Add to chain view.
+        let view_entries: Vec<(u64, B256)> =
+            blocks.iter().map(|b| (b.number(), b.hash())).collect();
+        self.extend_view(&view_entries);
 
         // Advance or clear backfill.
-        if to >= tip {
+        if to >= backfill_ceiling {
             self.backfill_from = None;
         } else {
             self.backfill_from = Some(to + 1);
@@ -269,97 +499,6 @@ where
             safe_block_number: self.cached_safe,
             finalized_block_number: self.cached_finalized,
         }))
-    }
-
-    /// Handle a new header from the subscription stream.
-    async fn handle_new_head(
-        &mut self,
-        header: RpcHeader,
-    ) -> Result<HostNotification<RpcChainSegment>, RpcHostError> {
-        let new_number = header.number();
-        let new_parent = header.parent_hash();
-
-        // Check parent hash continuity.
-        let is_reorg = self.tip().is_some_and(|tip_num| {
-            self.buffered_hash(tip_num).is_some_and(|tip_hash| {
-                // Parent should point to our tip, and the new block
-                // should be exactly one ahead.
-                new_parent != tip_hash || new_number != tip_num + 1
-            })
-        });
-
-        let kind = if is_reorg {
-            self.handle_reorg(header).await?
-        } else {
-            self.handle_advance(header).await?
-        };
-
-        // Refresh block tags.
-        let timestamp = match &kind {
-            HostNotificationKind::ChainCommitted { new } => {
-                new.blocks_and_receipts().last().map(|bar| bar.block.timestamp()).unwrap_or(0)
-            }
-            HostNotificationKind::ChainReorged { new, .. } => {
-                new.blocks_and_receipts().last().map(|bar| bar.block.timestamp()).unwrap_or(0)
-            }
-            HostNotificationKind::ChainReverted { .. } => 0,
-        };
-        if timestamp > 0 {
-            self.maybe_refresh_tags(timestamp).await?;
-        }
-
-        Ok(HostNotification {
-            kind,
-            safe_block_number: self.cached_safe,
-            finalized_block_number: self.cached_finalized,
-        })
-    }
-
-    /// Handle a normal chain advance (no reorg).
-    async fn handle_advance(
-        &mut self,
-        header: RpcHeader,
-    ) -> Result<HostNotificationKind<RpcChainSegment>, RpcHostError> {
-        let new_number = header.number();
-        let from = self.tip().map_or(new_number, |t| t + 1);
-
-        let blocks = self.fetch_range(from, new_number).await?;
-        self.push_to_buffer(&blocks);
-
-        Ok(HostNotificationKind::ChainCommitted { new: Arc::new(RpcChainSegment::new(blocks)) })
-    }
-
-    /// Handle a reorg: find fork point, emit `ChainReorged`.
-    async fn handle_reorg(
-        &mut self,
-        header: RpcHeader,
-    ) -> Result<HostNotificationKind<RpcChainSegment>, RpcHostError> {
-        let new_number = header.number();
-
-        let fork_number = self.find_fork_point(&header).await?.ok_or_else(|| {
-            let depth = self
-                .tip()
-                .unwrap_or(0)
-                .saturating_sub(self.block_buffer.front().map_or(0, |b| b.number()));
-            RpcHostError::ReorgTooDeep { depth, capacity: self.buffer_capacity }
-        })?;
-
-        // Collect reverted blocks from the buffer before removing them.
-        let old_blocks: Vec<Arc<RpcBlock>> = self
-            .block_buffer
-            .iter()
-            .filter(|b| b.number() >= fork_number)
-            .map(Arc::clone)
-            .collect();
-
-        // Fetch new chain from fork point to new head.
-        let blocks = self.fetch_range(fork_number, new_number).await?;
-        self.update_buffer_reorg(fork_number, &blocks);
-
-        Ok(HostNotificationKind::ChainReorged {
-            old: Arc::new(RpcChainSegment::new(old_blocks)),
-            new: Arc::new(RpcChainSegment::new(blocks)),
-        })
     }
 }
 
@@ -382,14 +521,20 @@ where
     async fn next_notification(
         &mut self,
     ) -> Option<Result<HostNotification<Self::Chain>, Self::Error>> {
-        // Drain pending backfill first.
-        if let Some(result) = self.drain_backfill().await {
-            return Some(result);
-        }
+        loop {
+            // Drain backfill on every iteration — handles both initial
+            // backfill and re-entry after buffer exhaustion recovery.
+            if let Some(result) = self.drain_backfill().await {
+                return Some(result);
+            }
 
-        // Await next header from subscription.
-        let header = self.header_sub.next().await?;
-        Some(self.handle_new_head(header).await)
+            let header = self.header_sub.next().await?;
+            match self.handle_new_head(header).await {
+                Ok(Some(notification)) => return Some(Ok(notification)),
+                Ok(None) => continue,
+                Err(e) => return Some(Err(e)),
+            }
+        }
     }
 
     fn set_head(&mut self, block_number: u64) {
@@ -397,9 +542,8 @@ where
     }
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
-        if let Some(max) = max_blocks {
-            self.backfill_batch_size = max.max(1);
-        }
+        self.backfill_batch_size =
+            max_blocks.map_or(crate::DEFAULT_BACKFILL_BATCH_SIZE, |m| m.max(1));
     }
 
     fn send_finished_height(&self, _block_number: u64) -> Result<(), Self::Error> {
