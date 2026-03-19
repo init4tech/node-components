@@ -13,6 +13,7 @@
 
 mod alias;
 pub use alias::{RethAliasOracle, RethAliasOracleFactory};
+
 mod error;
 pub use error::RethHostError;
 

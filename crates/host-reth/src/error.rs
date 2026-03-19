@@ -17,8 +17,9 @@ pub enum RethHostError {
     MissingHeader(u64),
 }
 
-impl From<eyre::Report> for RethHostError {
-    fn from(e: eyre::Report) -> Self {
+impl RethHostError {
+    /// Wrap a notification stream error.
+    pub fn notification(e: impl Into<Box<dyn core::error::Error + Send + Sync>>) -> Self {
         Self::Notification(e.into())
     }
 }

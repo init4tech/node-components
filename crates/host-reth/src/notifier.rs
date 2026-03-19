@@ -112,7 +112,7 @@ where
         let notification = self.notifications.next().await?;
         let notification = match notification {
             Ok(n) => n,
-            Err(e) => return Some(Err(e.into())),
+            Err(e) => return Some(Err(RethHostError::notification(e))),
         };
 
         // Read safe/finalized from the provider at notification time.
@@ -173,13 +173,17 @@ where
     }
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
-        if let Some(max_blocks) = max_blocks {
-            self.notifications.set_backfill_thresholds(ExecutionStageThresholds {
-                max_blocks: Some(max_blocks),
-                ..Default::default()
-            });
-            debug!(max_blocks, "configured backfill thresholds");
-        }
+        let thresholds = match max_blocks {
+            Some(max_blocks) => {
+                debug!(max_blocks, "configured backfill thresholds");
+                ExecutionStageThresholds { max_blocks: Some(max_blocks), ..Default::default() }
+            }
+            None => {
+                debug!("reset backfill thresholds to defaults");
+                ExecutionStageThresholds::default()
+            }
+        };
+        self.notifications.set_backfill_thresholds(thresholds);
     }
 
     fn send_finished_height(&self, block_number: u64) -> Result<(), Self::Error> {
