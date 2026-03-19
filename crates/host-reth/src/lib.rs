@@ -11,8 +11,17 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod notification;
-pub use notification::{HostNotification, HostNotificationKind, RevertRange};
+mod alias;
+pub use alias::{RethAliasOracle, RethAliasOracleFactory};
+
+mod error;
+pub use error::RethHostError;
+
+mod chain;
+pub use chain::RethChain;
+
+mod config;
+pub use config::{rpc_config_from_args, serve_config_from_args};
 
 mod notifier;
-pub use notifier::HostNotifier;
+pub use notifier::{DecomposedContext, RethHostNotifier, decompose_exex_context};

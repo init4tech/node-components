@@ -1,12 +1,12 @@
 use crate::{NodeStatus, metrics};
 use alloy::consensus::BlockHeader;
-use eyre::Context;
+use eyre::{Context, OptionExt};
 use signet_blobber::CacheHandle;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::{Extractable, Extractor};
 use signet_node_config::SignetNodeConfig;
-use signet_node_types::{HostNotification, HostNotifier};
+use signet_node_types::{HostNotification, HostNotifier, RevertRange};
 use signet_rpc::{
     ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
     ServeConfig, StorageRpcConfig,
@@ -222,7 +222,7 @@ where
     ///
     /// Returns `true` if any rollup state changed.
     #[instrument(parent = None, skip_all, fields(
-        reverted = notification.reverted_chain().map(|c| c.len()).unwrap_or_default(),
+        reverted = notification.revert_range().map(|r| r.len()).unwrap_or_default(),
         committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
     ))]
     pub async fn on_notification(
@@ -234,9 +234,9 @@ where
         let mut changed = false;
 
         // NB: REVERTS MUST RUN FIRST
-        if let Some(chain) = notification.reverted_chain() {
+        if let Some(range) = notification.revert_range() {
             changed |=
-                self.on_host_revert(chain).await.wrap_err("error encountered during revert")?;
+                self.on_host_revert(range).await.wrap_err("error encountered during revert")?;
         }
 
         if let Some(chain) = notification.committed_chain() {
@@ -385,18 +385,38 @@ where
     /// Called when the host chain has reverted a block or set of blocks.
     ///
     /// Returns `true` if any rollup state was unwound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the revert range is inconsistent with stored
+    /// state — i.e. the range tip does not cover the node's current
+    /// rollup tip.
     #[instrument(skip_all, fields(
-        first = chain.first_number(),
-        tip = chain.tip_number(),
+        first = range.first(),
+        tip = range.tip(),
     ))]
-    pub async fn on_host_revert(&self, chain: &Arc<N::Chain>) -> eyre::Result<bool> {
-        let tip = chain.tip_number();
-        let first = chain.first_number();
+    pub async fn on_host_revert(&self, range: RevertRange) -> eyre::Result<bool> {
+        let tip = range.tip();
+        let first = range.first();
 
         // If the end is before the RU genesis, nothing to do.
         if tip <= self.constants.host_deploy_height() {
             return Ok(false);
         }
+
+        // Validate that the revert range is consistent with our stored
+        // state: the range tip must be at or above the host block that
+        // produced our current rollup tip.
+        let rollup_tip = self.last_rollup_block()?;
+        let range_tip_ru = self
+            .constants
+            .host_block_to_rollup_block_num(tip)
+            .ok_or_eyre("revert range tip does not map to a rollup block number")?;
+        eyre::ensure!(
+            range_tip_ru >= rollup_tip,
+            "revert range tip (host {tip}, rollup {range_tip_ru}) \
+             does not cover stored rollup tip ({rollup_tip})"
+        );
 
         // Target is the block BEFORE the first block in the chain, or 0.
         let target = self

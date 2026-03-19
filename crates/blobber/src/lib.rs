@@ -24,7 +24,7 @@ mod error;
 pub use error::{BlobberError, BlobberResult};
 
 mod shim;
-pub use shim::{ExtractableChainShim, RecoveredBlockShim};
+pub use shim::RecoveredBlockShim;
 
 #[cfg(test)]
 mod test {

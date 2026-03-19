@@ -1,50 +1,11 @@
 //! Shim and utilities for signet-sdk to reth conversions.
 
 use alloy::consensus::Block;
-use reth::providers::Chain;
-use signet_extract::{BlockAndReceipts, Extractable, HasTxns};
+use signet_extract::HasTxns;
 use signet_types::primitives::TransactionSigned;
 
 /// A type alias for Reth's recovered block with a signed transaction.
 type RethRecovered = reth::primitives::RecoveredBlock<Block<TransactionSigned>>;
-
-/// A shim around Reth's [`Chain`].
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct ExtractableChainShim<'a> {
-    /// The underlying Reth chain.
-    chain: &'a Chain,
-}
-
-impl<'a> ExtractableChainShim<'a> {
-    /// Create a new shim around the given Reth chain.
-    pub const fn new(chain: &'a Chain) -> Self {
-        Self { chain }
-    }
-
-    /// Get a reference to the underlying Reth chain.
-    pub const fn chain(&self) -> &'a Chain {
-        self.chain
-    }
-}
-
-impl<'a> Extractable for ExtractableChainShim<'a> {
-    type Block = RecoveredBlockShim;
-    type Receipt = reth::primitives::Receipt;
-
-    fn blocks_and_receipts(
-        &self,
-    ) -> impl Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>> {
-        self.chain.blocks_and_receipts().map(|(block, receipts)| {
-            // SAFETY: `RecoveredBlockShim` is `#[repr(transparent)]` over a
-            // single `RethRecovered` field, guaranteeing identical memory
-            // layout. This makes the reference transmute sound.
-            let block =
-                unsafe { std::mem::transmute::<&'a RethRecovered, &RecoveredBlockShim>(block) };
-            BlockAndReceipts { block, receipts }
-        })
-    }
-}
 
 /// A shim for Reth's [`reth::primitives::RecoveredBlock`].
 #[derive(Debug)]
