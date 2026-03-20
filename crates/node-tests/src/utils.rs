@@ -1,17 +1,17 @@
 use crate::{constants::TEST_CONSTANTS, context::SignetTestContext};
 use alloy::{
-    consensus::{SignableTransaction, TxEip1559, constants::GWEI_TO_WEI},
-    primitives::{Address, B256, FixedBytes, Sealable, TxKind, U256},
+    consensus::{Header, SignableTransaction, TxEip1559, constants::GWEI_TO_WEI},
+    primitives::{Address, B256, FixedBytes, TxKind, U256},
     signers::{SignerSync, local::PrivateKeySigner},
     uint,
 };
-use reth::primitives::{Block, BlockBody, Header, RecoveredBlock, Transaction, TransactionSigned};
+use signet_types::primitives::{RecoveredBlock, Transaction, TransactionSigned};
 use signet_zenith::Zenith;
 use std::{panic, sync::Once};
 use tracing_subscriber::EnvFilter;
 
 /// Make a fake block with a specific number.
-pub fn fake_block(number: u64) -> RecoveredBlock<Block> {
+pub fn fake_block(number: u64) -> RecoveredBlock {
     let header = Header {
         difficulty: U256::from(0x4000_0000),
         number,
@@ -21,14 +21,7 @@ pub fn fake_block(number: u64) -> RecoveredBlock<Block> {
         excess_blob_gas: Some(0),
         ..Default::default()
     };
-    let (header, hash) = header.seal_slow().into_parts();
-
-    let senders = vec![];
-    RecoveredBlock::new(
-        Block::new(header, BlockBody { transactions: vec![], ommers: vec![], withdrawals: None }),
-        senders,
-        hash,
-    )
+    RecoveredBlock::blank_with_header(header)
 }
 
 /// Sign a transaction with a wallet.

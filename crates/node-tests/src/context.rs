@@ -84,7 +84,7 @@ impl HostNotifier for TestHostNotifier {
 /// This contains the following:
 ///
 /// - A channel sender for host notifications
-/// - The reth test components (for pool access)
+/// - An in-memory blob source for test blob insertion
 /// - A receiver for the node status (latest block processed)
 /// - Unified storage backed by in-memory hot and cold storage
 /// - An alloy provider connected to the Signet Node RPC,
