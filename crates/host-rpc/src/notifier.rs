@@ -11,7 +11,7 @@ use alloy::{
 use futures_util::{StreamExt, stream::FuturesOrdered};
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 use tracing::{debug, warn};
 
 /// Seconds per Ethereum slot.
@@ -156,7 +156,9 @@ where
     /// Fetch a single block with receipts, anchored by hash.
     ///
     /// The block and receipt fetches are concurrent via [`tokio::try_join!`].
+    #[tracing::instrument(level = "debug", skip_all, fields(%hash))]
     async fn fetch_block_by_hash(&self, hash: B256) -> Result<RpcBlock, RpcHostError> {
+        let start = Instant::now();
         let (rpc_block, rpc_receipts) = tokio::try_join!(
             async { Ok::<_, RpcHostError>(self.provider.get_block_by_hash(hash).full().await?) },
             async {
@@ -184,6 +186,7 @@ where
         let receipts =
             rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
 
+        crate::metrics::record_fetch_block_duration(start.elapsed());
         Ok(RpcBlock { block, receipts })
     }
 
@@ -191,6 +194,7 @@ where
     ///
     /// Hashes must be in ascending block-number order. Results preserve
     /// that order.
+    #[tracing::instrument(level = "debug", skip_all, fields(count = hashes.len()))]
     async fn fetch_blocks_by_hash(
         &self,
         hashes: &[(u64, B256)],
@@ -210,7 +214,9 @@ where
     /// Fetch a single block with receipts by number (used for backfill only).
     ///
     /// The block and receipt fetches are concurrent.
+    #[tracing::instrument(level = "debug", skip_all, fields(number))]
     async fn fetch_block_by_number(&self, number: u64) -> Result<RpcBlock, RpcHostError> {
+        let start = Instant::now();
         let tag = BlockNumberOrTag::Number(number);
         let (rpc_block, rpc_receipts) = tokio::try_join!(
             async { Ok::<_, RpcHostError>(self.provider.get_block_by_number(tag).full().await?) },
@@ -235,12 +241,14 @@ where
         let receipts =
             rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
 
+        crate::metrics::record_fetch_block_duration(start.elapsed());
         Ok(RpcBlock { block, receipts })
     }
 
     /// Fetch a range of blocks by number concurrently (used for backfill only).
     ///
     /// Returns an empty `Vec` if `from > to`.
+    #[tracing::instrument(level = "debug", skip_all, fields(from, to))]
     async fn fetch_range(&self, from: u64, to: u64) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
         if from > to {
             return Ok(Vec::new());
@@ -265,8 +273,10 @@ where
     }
 
     /// Refresh safe/finalized block numbers if an epoch boundary was crossed.
+    #[tracing::instrument(level = "debug", skip_all, fields(epoch = tracing::field::Empty))]
     async fn maybe_refresh_tags(&mut self, timestamp: u64) -> Result<(), RpcHostError> {
         let epoch = self.epoch_of(timestamp);
+        tracing::Span::current().record("epoch", epoch);
         if self.last_tag_epoch == Some(epoch) {
             return Ok(());
         }
@@ -286,6 +296,7 @@ where
         self.cached_finalized = finalized;
         self.last_tag_epoch = Some(epoch);
 
+        crate::metrics::inc_tag_refreshes();
         debug!(epoch, safe, finalized, "refreshed block tags at epoch boundary");
         Ok(())
     }
