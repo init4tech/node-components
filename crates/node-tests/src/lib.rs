@@ -14,14 +14,11 @@
 /// Test constants.
 pub mod constants;
 
-/// Blob cacher test utilities.
-mod blob_test_utils;
-pub use blob_test_utils::test_blob_cacher;
 /// Test context.
 mod context;
-pub use context::{BalanceChecks, NonceChecks, SignetTestContext};
+pub use context::{BalanceChecks, NonceChecks, SignetTestContext, TestHostNotifier};
 
-/// Bespoke conversion utilities for converting between alloy and reth types.
+/// Conversion utilities for test notifications.
 pub mod convert;
 
 /// Signet node RPC server utilities and helpers.
@@ -35,7 +32,7 @@ pub mod types;
 pub mod utils;
 pub use utils::run_test;
 
-pub use reth_exex_test_utils::{Adapter, TestExExContext};
+pub use reth_exex_test_utils::Adapter;
 pub use signet_test_utils::specs::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
 };

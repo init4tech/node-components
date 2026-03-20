@@ -1,6 +1,6 @@
 use crate::{
     HostBlockSpec, NotificationSpec, NotificationWithSidecars, RuBlockSpec,
-    convert::ToRethPrimitive,
+    convert::to_host_notification,
     types::{CtxProvider, Log, TestCounterInstance, TestErc20Instance, TestLogInstance},
 };
 use alloy::{
@@ -14,37 +14,81 @@ use alloy::{
     },
     rpc::types::eth::{TransactionReceipt, TransactionRequest},
 };
-use reth::transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction};
-use reth_exex_test_utils::{Adapter, TestExExHandle};
-use reth_node_api::FullNodeComponents;
+use reth::{
+    api::FullNodeComponents,
+    transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction},
+};
+use reth_exex_test_utils::Adapter;
 use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
-use signet_host_reth::decompose_exex_context;
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
 };
 use signet_node::{NodeStatus, SignetNodeBuilder};
 use signet_node_config::test_utils::test_config;
+use signet_node_types::{HostNotification, HostNotifier};
+use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
 use signet_storage_types::{Account, BlockNumberList, DbSignetEvent, RecoveredTx, SealedHeader};
-use signet_test_utils::contracts::counter::COUNTER_DEPLOY_CODE;
+use signet_test_utils::{chain::Chain, contracts::counter::COUNTER_DEPLOY_CODE};
 use signet_types::constants::{HostPermitted, RollupPermitted, SignetSystemConstants};
 use signet_zenith::{HostOrders::OrdersInstance, RollupPassage::RollupPassageInstance};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tracing::instrument;
+
+/// A channel-backed [`HostNotifier`] for integration tests.
+///
+/// Receives [`HostNotification`]s from the test harness and yields them
+/// to the signet node's main loop.
+pub struct TestHostNotifier {
+    receiver: mpsc::UnboundedReceiver<HostNotification<Chain>>,
+}
+
+impl TestHostNotifier {
+    /// Create a new test notifier from a receiver.
+    pub const fn new(receiver: mpsc::UnboundedReceiver<HostNotification<Chain>>) -> Self {
+        Self { receiver }
+    }
+}
+
+impl core::fmt::Debug for TestHostNotifier {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TestHostNotifier").finish_non_exhaustive()
+    }
+}
+
+impl HostNotifier for TestHostNotifier {
+    type Chain = Chain;
+    type Error = core::convert::Infallible;
+
+    async fn next_notification(
+        &mut self,
+    ) -> Option<Result<HostNotification<Self::Chain>, Self::Error>> {
+        self.receiver.recv().await.map(Ok)
+    }
+
+    fn set_head(&mut self, _block_number: u64) {}
+
+    fn set_backfill_thresholds(&mut self, _max_blocks: Option<u64>) {}
+
+    fn send_finished_height(&self, _block_number: u64) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
 /// Signet Node test context
 ///
 /// This contains the following:
 ///
-/// - Reth/ExEx context info
-///     - The test exex handle, which is used to send notifications to the signet
-///       instance.
-///     - The components for the Signet Node instance
+/// - A channel sender for host notifications
+/// - The reth test components (for pool access)
 /// - A receiver for the node status (latest block processed)
 /// - Unified storage backed by in-memory hot and cold storage
 /// - An alloy provider connected to the Signet Node RPC,
@@ -53,10 +97,10 @@ use tracing::instrument;
 /// - A set of addresses for testing, each of which has a pre-existing balance
 ///   on the Signet Node chain.
 pub struct SignetTestContext {
-    /// The test exex handle
-    pub handle: TestExExHandle,
+    /// The notification sender for the test host notifier.
+    pub sender: mpsc::UnboundedSender<HostNotification<Chain>>,
 
-    /// The components for the Signet Node instance
+    /// The reth test components (for pool access).
     pub components: Adapter,
 
     /// The Signet Node status receiver
@@ -102,11 +146,8 @@ impl SignetTestContext {
     #[instrument]
     pub async fn new() -> (Self, JoinHandle<eyre::Result<()>>) {
         let cfg = test_config();
-        let (ctx, handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
+        let (ctx, _handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
         let components = ctx.components.clone();
-
-        // Decompose the ExEx context into notifier + configs
-        let decomposed = decompose_exex_context(ctx);
 
         // set up Signet Node storage
         let constants = cfg.constants().unwrap();
@@ -152,11 +193,22 @@ impl SignetTestContext {
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
-        let blob_cacher = crate::test_blob_cacher(&cfg, decomposed.pool);
+        // Create the test host notifier channel
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let notifier = TestHostNotifier { receiver };
 
-        // Build serve config from the Signet test config rather than the
-        // reth defaults (which have IPC/HTTP disabled).
-        let serve_config = signet_rpc::ServeConfig {
+        // Build the blob cacher from the reth test pool
+        let blob_cacher = signet_blobber::BlobFetcher::builder()
+            .with_config(cfg.block_extractor())
+            .unwrap()
+            .with_pool(components.pool().clone())
+            .with_client(reqwest::Client::new())
+            .build_cache()
+            .unwrap()
+            .spawn();
+
+        // Build ServeConfig from the test config's IPC endpoint
+        let serve_config = ServeConfig {
             http: vec![],
             http_cors: None,
             ws: vec![],
@@ -165,13 +217,12 @@ impl SignetTestContext {
         };
 
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
-            .with_notifier(decomposed.notifier)
+            .with_notifier(notifier)
             .with_storage(Arc::clone(&storage))
             .with_alias_oracle(Arc::clone(&alias_oracle))
             .with_blob_cacher(blob_cacher)
             .with_serve_config(serve_config)
-            .with_rpc_config(decomposed.rpc_config)
-            .with_client(reqwest::Client::new())
+            .with_rpc_config(StorageRpcConfig::default())
             .build()
             .await
             .unwrap();
@@ -199,7 +250,7 @@ impl SignetTestContext {
             .unwrap();
 
         let this = Self {
-            handle,
+            sender,
             components,
             node_status,
             storage,
@@ -304,7 +355,8 @@ impl SignetTestContext {
             assert!(pool.get_blob(tx_hash).unwrap().is_some(), "Missing blob we just inserted");
         }
 
-        self.handle.notifications_tx.send(notification.notification.to_reth()).await.unwrap();
+        let host_notification = to_host_notification(&notification.notification);
+        self.sender.send(host_notification).unwrap();
     }
 
     /// Send a notification to the Signet Node instance and wait for it to be
