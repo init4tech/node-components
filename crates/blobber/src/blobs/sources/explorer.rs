@@ -27,8 +27,7 @@ impl AsyncBlobSource for BlobExplorerSource {
         Box::pin(async move {
             let sidecar = self.client.transaction(tx_hash).await?;
             let blobs: Blobs = sidecar.blobs.iter().map(|b| *b.data).collect();
-            debug_assert!(!blobs.is_empty(), "Explorer returned no blobs");
-            Ok(Some(blobs))
+            Ok((!blobs.is_empty()).then_some(blobs))
         })
     }
 }

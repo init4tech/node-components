@@ -27,7 +27,10 @@ impl PylonBlobSource {
 impl AsyncBlobSource for PylonBlobSource {
     fn get_blob(&self, spec: &BlobSpec) -> BlobFuture<'_> {
         let tx_hash = spec.tx_hash;
-        Box::pin(async move { fetch_from_pylon(&self.client, &self.url, tx_hash).await.map(Some) })
+        Box::pin(async move {
+            let blobs = fetch_from_pylon(&self.client, &self.url, tx_hash).await?;
+            Ok((!blobs.is_empty()).then_some(blobs))
+        })
     }
 }
 

@@ -131,25 +131,37 @@ impl BlobFetcher {
     }
 
     /// Fetch blobs by trying sync sources first, then racing async sources.
+    ///
+    /// Individual source errors are logged at `DEBUG` level and do not halt
+    /// the search — an error only matters if **all** sources fail.
     #[instrument(skip(self))]
     pub(crate) async fn fetch_blobs(&self, spec: &BlobSpec) -> FetchResult<Blobs> {
         // Try each sync source in order
         for source in &self.sync_sources {
             match source.get_blob(spec) {
                 Ok(Some(blobs)) => return Ok(blobs),
-                Ok(None) | Err(_) => continue,
+                Ok(None) => continue,
+                Err(err) => {
+                    tracing::debug!(%err, tx_hash = %spec.tx_hash, "sync blob source error");
+                    continue;
+                }
             }
         }
 
-        // Race all async sources concurrently using tokio::select on
-        // pinned futures (all borrowed from &self, no spawning needed).
+        // Race all async sources concurrently via select_all. All futures
+        // are polled simultaneously; the first to complete is inspected and
+        // the rest continue until one succeeds or all are exhausted.
         if !self.async_sources.is_empty() {
             let mut futs: Vec<_> = self.async_sources.iter().map(|s| s.get_blob(spec)).collect();
 
             while !futs.is_empty() {
                 let (result, _index, remaining) = futures_util::future::select_all(futs).await;
-                if let Ok(Some(blobs)) = result {
-                    return Ok(blobs);
+                match result {
+                    Ok(Some(blobs)) => return Ok(blobs),
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::debug!(%err, tx_hash = %spec.tx_hash, "async blob source error");
+                    }
                 }
                 futs = remaining;
             }

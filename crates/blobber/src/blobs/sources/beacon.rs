@@ -31,7 +31,7 @@ impl AsyncBlobSource for BeaconBlobSource {
         let versioned_hashes = spec.versioned_hashes.clone();
         Box::pin(async move {
             let blobs = fetch_from_cl(&self.client, &self.url, slot, &versioned_hashes).await?;
-            Ok(Some(blobs))
+            Ok((!blobs.is_empty()).then_some(blobs))
         })
     }
 }
