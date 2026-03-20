@@ -37,8 +37,10 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
-use tokio::sync::{mpsc, watch};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tracing::instrument;
 
 /// A channel-backed [`HostNotifier`] for integration tests.
