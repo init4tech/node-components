@@ -1,7 +1,7 @@
+use crate::shim::RecoveredBlockShim;
 use alloy::{consensus::Block, consensus::BlockHeader};
 use reth::primitives::{EthPrimitives, RecoveredBlock};
 use reth::providers::Chain;
-use signet_blobber::RecoveredBlockShim;
 use signet_extract::{BlockAndReceipts, Extractable};
 use signet_types::primitives::TransactionSigned;
 use std::sync::Arc;
