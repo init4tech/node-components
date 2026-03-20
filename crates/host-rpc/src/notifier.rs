@@ -12,7 +12,7 @@ use futures_util::{StreamExt, stream::FuturesOrdered};
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
 use std::{collections::VecDeque, sync::Arc, time::Instant};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Seconds per Ethereum slot.
 const SLOT_SECONDS: u64 = 12;
@@ -402,20 +402,20 @@ where
     ///
     /// Uses the header hash as a hint to walk the chain. Returns `Ok(None)`
     /// if the header was already processed (no-op walk).
-    #[tracing::instrument(skip_all, fields(hint_number = header.number(), hint_hash = %header.hash))]
+    #[tracing::instrument(level = "info", skip_all, fields(hint_number = header.number(), hint_hash = %header.hash))]
     async fn handle_new_head(
         &mut self,
         header: RpcHeader,
     ) -> Result<Option<HostNotification<RpcChainSegment>>, RpcHostError> {
+        let start = Instant::now();
         let timestamp = header.timestamp();
         let hint_hash = header.hash;
 
-        // Walk chain from the hint hash.
         let walk = match self.walk_chain(hint_hash).await {
             Ok(walk) => walk,
             Err(RpcHostError::MissingBlockByHash(_)) => {
-                // Hint was stale — fall back to latest.
                 debug!("subscription hint stale, falling back to latest");
+                crate::metrics::inc_stale_hints();
                 let latest = self
                     .provider
                     .get_block_by_number(BlockNumberOrTag::Latest)
@@ -424,14 +424,19 @@ where
                 let latest_hash = latest.header.hash;
                 self.walk_chain(latest_hash).await?
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                crate::metrics::inc_rpc_errors();
+                return Err(e);
+            }
         };
 
         let kind = match walk {
-            WalkResult::AlreadySeen => return Ok(None),
+            WalkResult::AlreadySeen => {
+                info!("already seen");
+                crate::metrics::record_handle_new_head_duration(start.elapsed());
+                return Ok(None);
+            }
             WalkResult::Exhausted => {
-                // Buffer exhausted — deep reorg or stale after disconnection.
-                // Clear local state and re-enter backfill from finalized.
                 warn!(
                     buffer_capacity = self.buffer_capacity,
                     "walk exhausted buffer, resetting to backfill"
@@ -439,16 +444,25 @@ where
                 self.chain_view.clear();
                 self.backfill_from = Some(self.cached_finalized.unwrap_or(0));
                 self.last_tag_epoch = None;
+                crate::metrics::record_handle_new_head_duration(start.elapsed());
                 return Ok(None);
             }
             WalkResult::Advance { new_chain } => {
+                let count = new_chain.len();
                 let blocks = self.fetch_blocks_by_hash(&new_chain).await?;
                 self.extend_view(&new_chain);
+                info!(blocks = count, "chain advanced");
+                crate::metrics::inc_blocks_fetched(count as u64, "frontfill");
                 HostNotificationKind::ChainCommitted { new: Arc::new(RpcChainSegment::new(blocks)) }
             }
             WalkResult::Reorg { fork_number, old_tip, new_chain } => {
+                let count = new_chain.len();
+                let depth = old_tip.saturating_sub(fork_number) + 1;
                 let blocks = self.fetch_blocks_by_hash(&new_chain).await?;
                 self.reorg_view(fork_number, &new_chain);
+                info!(depth, fork_number, new_blocks = count, "chain reorged");
+                crate::metrics::inc_blocks_fetched(count as u64, "frontfill");
+                crate::metrics::inc_reorgs(depth);
                 HostNotificationKind::ChainReorged {
                     old: RevertRange::new(fork_number, old_tip),
                     new: Arc::new(RpcChainSegment::new(blocks)),
@@ -457,6 +471,13 @@ where
         };
 
         self.maybe_refresh_tags(timestamp).await?;
+
+        // Update gauges.
+        if let Some((tip_num, _)) = self.tip() {
+            crate::metrics::set_tip(tip_num);
+        }
+        crate::metrics::set_chain_view_len(self.chain_view.len());
+        crate::metrics::record_handle_new_head_duration(start.elapsed());
 
         Ok(Some(HostNotification {
             kind,
