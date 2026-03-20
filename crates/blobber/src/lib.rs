@@ -13,8 +13,8 @@
 
 mod blobs;
 pub use blobs::{
-    BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError, BlobFetcherConfig, Blobs,
-    CacheHandle, FetchError, FetchResult,
+    AsyncBlobSource, BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError,
+    BlobFetcherConfig, BlobSource, BlobSpec, Blobs, CacheHandle, FetchError, FetchResult,
 };
 
 mod coder;

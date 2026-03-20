@@ -12,3 +12,6 @@ pub use error::{FetchError, FetchResult};
 
 mod fetch;
 pub use fetch::{BlobFetcher, Blobs};
+
+mod source;
+pub use source::{AsyncBlobSource, BlobSource, BlobSpec};
