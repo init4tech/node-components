@@ -12,6 +12,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod blobs;
+#[cfg(feature = "test-utils")]
+pub use blobs::MemoryBlobSource;
 pub use blobs::{
     AsyncBlobSource, BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError,
     BlobFetcherConfig, BlobSource, BlobSpec, Blobs, CacheHandle, FetchError, FetchResult, sources,
