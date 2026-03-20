@@ -531,7 +531,11 @@ where
 
         let blocks = match self.fetch_range(from, to).await {
             Ok(b) => b,
-            Err(e) => return Some(Err(e)),
+            Err(e) => {
+                crate::metrics::inc_rpc_errors();
+                crate::metrics::record_backfill_batch(start.elapsed());
+                return Some(Err(e));
+            }
         };
 
         let view_entries: Vec<(u64, B256)> =
@@ -548,6 +552,7 @@ where
         if let Some(last) = blocks.last()
             && let Err(e) = self.maybe_refresh_tags(last.block.timestamp()).await
         {
+            crate::metrics::record_backfill_batch(start.elapsed());
             return Some(Err(e));
         }
 
