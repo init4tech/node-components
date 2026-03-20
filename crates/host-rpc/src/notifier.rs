@@ -307,10 +307,13 @@ where
     /// our local chain view.
     ///
     /// Returns `Ok(WalkResult)` describing advance, reorg, or already-seen.
-    #[tracing::instrument(skip_all, fields(%start_hash))]
+    #[tracing::instrument(level = "debug", skip_all, fields(%start_hash))]
     async fn walk_chain(&self, start_hash: B256) -> Result<WalkResult, RpcHostError> {
+        let start = Instant::now();
+
         // Quick check: is the hint hash already our tip?
         if self.tip().is_some_and(|(_, h)| h == start_hash) {
+            crate::metrics::record_walk_duration(start.elapsed());
             return Ok(WalkResult::AlreadySeen);
         }
 
@@ -336,6 +339,7 @@ where
                     walked.pop();
 
                     if walked.is_empty() {
+                        crate::metrics::record_walk_duration(start.elapsed());
                         return Ok(WalkResult::AlreadySeen);
                     }
 
@@ -344,9 +348,11 @@ where
 
                     let tip_num = self.tip().map(|(n, _)| n).unwrap_or(0);
                     if number == tip_num {
+                        crate::metrics::record_walk_duration(start.elapsed());
                         return Ok(WalkResult::Advance { new_chain: walked });
                     }
 
+                    crate::metrics::record_walk_duration(start.elapsed());
                     return Ok(WalkResult::Reorg {
                         fork_number: number + 1,
                         old_tip: tip_num,
@@ -363,11 +369,14 @@ where
                     // (When backfill WAS performed, the buffer is pre-populated
                     // and this arm does not fire — overlap is found normally.)
                     walked.reverse();
+                    crate::metrics::record_walk_duration(start.elapsed());
                     return Ok(WalkResult::Advance { new_chain: walked });
                 }
                 None => {
                     // Below our buffer — check if we're at the front.
                     if self.chain_view.front().is_some_and(|(front_num, _)| number < *front_num) {
+                        crate::metrics::inc_walk_exhausted();
+                        crate::metrics::record_walk_duration(start.elapsed());
                         return Ok(WalkResult::Exhausted);
                     }
                     // Number is within our range but not in buffer (gap).
@@ -377,6 +386,8 @@ where
 
             // Depth limit.
             if walked.len() > self.buffer_capacity {
+                crate::metrics::inc_walk_exhausted();
+                crate::metrics::record_walk_duration(start.elapsed());
                 return Ok(WalkResult::Exhausted);
             }
 
