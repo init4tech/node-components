@@ -143,6 +143,9 @@ impl SignetTestContext {
     pub async fn new() -> (Self, JoinHandle<eyre::Result<()>>) {
         let cfg = test_config();
         let blob_source = MemoryBlobSource::new();
+        let ipc_dir = tempfile::tempdir().unwrap().keep();
+        let ipc_path = ipc_dir.join("signet.ipc");
+        let ipc_endpoint = ipc_path.to_string_lossy().into_owned();
 
         // set up Signet Node storage
         let constants = cfg.constants().unwrap();
@@ -206,7 +209,7 @@ impl SignetTestContext {
             http_cors: None,
             ws: vec![],
             ws_cors: None,
-            ipc: cfg.ipc_endpoint().map(ToOwned::to_owned),
+            ipc: Some(ipc_endpoint.clone()),
         };
 
         let (node, mut node_status) = SignetNodeBuilder::new(cfg.clone())
@@ -238,7 +241,7 @@ impl SignetTestContext {
             .with_nonce_management(SimpleNonceManager::default())
             .with_chain_id(constants.ru_chain_id())
             .wallet(wallet)
-            .connect(cfg.ipc_endpoint().unwrap())
+            .connect(&ipc_endpoint)
             .await
             .unwrap();
 

@@ -16,10 +16,8 @@ use tokio::sync::mpsc;
 #[tokio::test]
 async fn test_genesis() {
     let cfg = test_config();
-    let consts = cfg.constants();
-
-    let chain_spec: Arc<_> = cfg.chain_spec().clone();
-    assert_eq!(chain_spec.genesis().config.chain_id, consts.unwrap().ru_chain_id());
+    let consts = cfg.constants().unwrap();
+    assert_eq!(cfg.genesis().config.chain_id, consts.ru_chain_id());
 
     let cancel_token = CancellationToken::new();
     let hot = MemKv::new();
@@ -54,7 +52,7 @@ async fn test_genesis() {
             http_cors: None,
             ws: vec![],
             ws_cors: None,
-            ipc: cfg.ipc_endpoint().map(ToOwned::to_owned),
+            ipc: None,
         })
         .with_rpc_config(StorageRpcConfig::default())
         .build()
