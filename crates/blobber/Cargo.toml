@@ -13,13 +13,10 @@ alloy.workspace = true
 
 init4-bin-base.workspace = true
 signet-extract.workspace = true
-signet-types.workspace = true
 signet-zenith.workspace = true
 
-reth.workspace = true
-reth-chainspec.workspace = true
-reth-transaction-pool = { workspace = true, optional = true }
-
+futures-util.workspace = true
+schnellru.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -31,11 +28,9 @@ thiserror.workspace = true
 [dev-dependencies]
 signet-constants = { workspace = true, features = ["test-utils"] }
 
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-
 eyre.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
 [features]
-test-utils = ["signet-constants/test-utils", "dep:reth-transaction-pool", "reth-transaction-pool?/test-utils"]
+test-utils = ["signet-constants/test-utils"]

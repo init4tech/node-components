@@ -1,12 +1,9 @@
-use crate::{BlobFetcherBuilder, FetchError, FetchResult};
+use crate::{AsyncBlobSource, BlobFetcherBuilder, BlobSource, BlobSpec, FetchError, FetchResult};
 use alloy::{
     consensus::{Blob, BlobTransactionSidecar},
     eips::eip7594::{BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant},
-    primitives::{B256, TxHash},
 };
-use reth::{rpc::types::beacon::sidecar::GetBlobsResponse, transaction_pool::TransactionPool};
 use std::{ops::Deref, sync::Arc};
-use tokio::select;
 use tracing::instrument;
 
 /// Blobs which may be a local shared sidecar, or a list of blobs from an
@@ -103,238 +100,61 @@ impl Blobs {
     }
 }
 
-/// Decoder is generic over a Pool and handles fetching and decoding blob
-/// transactions. Decoder attempts to fetch from the Pool first and then
-/// queries an explorer if it can't find the blob. When Decoder does find a
-/// blob, it decodes it and returns the decoded transactions.
-pub struct BlobFetcher<Pool> {
-    pool: Pool,
-    explorer: foundry_blob_explorers::Client,
-    client: reqwest::Client,
-    cl_url: Option<url::Url>,
-    pylon_url: Option<url::Url>,
+/// Fetches blobs from multiple sources, trying synchronous sources first,
+/// then racing asynchronous sources concurrently.
+pub struct BlobFetcher {
+    sync_sources: Vec<Box<dyn BlobSource>>,
+    async_sources: Vec<Box<dyn AsyncBlobSource>>,
 }
 
-impl<Pool: core::fmt::Debug> core::fmt::Debug for BlobFetcher<Pool> {
+impl core::fmt::Debug for BlobFetcher {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("BlobFetcher")
-            .field("pool", &self.pool)
-            .field("explorer", &self.explorer.baseurl())
-            .field("cl_url", &self.cl_url)
-            .field("pylon_url", &self.pylon_url)
-            .finish_non_exhaustive()
+            .field("sync_sources", &self.sync_sources.len())
+            .field("async_sources", &self.async_sources.len())
+            .finish()
     }
 }
 
-impl BlobFetcher<()> {
+impl BlobFetcher {
     /// Returns a new [`BlobFetcherBuilder`].
-    pub fn builder() -> BlobFetcherBuilder<()> {
+    pub fn builder() -> BlobFetcherBuilder {
         BlobFetcherBuilder::default()
     }
-}
 
-impl<Pool> BlobFetcher<Pool>
-where
-    Pool: TransactionPool,
-{
-    /// new returns a new `Decoder` generic over a `Pool`
-    pub const fn new(
-        pool: Pool,
-        explorer: foundry_blob_explorers::Client,
-        cl_client: reqwest::Client,
-        cl_url: Option<url::Url>,
-        pylon_url: Option<url::Url>,
+    /// Creates a new `BlobFetcher` from pre-built source lists.
+    pub(crate) fn new(
+        sync_sources: Vec<Box<dyn BlobSource>>,
+        async_sources: Vec<Box<dyn AsyncBlobSource>>,
     ) -> Self {
-        Self { pool, explorer, client: cl_client, cl_url, pylon_url }
+        Self { sync_sources, async_sources }
     }
 
-    /// Fetch blobs from the local txpool, or fall back to remote sources
+    /// Fetch blobs by trying sync sources first, then racing async sources.
     #[instrument(skip(self))]
-    pub(crate) async fn fetch_blobs(
-        &self,
-        slot: usize,
-        tx_hash: B256,
-        versioned_hashes: &[B256],
-    ) -> FetchResult<Blobs> {
-        if let Ok(blobs) = self.get_blobs_from_pool(tx_hash) {
-            return Ok(blobs);
-        }
-
-        // if the pool doesn't have it, reach out to other sources
-        // and return the first successful response
-        select! {
-            Ok(blobs) = self.get_blobs_from_explorer(tx_hash) => {
-                 Ok(blobs)
-            }
-            Ok(blobs) = self.get_blobs_from_cl_exact(slot, versioned_hashes) => {
-                 Ok(blobs)
-            }
-            Ok(blobs) = self.get_blobs_from_pylon(tx_hash) => {
-                Ok(blobs)
-            }
-            else => {
-                Err(FetchError::MissingSidecar(tx_hash))
+    pub(crate) async fn fetch_blobs(&self, spec: &BlobSpec) -> FetchResult<Blobs> {
+        // Try each sync source in order
+        for source in &self.sync_sources {
+            match source.get_blob(spec) {
+                Ok(Some(blobs)) => return Ok(blobs),
+                Ok(None) | Err(_) => continue,
             }
         }
-    }
 
-    /// Return a blob from the local pool or an error
-    fn get_blobs_from_pool(&self, tx: TxHash) -> FetchResult<Blobs> {
-        self.pool.get_blob(tx)?.map(Into::into).ok_or_else(|| FetchError::MissingSidecar(tx))
-    }
+        // Race all async sources concurrently using tokio::select on
+        // pinned futures (all borrowed from &self, no spawning needed).
+        if !self.async_sources.is_empty() {
+            let mut futs: Vec<_> = self.async_sources.iter().map(|s| s.get_blob(spec)).collect();
 
-    /// Returns the blob from the explorer
-    async fn get_blobs_from_explorer(&self, tx: TxHash) -> FetchResult<Blobs> {
-        let sidecar = self.explorer.transaction(tx).await?;
-        let blobs: Blobs = sidecar.blobs.iter().map(|b| *b.data).collect();
-        debug_assert!(!blobs.is_empty(), "Explorer returned no blobs");
-        Ok(blobs)
-    }
-
-    /// Returns the blob from the pylon blob indexer.
-    #[instrument(skip_all)]
-    async fn get_blobs_from_pylon(&self, tx: TxHash) -> FetchResult<Blobs> {
-        let Some(url) = &self.pylon_url else {
-            return Err(FetchError::ConsensusClientUrlNotSet);
-        };
-        let url = url.join(&format!("sidecar/{tx}"))?;
-
-        let response = self.client.get(url).header("accept", "application/json").send().await?;
-        response
-            .json::<Arc<BlobTransactionSidecarVariant>>()
-            .await
-            .map(Into::into)
-            .map_err(Into::into)
-    }
-
-    /// Queries the consensus client for blobs at a given slot, filtering by
-    /// versioned hashes (best-effort).
-    ///
-    /// This method returns whatever blobs the consensus client provides, even
-    /// if fewer than requested. Use this when partial blob results are acceptable.
-    ///
-    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
-    #[instrument(skip_all)]
-    async fn get_blobs_from_cl(
-        &self,
-        slot: usize,
-        versioned_hashes: &[B256],
-    ) -> FetchResult<Blobs> {
-        let Some(url) = &self.cl_url else {
-            return Err(FetchError::ConsensusClientUrlNotSet);
-        };
-
-        let mut url =
-            url.join(&format!("/eth/v1/beacon/blobs/{slot}")).map_err(FetchError::UrlParse)?;
-
-        let versioned_hashes =
-            versioned_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>().join(",");
-        url.query_pairs_mut().append_pair("versioned_hashes", &versioned_hashes);
-
-        let response = self.client.get(url).header("accept", "application/json").send().await?;
-
-        let response: GetBlobsResponse = response.json().await?;
-
-        Ok(Arc::new(response.data).into())
-    }
-
-    /// Queries the consensus client for blobs at a given slot, filtering by
-    /// versioned hashes (exact match required).
-    ///
-    /// This method enforces that the consensus client returns exactly the
-    /// number of blobs requested. If the count doesn't match, returns
-    /// [`FetchError::BlobCountMismatch`].
-    ///
-    /// We assume the CL will NEVER return unrelated blobs, only correct ones.
-    #[instrument(skip_all)]
-    async fn get_blobs_from_cl_exact(
-        &self,
-        slot: usize,
-        versioned_hashes: &[B256],
-    ) -> FetchResult<Blobs> {
-        let expected = versioned_hashes.len();
-        let blobs = self.get_blobs_from_cl(slot, versioned_hashes).await?;
-
-        if blobs.len() != expected {
-            return Err(FetchError::BlobCountMismatch { expected, actual: blobs.len() });
+            while !futs.is_empty() {
+                let (result, _index, remaining) = futures_util::future::select_all(futs).await;
+                if let Ok(Some(blobs)) = result {
+                    return Ok(blobs);
+                }
+                futs = remaining;
+            }
         }
 
-        Ok(blobs)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::{
-        consensus::{SidecarBuilder, SignableTransaction as _, SimpleCoder, TxEip2930},
-        eips::Encodable2718,
-        primitives::{TxKind, U256, bytes},
-        rlp::encode,
-        signers::{SignerSync, local::PrivateKeySigner},
-    };
-    use reth::primitives::Transaction;
-    use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin,
-        test_utils::{MockTransaction, testing_pool},
-    };
-    use signet_types::{constants::SignetSystemConstants, primitives::TransactionSigned};
-
-    #[tokio::test]
-    async fn test_fetch_from_pool() -> eyre::Result<()> {
-        let wallet = PrivateKeySigner::random();
-        let pool = testing_pool();
-
-        let test = signet_constants::KnownChains::Test;
-
-        let constants: SignetSystemConstants = test.try_into().unwrap();
-
-        let explorer_url = "https://api.holesky.blobscan.com/";
-        let client = reqwest::Client::builder().use_rustls_tls();
-
-        let extractor = BlobFetcher::builder()
-            .with_pool(pool.clone())
-            .with_explorer_url(explorer_url)
-            .with_client_builder(client)
-            .unwrap()
-            .build()?;
-
-        let tx = Transaction::Eip2930(TxEip2930 {
-            chain_id: 17001,
-            nonce: 2,
-            gas_limit: 50000,
-            gas_price: 1_500_000_000,
-            to: TxKind::Call(constants.host_zenith()),
-            value: U256::from(1_f64),
-            input: bytes!(""),
-            ..Default::default()
-        });
-
-        let encoded_transactions =
-            encode(vec![sign_tx_with_key_pair(wallet.clone(), tx).encoded_2718()]);
-
-        let result = SidecarBuilder::<SimpleCoder>::from_slice(&encoded_transactions).build_4844();
-        assert!(result.is_ok());
-
-        let mut mock_transaction = MockTransaction::eip4844_with_sidecar(result.unwrap().into());
-        let transaction =
-            sign_tx_with_key_pair(wallet, Transaction::from(mock_transaction.clone()));
-
-        mock_transaction.set_hash(*transaction.hash());
-
-        pool.add_transaction(TransactionOrigin::Local, mock_transaction.clone()).await?;
-
-        let got = extractor.get_blobs_from_pool(*mock_transaction.hash());
-        assert!(got.is_ok());
-
-        let got_blobs = got.unwrap();
-        assert!(got_blobs.len() == 1);
-
-        Ok(())
-    }
-
-    fn sign_tx_with_key_pair(wallet: PrivateKeySigner, tx: Transaction) -> TransactionSigned {
-        let signature = wallet.sign_hash_sync(&tx.signature_hash()).unwrap();
-        TransactionSigned::new_unhashed(tx, signature)
+        Err(FetchError::MissingSidecar(spec.tx_hash))
     }
 }

@@ -1,10 +1,10 @@
-use crate::{BlobFetcher, BlobberError, BlobberResult, Blobs, FetchResult};
+use crate::{BlobFetcher, BlobSpec, BlobberError, BlobberResult, Blobs, FetchResult};
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
 use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
 use alloy::primitives::{B256, Bytes, keccak256};
 use core::fmt;
-use reth::{network::cache::LruMap, transaction_pool::TransactionPool};
+use schnellru::{ByLength, LruMap};
 use signet_extract::ExtractedEvent;
 use signet_zenith::Zenith::BlockSubmitted;
 use signet_zenith::ZenithBlock;
@@ -144,22 +144,22 @@ impl<Coder> CacheHandle<Coder> {
 }
 
 /// Retrieves blobs and stores them in a cache for later use.
-pub struct BlobCacher<Pool> {
-    fetcher: BlobFetcher<Pool>,
+pub struct BlobCacher {
+    fetcher: BlobFetcher,
 
     cache: Mutex<LruMap<(usize, B256), Blobs>>,
 }
 
-impl<Pool: fmt::Debug> fmt::Debug for BlobCacher<Pool> {
+impl fmt::Debug for BlobCacher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BlobCacher").field("fetcher", &self.fetcher).finish_non_exhaustive()
     }
 }
 
-impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
-    /// Creates a new `BlobCacher` with the provided extractor and cache size.
-    pub fn new(fetcher: BlobFetcher<Pool>) -> Self {
-        Self { fetcher, cache: LruMap::new(BLOB_CACHE_SIZE).into() }
+impl BlobCacher {
+    /// Creates a new `BlobCacher` with the provided fetcher and cache size.
+    pub fn new(fetcher: BlobFetcher) -> Self {
+        Self { fetcher, cache: LruMap::new(ByLength::new(BLOB_CACHE_SIZE)).into() }
     }
 
     /// Fetches blobs for a given slot and transaction hash.
@@ -176,12 +176,14 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
             return Ok(blobs.clone());
         }
 
+        let spec = BlobSpec { tx_hash, slot, versioned_hashes };
+
         // Cache miss, use the fetcher to retrieve blobs
         // Retry fetching blobs up to `FETCH_RETRIES` times
         for attempt in 1..=FETCH_RETRIES {
             let Ok(blobs) = self
                 .fetcher
-                .fetch_blobs(slot, tx_hash, &versioned_hashes)
+                .fetch_blobs(&spec)
                 .instrument(debug_span!("fetch_blobs_loop", attempt))
                 .await
             else {
@@ -227,91 +229,5 @@ impl<Pool: TransactionPool + 'static> BlobCacher<Pool> {
         let (sender, inst) = mpsc::channel(CACHE_REQUEST_CHANNEL_SIZE);
         tokio::spawn(Arc::new(self).task_future(inst));
         CacheHandle { sender, _coder: PhantomData }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::BlobFetcher;
-
-    use super::*;
-    use alloy::{
-        consensus::{SidecarBuilder, SignableTransaction as _, TxEip2930},
-        eips::Encodable2718,
-        primitives::{TxKind, U256, bytes},
-        rlp::encode,
-        signers::{SignerSync, local::PrivateKeySigner},
-    };
-    use reth::primitives::Transaction;
-    use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin,
-        test_utils::{MockTransaction, testing_pool},
-    };
-    use signet_types::{constants::SignetSystemConstants, primitives::TransactionSigned};
-
-    #[tokio::test]
-    async fn test_fetch_from_pool() -> eyre::Result<()> {
-        let wallet = PrivateKeySigner::random();
-        let pool = testing_pool();
-
-        let test = signet_constants::KnownChains::Test;
-
-        let constants: SignetSystemConstants = test.try_into().unwrap();
-
-        let explorer_url = "https://api.holesky.blobscan.com/";
-        let client = reqwest::Client::builder().use_rustls_tls();
-
-        let tx = Transaction::Eip2930(TxEip2930 {
-            chain_id: 17001,
-            nonce: 2,
-            gas_limit: 50000,
-            gas_price: 1_500_000_000,
-            to: TxKind::Call(constants.host_zenith()),
-            value: U256::from(1_f64),
-            input: bytes!(""),
-            ..Default::default()
-        });
-
-        let encoded_transactions =
-            encode(vec![sign_tx_with_key_pair(wallet.clone(), tx).encoded_2718()]);
-
-        let result = SidecarBuilder::<SimpleCoder>::from_slice(&encoded_transactions).build_4844();
-        assert!(result.is_ok());
-
-        let mut mock_transaction = MockTransaction::eip4844_with_sidecar(result.unwrap().into());
-        let transaction =
-            sign_tx_with_key_pair(wallet, Transaction::from(mock_transaction.clone()));
-
-        mock_transaction.set_hash(*transaction.hash());
-
-        pool.add_transaction(TransactionOrigin::Local, mock_transaction.clone()).await?;
-
-        // Spawn the cache
-        let cache = BlobFetcher::builder()
-            .with_pool(pool.clone())
-            .with_explorer_url(explorer_url)
-            .with_client_builder(client)
-            .unwrap()
-            .build_cache()?;
-        let handle = cache.spawn::<SimpleCoder>();
-
-        let got = handle
-            .fetch_blobs(
-                0, // this is ignored by the pool
-                *mock_transaction.hash(),
-                mock_transaction.blob_versioned_hashes().unwrap().to_owned(),
-            )
-            .await;
-        assert!(got.is_ok());
-
-        let got_blobs = got.unwrap();
-        assert!(got_blobs.len() == 1);
-
-        Ok(())
-    }
-
-    fn sign_tx_with_key_pair(wallet: PrivateKeySigner, tx: Transaction) -> TransactionSigned {
-        let signature = wallet.sign_hash_sync(&tx.signature_hash()).unwrap();
-        TransactionSigned::new_unhashed(tx, signature)
     }
 }

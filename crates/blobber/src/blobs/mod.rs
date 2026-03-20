@@ -15,3 +15,6 @@ pub use fetch::{BlobFetcher, Blobs};
 
 mod source;
 pub use source::{AsyncBlobSource, BlobSource, BlobSpec};
+
+/// Concrete [`AsyncBlobSource`] implementations for common blob providers.
+pub mod sources;

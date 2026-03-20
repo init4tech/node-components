@@ -106,6 +106,7 @@ itertools = "0.14.0"
 metrics = "0.24.2"
 openssl = { version = "0.10", features = ["vendored"] }
 reqwest = "0.12.9"
+schnellru = "0.2"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.137"
 tracing = "0.1.41"

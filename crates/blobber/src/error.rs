@@ -1,6 +1,5 @@
 use crate::{DecodeError, FetchError};
 use alloy::{eips::eip2718::Eip2718Error, primitives::B256};
-use reth::transaction_pool::BlobStoreError;
 
 /// Result using [`BlobberError`] as the default error type.
 pub type BlobberResult<T, E = BlobberError> = std::result::Result<T, E>;
@@ -52,15 +51,9 @@ impl BlobberError {
         FetchError::MissingSidecar(tx).into()
     }
 
-    /// Blob store error
-    pub fn blob_store(err: BlobStoreError) -> Self {
-        FetchError::BlobStore(err).into()
-    }
-}
-
-impl From<BlobStoreError> for BlobberError {
-    fn from(err: BlobStoreError) -> Self {
-        Self::Fetch(err.into())
+    /// Blob source error
+    pub fn blob_source(err: Box<dyn core::error::Error + Send + Sync>) -> Self {
+        FetchError::BlobSource(err).into()
     }
 }
 

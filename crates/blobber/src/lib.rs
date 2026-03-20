@@ -14,7 +14,7 @@
 mod blobs;
 pub use blobs::{
     AsyncBlobSource, BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError,
-    BlobFetcherConfig, BlobSource, BlobSpec, Blobs, CacheHandle, FetchError, FetchResult,
+    BlobFetcherConfig, BlobSource, BlobSpec, Blobs, CacheHandle, FetchError, FetchResult, sources,
 };
 
 mod coder;
@@ -22,9 +22,6 @@ pub use coder::{DecodeError, DecodeResult, SignetBlockDecoder};
 
 mod error;
 pub use error::{BlobberError, BlobberResult};
-
-mod shim;
-pub use shim::RecoveredBlockShim;
 
 #[cfg(test)]
 mod test {
