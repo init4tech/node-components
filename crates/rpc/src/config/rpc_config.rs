@@ -1,5 +1,6 @@
 //! Configuration for the storage-backed RPC server.
 
+use init4_bin_base::utils::from_env::FromEnv;
 use std::time::Duration;
 
 /// Configuration for the storage-backed ETH RPC server.
@@ -237,5 +238,105 @@ impl StorageRpcConfigBuilder {
     /// Build the configuration.
     pub const fn build(self) -> StorageRpcConfig {
         self.inner
+    }
+}
+
+/// Environment-based configuration for the storage RPC server.
+///
+/// All fields are optional and default to the same values as
+/// [`StorageRpcConfig::default`].
+#[derive(Debug, Clone, FromEnv)]
+pub struct StorageRpcConfigEnv {
+    /// Maximum gas for `eth_call` and `eth_estimateGas`.
+    #[from_env(var = "SIGNET_RPC_GAS_CAP", desc = "Max gas for eth_call", optional)]
+    rpc_gas_cap: Option<u64>,
+    /// Maximum block range per `eth_getLogs` query.
+    #[from_env(
+        var = "SIGNET_RPC_MAX_BLOCKS_PER_FILTER",
+        desc = "Max block range for getLogs",
+        optional
+    )]
+    max_blocks_per_filter: Option<u64>,
+    /// Maximum number of logs returned per response.
+    #[from_env(var = "SIGNET_RPC_MAX_LOGS", desc = "Max logs per response", optional)]
+    max_logs_per_response: Option<u64>,
+    /// Maximum seconds for a single log query.
+    #[from_env(
+        var = "SIGNET_RPC_LOG_QUERY_DEADLINE_SECS",
+        desc = "Max seconds for log query",
+        optional
+    )]
+    max_log_query_deadline_secs: Option<u64>,
+    /// Maximum concurrent tracing/debug requests.
+    #[from_env(
+        var = "SIGNET_RPC_MAX_TRACING_REQUESTS",
+        desc = "Concurrent tracing limit",
+        optional
+    )]
+    max_tracing_requests: Option<u64>,
+    /// Filter TTL in seconds.
+    #[from_env(var = "SIGNET_RPC_STALE_FILTER_TTL_SECS", desc = "Filter TTL in seconds", optional)]
+    stale_filter_ttl_secs: Option<u64>,
+    /// Number of recent blocks for gas oracle.
+    #[from_env(var = "SIGNET_RPC_GAS_ORACLE_BLOCKS", desc = "Blocks for gas oracle", optional)]
+    gas_oracle_block_count: Option<u64>,
+    /// Tip percentile for gas oracle.
+    #[from_env(var = "SIGNET_RPC_GAS_ORACLE_PERCENTILE", desc = "Tip percentile", optional)]
+    gas_oracle_percentile: Option<u64>,
+    /// Default gas price in wei.
+    #[from_env(var = "SIGNET_RPC_DEFAULT_GAS_PRICE", desc = "Default gas price in wei", optional)]
+    default_gas_price: Option<u128>,
+    /// Minimum effective tip in wei.
+    #[from_env(var = "SIGNET_RPC_IGNORE_PRICE", desc = "Min tip in wei", optional)]
+    ignore_price: Option<u128>,
+    /// Maximum gas price in wei.
+    #[from_env(var = "SIGNET_RPC_MAX_PRICE", desc = "Max gas price in wei", optional)]
+    max_price: Option<u128>,
+    /// Maximum header history for `eth_feeHistory`.
+    #[from_env(var = "SIGNET_RPC_MAX_HEADER_HISTORY", desc = "Max feeHistory headers", optional)]
+    max_header_history: Option<u64>,
+    /// Maximum block history for `eth_feeHistory`.
+    #[from_env(var = "SIGNET_RPC_MAX_BLOCK_HISTORY", desc = "Max feeHistory blocks", optional)]
+    max_block_history: Option<u64>,
+    /// Default bundle simulation timeout in milliseconds.
+    #[from_env(var = "SIGNET_RPC_BUNDLE_TIMEOUT_MS", desc = "Bundle sim timeout in ms", optional)]
+    default_bundle_timeout_ms: Option<u64>,
+}
+
+impl From<StorageRpcConfigEnv> for StorageRpcConfig {
+    fn from(env: StorageRpcConfigEnv) -> Self {
+        let defaults = StorageRpcConfig::default();
+        Self {
+            rpc_gas_cap: env.rpc_gas_cap.unwrap_or(defaults.rpc_gas_cap),
+            max_blocks_per_filter: env
+                .max_blocks_per_filter
+                .unwrap_or(defaults.max_blocks_per_filter),
+            max_logs_per_response: env
+                .max_logs_per_response
+                .map_or(defaults.max_logs_per_response, |v| v as usize),
+            max_log_query_deadline: env
+                .max_log_query_deadline_secs
+                .map_or(defaults.max_log_query_deadline, Duration::from_secs),
+            max_tracing_requests: env
+                .max_tracing_requests
+                .map_or(defaults.max_tracing_requests, |v| v as usize),
+            stale_filter_ttl: env
+                .stale_filter_ttl_secs
+                .map_or(defaults.stale_filter_ttl, Duration::from_secs),
+            gas_oracle_block_count: env
+                .gas_oracle_block_count
+                .unwrap_or(defaults.gas_oracle_block_count),
+            gas_oracle_percentile: env
+                .gas_oracle_percentile
+                .map_or(defaults.gas_oracle_percentile, |v| v as f64),
+            default_gas_price: env.default_gas_price.or(defaults.default_gas_price),
+            ignore_price: env.ignore_price.or(defaults.ignore_price),
+            max_price: env.max_price.or(defaults.max_price),
+            max_header_history: env.max_header_history.unwrap_or(defaults.max_header_history),
+            max_block_history: env.max_block_history.unwrap_or(defaults.max_block_history),
+            default_bundle_timeout_ms: env
+                .default_bundle_timeout_ms
+                .unwrap_or(defaults.default_bundle_timeout_ms),
+        }
     }
 }
