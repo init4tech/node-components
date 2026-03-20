@@ -33,4 +33,4 @@ pub use segment::{RpcBlock, RpcChainSegment};
 mod metrics;
 
 mod alias;
-pub use alias::{RpcAliasOracle, RpcAliasOracleFactory};
+pub use alias::RpcAliasOracle;
