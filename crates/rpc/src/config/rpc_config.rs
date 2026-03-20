@@ -245,6 +245,15 @@ impl StorageRpcConfigBuilder {
 ///
 /// All fields are optional and default to the same values as
 /// [`StorageRpcConfig::default`].
+///
+/// # Example
+///
+/// ```no_run
+/// use signet_rpc::{StorageRpcConfig, StorageRpcConfigEnv};
+/// use init4_bin_base::utils::from_env::FromEnv;
+///
+/// let config: StorageRpcConfig = StorageRpcConfigEnv::from_env().unwrap().into();
+/// ```
 #[derive(Debug, Clone, FromEnv)]
 pub struct StorageRpcConfigEnv {
     /// Maximum gas for `eth_call` and `eth_estimateGas`.

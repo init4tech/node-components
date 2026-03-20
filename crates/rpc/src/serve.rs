@@ -12,7 +12,11 @@ use ajj::{
 use axum::http::HeaderValue;
 use init4_bin_base::utils::from_env::FromEnv;
 use interprocess::local_socket as ls;
-use std::{borrow::Cow, future::IntoFuture, net::SocketAddr};
+use std::{
+    borrow::Cow,
+    future::IntoFuture,
+    net::{AddrParseError, SocketAddr},
+};
 use tokio::{runtime::Handle, task::JoinHandle};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::error;
@@ -157,6 +161,15 @@ impl ServeConfig {
 /// - `SIGNET_WS_PORT` – WebSocket port (enables WS transport)
 /// - `SIGNET_WS_CORS` – CORS origins for WebSocket
 /// - `SIGNET_IPC_ENDPOINT` – IPC socket path (enables IPC transport)
+///
+/// # Example
+///
+/// ```no_run
+/// use signet_rpc::{ServeConfig, ServeConfigEnv};
+/// use init4_bin_base::utils::from_env::FromEnv;
+///
+/// let config: ServeConfig = ServeConfigEnv::from_env().unwrap().try_into().unwrap();
+/// ```
 #[derive(Debug, Clone, FromEnv)]
 pub struct ServeConfigEnv {
     /// HTTP bind address.
@@ -182,41 +195,35 @@ pub struct ServeConfigEnv {
     ipc: Option<Cow<'static, str>>,
 }
 
-impl From<ServeConfigEnv> for ServeConfig {
-    fn from(env: ServeConfigEnv) -> Self {
+impl TryFrom<ServeConfigEnv> for ServeConfig {
+    type Error = AddrParseError;
+
+    fn try_from(env: ServeConfigEnv) -> Result<Self, Self::Error> {
         let http = env
             .http_port
             .map(|port| {
-                let addr = env
-                    .http_addr
-                    .as_deref()
-                    .unwrap_or("0.0.0.0")
-                    .parse()
-                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
-                vec![SocketAddr::new(addr, port)]
+                let addr = env.http_addr.as_deref().unwrap_or("0.0.0.0").parse()?;
+                Ok(vec![SocketAddr::new(addr, port)])
             })
+            .transpose()?
             .unwrap_or_default();
 
         let ws = env
             .ws_port
             .map(|port| {
-                let addr = env
-                    .ws_addr
-                    .as_deref()
-                    .unwrap_or("0.0.0.0")
-                    .parse()
-                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED.into());
-                vec![SocketAddr::new(addr, port)]
+                let addr = env.ws_addr.as_deref().unwrap_or("0.0.0.0").parse()?;
+                Ok(vec![SocketAddr::new(addr, port)])
             })
+            .transpose()?
             .unwrap_or_default();
 
-        Self {
+        Ok(Self {
             http,
             http_cors: env.http_cors.map(Cow::into_owned),
             ws,
             ws_cors: env.ws_cors.map(Cow::into_owned),
             ipc: env.ipc.map(Cow::into_owned),
-        }
+        })
     }
 }
 

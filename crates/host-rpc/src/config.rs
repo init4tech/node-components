@@ -12,13 +12,17 @@ use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv, provider::P
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use signet_host_rpc::HostRpcConfig;
 /// use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
 ///
-/// let config = HostRpcConfig::from_env();
+/// let config = HostRpcConfig::from_env().unwrap();
 /// let slot_calculator = SlotCalculator::new(0, 1_606_824_023, 12);
 /// let builder = config.into_builder(slot_calculator).await?;
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, FromEnv)]
 pub struct HostRpcConfig {
