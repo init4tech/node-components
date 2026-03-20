@@ -5,6 +5,11 @@ use alloy::{
 };
 use signet_block_processor::{AliasOracle, AliasOracleFactory};
 use std::sync::{Arc, RwLock};
+use tracing::{debug, instrument};
+
+/// EIP-7702 delegation bytecode is exactly 23 bytes: 3-byte designator +
+/// 20-byte address.
+const EIP7702_DELEGATION_LEN: usize = 23;
 
 /// An RPC-backed [`AliasOracle`] and [`AliasOracleFactory`].
 ///
@@ -40,25 +45,41 @@ impl<P> RpcAliasOracle<P> {
     }
 }
 
+/// Classify bytecode: returns `true` if the code belongs to a
+/// non-delegation contract that should be aliased.
+fn should_alias_bytecode(code: &[u8]) -> bool {
+    if code.is_empty() {
+        return false;
+    }
+    // EIP-7702 delegation: exactly 23 bytes starting with the designator.
+    if code.len() == EIP7702_DELEGATION_LEN && code.starts_with(&EIP7702_DELEGATION_DESIGNATOR) {
+        return false;
+    }
+    true
+}
+
 impl<P: Provider + Clone + 'static> AliasOracle for RpcAliasOracle<P> {
+    #[instrument(skip(self), fields(%address))]
     async fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+        // NOTE: `std::sync::RwLock` is safe here because guards are always
+        // dropped before the `.await` point. Do not hold a guard across the
+        // `get_code_at` call — it will deadlock on single-threaded runtimes.
+
         // Check cache first — if we've seen this address as a contract, skip RPC.
         if self.cache.read().expect("cache poisoned").contains(&address) {
+            debug!("cache hit");
             return Ok(true);
         }
 
         let code = self.provider.get_code_at(address).await?;
-        // No code — not a contract.
-        if code.is_empty() {
-            return Ok(false);
+        let alias = should_alias_bytecode(&code);
+        debug!(code_len = code.len(), alias, "resolved");
+
+        if alias {
+            self.cache.write().expect("cache poisoned").insert(address);
         }
-        // EIP-7702 delegation — do not alias.
-        if code.starts_with(&EIP7702_DELEGATION_DESIGNATOR) {
-            return Ok(false);
-        }
-        // Non-delegation contract — cache and alias it.
-        self.cache.write().expect("cache poisoned").insert(address);
-        Ok(true)
+
+        Ok(alias)
     }
 }
 
@@ -67,5 +88,52 @@ impl<P: Provider + Clone + 'static> AliasOracleFactory for RpcAliasOracle<P> {
 
     fn create(&self) -> eyre::Result<Self::Oracle> {
         Ok(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::eips::eip7702::constants::EIP7702_CLEARED_DELEGATION;
+
+    #[test]
+    fn empty_code_is_not_aliased() {
+        assert!(!should_alias_bytecode(&[]));
+    }
+
+    #[test]
+    fn valid_delegation_is_not_aliased() {
+        // 3-byte designator + 20-byte address = 23 bytes
+        let mut delegation = [0u8; 23];
+        delegation[..3].copy_from_slice(&EIP7702_DELEGATION_DESIGNATOR);
+        delegation[3..].copy_from_slice(&[0xAB; 20]);
+        assert!(!should_alias_bytecode(&delegation));
+    }
+
+    #[test]
+    fn cleared_delegation_is_not_aliased() {
+        assert!(!should_alias_bytecode(&EIP7702_CLEARED_DELEGATION));
+    }
+
+    #[test]
+    fn contract_bytecode_is_aliased() {
+        // Typical contract: starts with PUSH, not 0xef
+        assert!(should_alias_bytecode(&[0x60, 0x80, 0x60, 0x40, 0x52]));
+    }
+
+    #[test]
+    fn short_ef_prefix_is_aliased() {
+        // Only 3 bytes starting with the designator — not a valid 23-byte
+        // delegation, so it should be treated as a contract.
+        assert!(should_alias_bytecode(&EIP7702_DELEGATION_DESIGNATOR));
+    }
+
+    #[test]
+    fn long_ef_prefix_is_aliased() {
+        // 24 bytes starting with the designator — too long to be a
+        // delegation, so it should be treated as a contract.
+        let mut long = [0u8; 24];
+        long[..3].copy_from_slice(&EIP7702_DELEGATION_DESIGNATOR);
+        assert!(should_alias_bytecode(&long));
     }
 }
