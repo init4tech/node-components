@@ -14,8 +14,8 @@ use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 use tracing::{debug, info, warn};
 
-/// Seconds per Ethereum slot.
-const SLOT_SECONDS: u64 = 12;
+/// Default seconds per slot (Ethereum mainnet).
+pub(crate) const DEFAULT_SLOT_SECONDS: u64 = 12;
 /// Slots per Ethereum epoch.
 const SLOTS_PER_EPOCH: u64 = 32;
 
@@ -80,6 +80,9 @@ pub struct RpcHostNotifier<P> {
     /// Max blocks per backfill batch.
     backfill_batch_size: u64,
 
+    /// Seconds per slot, used for epoch calculation.
+    slot_seconds: u64,
+
     /// Genesis timestamp, used for epoch calculation.
     genesis_timestamp: u64,
 }
@@ -104,6 +107,7 @@ where
         header_sub: SubscriptionStream<RpcHeader>,
         buffer_capacity: usize,
         backfill_batch_size: u64,
+        slot_seconds: u64,
         genesis_timestamp: u64,
     ) -> Self {
         Self {
@@ -116,6 +120,7 @@ where
             last_tag_epoch: None,
             backfill_from: None,
             backfill_batch_size,
+            slot_seconds,
             genesis_timestamp,
         }
     }
@@ -127,9 +132,17 @@ where
         self.chain_view.back().copied()
     }
 
-    /// Look up a hash in the chain view by block number.
+    /// Look up a hash in the chain view by block number (O(1)).
     fn view_hash(&self, number: u64) -> Option<B256> {
-        self.chain_view.iter().rev().find(|(n, _)| *n == number).map(|(_, h)| *h)
+        let &(front_number, _) = self.chain_view.front()?;
+        let index = number.checked_sub(front_number)? as usize;
+        let &(found_number, hash) = self.chain_view.get(index)?;
+        debug_assert_eq!(
+            found_number, number,
+            "chain_view contiguity invariant violated: expected block {number} at index {index}, \
+             found {found_number}"
+        );
+        Some(hash)
     }
 
     /// Append entries to the chain view, evicting oldest if over capacity.
@@ -153,6 +166,30 @@ where
 
     // ── Block fetching ─────────────────────────────────────────────
 
+    /// Convert an RPC block response and its receipts into an [`RpcBlock`].
+    fn convert_rpc_block(
+        rpc_block: alloy::rpc::types::Block,
+        rpc_receipts: Option<Vec<alloy::rpc::types::TransactionReceipt>>,
+    ) -> RpcBlock {
+        let hash = rpc_block.header.hash;
+        let block = rpc_block
+            .map_transactions(|tx| {
+                let recovered = tx.inner;
+                let signer = recovered.signer();
+                let tx: TransactionSigned = recovered.into_inner().into();
+                Recovered::new_unchecked(tx, signer)
+            })
+            .into_consensus();
+        let sealed_header = Sealed::new_unchecked(block.header, hash);
+        let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
+        let receipts = rpc_receipts
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.inner.into_primitives_receipt())
+            .collect();
+        RpcBlock { block, receipts }
+    }
+
     /// Fetch a single block with receipts, anchored by hash.
     ///
     /// The block and receipt fetches are concurrent via [`tokio::try_join!`].
@@ -169,25 +206,8 @@ where
         )?;
 
         let rpc_block = rpc_block.ok_or(RpcHostError::MissingBlockByHash(hash))?;
-        let rpc_receipts = rpc_receipts.unwrap_or_default();
-
-        let block_hash = rpc_block.header.hash;
-        let block = rpc_block
-            .map_transactions(|tx| {
-                let recovered = tx.inner;
-                let signer = recovered.signer();
-                let tx: TransactionSigned = recovered.into_inner().into();
-                Recovered::new_unchecked(tx, signer)
-            })
-            .into_consensus();
-        let sealed_header = Sealed::new_unchecked(block.header, block_hash);
-        let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
-
-        let receipts =
-            rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
-
         crate::metrics::record_fetch_block_duration(start.elapsed());
-        Ok(RpcBlock { block, receipts })
+        Ok(Self::convert_rpc_block(rpc_block, rpc_receipts))
     }
 
     /// Fetch full blocks+receipts for a list of hashes, concurrently.
@@ -224,25 +244,8 @@ where
         )?;
 
         let rpc_block = rpc_block.ok_or(RpcHostError::MissingBlock(tag))?;
-        let rpc_receipts = rpc_receipts.unwrap_or_default();
-
-        let hash = rpc_block.header.hash;
-        let block = rpc_block
-            .map_transactions(|tx| {
-                let recovered = tx.inner;
-                let signer = recovered.signer();
-                let tx: TransactionSigned = recovered.into_inner().into();
-                Recovered::new_unchecked(tx, signer)
-            })
-            .into_consensus();
-        let sealed_header = Sealed::new_unchecked(block.header, hash);
-        let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
-
-        let receipts =
-            rpc_receipts.into_iter().map(|r| r.inner.into_primitives_receipt()).collect();
-
         crate::metrics::record_fetch_block_duration(start.elapsed());
-        Ok(RpcBlock { block, receipts })
+        Ok(Self::convert_rpc_block(rpc_block, rpc_receipts))
     }
 
     /// Fetch a range of blocks by number concurrently (used for backfill only).
@@ -269,7 +272,7 @@ where
 
     /// Derive the epoch number from a block timestamp.
     const fn epoch_of(&self, timestamp: u64) -> u64 {
-        timestamp.saturating_sub(self.genesis_timestamp) / (SLOT_SECONDS * SLOTS_PER_EPOCH)
+        timestamp.saturating_sub(self.genesis_timestamp) / (self.slot_seconds * SLOTS_PER_EPOCH)
     }
 
     /// Refresh safe/finalized block numbers if an epoch boundary was crossed.
@@ -281,16 +284,12 @@ where
             return Ok(());
         }
 
-        let safe = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Safe)
-            .await?
-            .map(|b| b.header().number());
-        let finalized = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Finalized)
-            .await?
-            .map(|b| b.header().number());
+        let (safe, finalized) = tokio::try_join!(
+            self.provider.get_block_by_number(BlockNumberOrTag::Safe),
+            self.provider.get_block_by_number(BlockNumberOrTag::Finalized),
+        )?;
+        let safe = safe.map(|b| b.header().number());
+        let finalized = finalized.map(|b| b.header().number());
 
         self.cached_safe = safe;
         self.cached_finalized = finalized;
@@ -421,8 +420,9 @@ where
                     .get_block_by_number(BlockNumberOrTag::Latest)
                     .await?
                     .ok_or(RpcHostError::MissingBlock(BlockNumberOrTag::Latest))?;
-                let latest_hash = latest.header.hash;
-                self.walk_chain(latest_hash).await?
+                self.walk_chain(latest.header.hash).await.inspect_err(|_| {
+                    crate::metrics::inc_rpc_errors();
+                })?
             }
             Err(e) => {
                 crate::metrics::inc_rpc_errors();
@@ -437,12 +437,13 @@ where
                 return Ok(None);
             }
             WalkResult::Exhausted => {
+                let finalized = self.cached_finalized.ok_or(RpcHostError::NoFinalizedBlock)?;
                 warn!(
                     buffer_capacity = self.buffer_capacity,
-                    "walk exhausted buffer, resetting to backfill"
+                    finalized, "walk exhausted buffer, resetting to backfill from finalized"
                 );
                 self.chain_view.clear();
-                self.backfill_from = Some(self.cached_finalized.unwrap_or(0));
+                self.backfill_from = Some(finalized);
                 self.last_tag_epoch = None;
                 crate::metrics::record_handle_new_head_duration(start.elapsed());
                 return Ok(None);

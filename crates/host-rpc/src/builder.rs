@@ -19,6 +19,7 @@ pub struct RpcHostNotifierBuilder<P> {
     provider: P,
     buffer_capacity: usize,
     backfill_batch_size: u64,
+    slot_seconds: u64,
     genesis_timestamp: u64,
 }
 
@@ -32,6 +33,7 @@ where
             provider,
             buffer_capacity: crate::DEFAULT_BUFFER_CAPACITY,
             backfill_batch_size: crate::DEFAULT_BACKFILL_BATCH_SIZE,
+            slot_seconds: crate::notifier::DEFAULT_SLOT_SECONDS,
             genesis_timestamp: 0,
         }
     }
@@ -45,6 +47,12 @@ where
     /// Set the backfill batch size (default: 32).
     pub const fn with_backfill_batch_size(mut self, batch_size: u64) -> Self {
         self.backfill_batch_size = batch_size;
+        self
+    }
+
+    /// Set the slot duration in seconds (default: 12).
+    pub const fn with_slot_seconds(mut self, slot_seconds: u64) -> Self {
+        self.slot_seconds = slot_seconds;
         self
     }
 
@@ -67,6 +75,7 @@ where
             header_sub,
             self.buffer_capacity,
             self.backfill_batch_size,
+            self.slot_seconds,
             self.genesis_timestamp,
         ))
     }

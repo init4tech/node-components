@@ -18,4 +18,9 @@ pub enum RpcHostError {
     /// The RPC node returned no block for the requested number or tag.
     #[error("missing block {0}")]
     MissingBlock(BlockNumberOrTag),
+
+    /// Walk exhaustion recovery requires a cached finalized block number,
+    /// but none has been fetched yet.
+    #[error("no cached finalized block number for exhaustion recovery")]
+    NoFinalizedBlock,
 }
