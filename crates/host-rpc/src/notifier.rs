@@ -492,48 +492,78 @@ where
     ///
     /// Backfills by number up to `(latest - buffer_capacity)` to leave room
     /// for hash-based frontfill of recent blocks.
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(
+        level = "info",
+        skip_all,
+        fields(
+            from = tracing::field::Empty,
+            to = tracing::field::Empty,
+            batch_size = tracing::field::Empty,
+        )
+    )]
     async fn drain_backfill(
         &mut self,
     ) -> Option<Result<HostNotification<RpcChainSegment>, RpcHostError>> {
         let from = self.backfill_from?;
+        let start = Instant::now();
+
+        let span = tracing::Span::current();
+        span.record("from", from);
+        span.record("batch_size", self.backfill_batch_size);
+
         let tip = match self.provider.get_block_number().await {
             Ok(n) => n,
-            Err(e) => return Some(Err(e.into())),
+            Err(e) => {
+                crate::metrics::inc_rpc_errors();
+                return Some(Err(e.into()));
+            }
         };
 
-        // Stop backfill before the live zone.
         let backfill_ceiling = tip.saturating_sub(self.buffer_capacity as u64);
         if from > backfill_ceiling {
-            // Backfill complete — switch to hash-based frontfill.
             self.backfill_from = None;
+            info!("backfill complete, switching to frontfill");
             return None;
         }
 
         let to = backfill_ceiling.min(from + self.backfill_batch_size - 1);
+        span.record("to", to);
 
         let blocks = match self.fetch_range(from, to).await {
             Ok(b) => b,
             Err(e) => return Some(Err(e)),
         };
 
-        // Add to chain view.
         let view_entries: Vec<(u64, B256)> =
             blocks.iter().map(|b| (b.number(), b.hash())).collect();
         self.extend_view(&view_entries);
 
-        // Advance or clear backfill.
-        if to >= backfill_ceiling {
+        let backfill_done = to >= backfill_ceiling;
+        if backfill_done {
             self.backfill_from = None;
         } else {
             self.backfill_from = Some(to + 1);
         }
 
-        // Refresh tags using the last block's timestamp.
         if let Some(last) = blocks.last()
             && let Err(e) = self.maybe_refresh_tags(last.block.timestamp()).await
         {
             return Some(Err(e));
+        }
+
+        // Metrics.
+        let count = blocks.len() as u64;
+        crate::metrics::inc_blocks_fetched(count, "backfill");
+        crate::metrics::record_backfill_batch(start.elapsed());
+        if let Some((tip_num, _)) = self.tip() {
+            crate::metrics::set_tip(tip_num);
+        }
+        crate::metrics::set_chain_view_len(self.chain_view.len());
+
+        if backfill_done {
+            info!("backfill complete, switching to frontfill");
+        } else {
+            debug!(blocks_fetched = count, next_from = to + 1, "backfill batch complete");
         }
 
         let segment = Arc::new(RpcChainSegment::new(blocks));
