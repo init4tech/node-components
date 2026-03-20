@@ -27,7 +27,7 @@ mod signet;
 pub use signet::error::SignetError;
 
 pub mod serve;
-pub use serve::{RpcServerGuard, ServeConfig, ServeError};
+pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
 /// Instantiate a combined router with `eth`, `debug`, and `signet`
 /// namespaces.
