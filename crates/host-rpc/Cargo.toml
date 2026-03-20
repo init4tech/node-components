@@ -1,0 +1,22 @@
+[package]
+name = "signet-host-rpc"
+description = "RPC-based implementation of the HostNotifier trait for signet-node."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+signet-node-types.workspace = true
+signet-extract.workspace = true
+signet-types.workspace = true
+
+alloy.workspace = true
+futures-util.workspace = true
+metrics.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
