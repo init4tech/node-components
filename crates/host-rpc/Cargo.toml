@@ -15,6 +15,7 @@ signet-extract.workspace = true
 signet-types.workspace = true
 
 alloy.workspace = true
+init4-bin-base.workspace = true
 futures-util.workspace = true
 metrics.workspace = true
 thiserror.workspace = true

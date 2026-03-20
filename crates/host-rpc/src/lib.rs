@@ -19,6 +19,9 @@ pub(crate) const DEFAULT_BACKFILL_BATCH_SIZE: u64 = 32;
 mod builder;
 pub use builder::RpcHostNotifierBuilder;
 
+mod config;
+pub use config::HostRpcConfig;
+
 mod error;
 pub use error::RpcHostError;
 
