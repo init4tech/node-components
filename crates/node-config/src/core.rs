@@ -1,23 +1,11 @@
 use crate::StorageConfig;
 use alloy::genesis::Genesis;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
-use reth::primitives::NodePrimitives;
-use reth::providers::providers::StaticFileProvider;
-use reth_chainspec::ChainSpec;
 use signet_blobber::BlobFetcherConfig;
 use signet_genesis::GenesisSpec;
 use signet_types::constants::{ConfigError, SignetSystemConstants};
-use std::{
-    borrow::Cow,
-    fmt::Display,
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
+use std::{borrow::Cow, fmt::Display, sync::OnceLock};
 use tracing::warn;
-use trevm::revm::primitives::hardfork::SpecId;
-
-/// Defines the default port for serving Signet Node JSON RPC requests over http.
-pub const SIGNET_NODE_DEFAULT_HTTP_PORT: u16 = 5959u16;
 
 /// Configuration for a Signet Node instance. Contains system contract and signer
 /// information.
@@ -28,9 +16,6 @@ pub struct SignetNodeConfig {
     #[from_env(infallible)]
     block_extractor: BlobFetcherConfig,
 
-    /// Path to the static files for reth StaticFileProviders.
-    #[from_env(var = "SIGNET_STATIC_PATH", desc = "Path to the static files", infallible)]
-    static_path: Cow<'static, str>,
     /// Unified storage configuration (hot + cold MDBX paths).
     #[from_env(infallible)]
     storage: StorageConfig,
@@ -42,20 +27,6 @@ pub struct SignetNodeConfig {
         optional
     )]
     forward_url: Option<Cow<'static, str>>,
-    /// RPC port to serve JSON-RPC requests
-    #[from_env(var = "RPC_PORT", desc = "RPC port to serve JSON-RPC requests", optional)]
-    http_port: Option<u16>,
-    /// Websocket port to serve JSON-RPC requests
-    #[from_env(var = "WS_RPC_PORT", desc = "Websocket port to serve JSON-RPC requests", optional)]
-    ws_port: Option<u16>,
-    /// IPC endpoint to serve JSON-RPC requests
-    #[from_env(
-        var = "IPC_ENDPOINT",
-        desc = "IPC endpoint to serve JSON-RPC requests",
-        infallible,
-        optional
-    )]
-    ipc_endpoint: Option<Cow<'static, str>>,
 
     /// Configuration loaded from genesis file, or known genesis.
     genesis: GenesisSpec,
@@ -82,29 +53,20 @@ impl Display for SignetNodeConfig {
 
 impl SignetNodeConfig {
     /// Create a new Signet Node configuration.
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         block_extractor: BlobFetcherConfig,
-        static_path: Cow<'static, str>,
         storage: StorageConfig,
         forward_url: Option<Cow<'static, str>>,
-        rpc_port: u16,
-        ws_port: u16,
-        ipc_endpoint: Option<Cow<'static, str>>,
         genesis: GenesisSpec,
         slot_calculator: SlotCalculator,
     ) -> Self {
         Self {
             block_extractor,
-            static_path,
             storage,
             forward_url,
-            http_port: Some(rpc_port),
-            ws_port: Some(ws_port),
-            ipc_endpoint,
             genesis,
             slot_calculator,
-            backfill_max_blocks: None, // Uses default of 10,000 via accessor
+            backfill_max_blocks: None,
         }
     }
 
@@ -133,26 +95,6 @@ impl SignetNodeConfig {
         self.slot_calculator
     }
 
-    /// Get the static path as a str.
-    pub fn static_path_str(&self) -> &str {
-        &self.static_path
-    }
-
-    /// Get the static path.
-    pub fn static_path(&self) -> PathBuf {
-        self.static_path.as_ref().to_owned().into()
-    }
-
-    /// Get the static file provider for read-only access.
-    pub fn static_file_ro<N: NodePrimitives>(&self) -> eyre::Result<StaticFileProvider<N>> {
-        StaticFileProvider::read_only(self.static_path(), true).map_err(Into::into)
-    }
-
-    /// Get the static file provider for read-write access.
-    pub fn static_file_rw<N: NodePrimitives>(&self) -> eyre::Result<StaticFileProvider<N>> {
-        StaticFileProvider::read_write(self.static_path()).map_err(Into::into)
-    }
-
     /// Get the storage configuration.
     pub const fn storage(&self) -> &StorageConfig {
         &self.storage
@@ -167,63 +109,15 @@ impl SignetNodeConfig {
             .ok()
     }
 
-    /// Returns the port for serving JSON RPC requests for Signet Node.
-    pub const fn http_port(&self) -> u16 {
-        if let Some(port) = self.http_port {
-            return port;
-        }
-        SIGNET_NODE_DEFAULT_HTTP_PORT
-    }
-
-    /// Set the HTTP port for serving JSON RPC requests for Signet Node.
-    pub const fn set_http_port(&mut self, port: u16) {
-        self.http_port = Some(port);
-    }
-
-    /// Returns the port for serving Websocket RPC requests for Signet Node.
-    pub const fn ws_port(&self) -> u16 {
-        if let Some(port) = self.ws_port {
-            return port;
-        }
-        SIGNET_NODE_DEFAULT_HTTP_PORT + 1
-    }
-
-    /// Set the websocket port for serving JSON RPC requests for Signet.
-    pub const fn set_ws_port(&mut self, port: u16) {
-        self.ws_port = Some(port);
-    }
-
-    /// Returns the IPC endpoint for serving JSON RPC requests for Signet, if any.
-    pub fn ipc_endpoint(&self) -> Option<&str> {
-        self.ipc_endpoint.as_deref()
-    }
-
-    /// Set the IPC endpoint for serving JSON RPC requests for Signet Node.
-    pub fn set_ipc_endpoint(&mut self, endpoint: Cow<'static, str>) {
-        self.ipc_endpoint = Some(endpoint);
-    }
-
     /// Returns the rollup genesis configuration if any has been loaded.
     pub fn genesis(&self) -> &'static Genesis {
         static ONCE: OnceLock<Cow<'static, Genesis>> = OnceLock::new();
         ONCE.get_or_init(|| self.genesis.load_genesis().expect("Failed to load genesis").rollup)
     }
 
-    /// Create a new chain spec for the Signet Node chain.
-    pub fn chain_spec(&self) -> &Arc<ChainSpec> {
-        static SPEC: OnceLock<Arc<ChainSpec>> = OnceLock::new();
-        SPEC.get_or_init(|| Arc::new(self.genesis().clone().into()))
-    }
-
     /// Get the system constants for the Signet Node chain.
     pub fn constants(&self) -> Result<SignetSystemConstants, ConfigError> {
         SignetSystemConstants::try_from_genesis(self.genesis())
-    }
-
-    /// Get the current spec id for the Signet Node chain.
-    pub fn spec_id(&self, block: u64, timestamp: u64) -> SpecId {
-        signet_evm::EthereumHardfork::active_hardforks(&self.genesis().config, block, timestamp)
-            .spec_id()
     }
 
     /// Get the maximum number of blocks to process per backfill batch.
@@ -244,15 +138,11 @@ mod defaults {
         fn default() -> Self {
             Self {
                 block_extractor: BlobFetcherConfig::new(Cow::Borrowed("")),
-                static_path: Cow::Borrowed(""),
                 storage: StorageConfig::new(Cow::Borrowed(""), Cow::Borrowed("")),
                 forward_url: None,
-                http_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT),
-                ws_port: Some(SIGNET_NODE_DEFAULT_HTTP_PORT + 1),
-                ipc_endpoint: None,
                 genesis: GenesisSpec::Known(KnownChains::Test),
                 slot_calculator: SlotCalculator::new(0, 0, 12),
-                backfill_max_blocks: None, // Uses default of 10,000 via accessor
+                backfill_max_blocks: None,
             }
         }
     }

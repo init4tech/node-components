@@ -10,14 +10,11 @@ repository.workspace = true
 
 [dependencies]
 signet-blobber.workspace = true
-signet-evm.workspace = true
 signet-storage.workspace = true
 signet-types.workspace = true
 
 init4-bin-base.workspace = true
 
-reth.workspace = true
-reth-chainspec.workspace = true
 alloy.workspace = true
 
 eyre.workspace = true
@@ -25,12 +22,10 @@ reqwest.workspace = true
 serde.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-trevm.workspace = true
 signet-genesis.workspace = true
 
-tempfile = { workspace = true, optional = true }
 
 [features]
-test_utils = ["dep:tempfile"]
+test_utils = []
 postgres = ["signet-storage/postgres"]
 sqlite = ["signet-storage/sqlite"]

@@ -12,7 +12,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod core;
-pub use core::{SIGNET_NODE_DEFAULT_HTTP_PORT, SignetNodeConfig};
+pub use core::SignetNodeConfig;
 
 // NB: RPC config merging (previously `merge_rpc_configs`) is now the
 // responsibility of the host adapter crate (e.g. `signet-host-reth`).

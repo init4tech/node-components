@@ -12,7 +12,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub(crate) mod config;
-pub use config::{BlockTags, ChainNotifier, StorageRpcConfig, StorageRpcCtx, SyncStatus};
+pub use config::{
+    BlockTags, ChainNotifier, StorageRpcConfig, StorageRpcConfigEnv, StorageRpcCtx, SyncStatus,
+};
 
 mod eth;
 pub use eth::EthError;
@@ -27,7 +29,7 @@ mod signet;
 pub use signet::error::SignetError;
 
 pub mod serve;
-pub use serve::{RpcServerGuard, ServeConfig, ServeError};
+pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
 /// Instantiate a combined router with `eth`, `debug`, and `signet`
 /// namespaces.

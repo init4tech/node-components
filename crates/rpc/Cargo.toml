@@ -19,6 +19,7 @@ trevm = { workspace = true, features = ["call", "estimate_gas"] }
 signet-types.workspace = true
 signet-tx-cache.workspace = true
 signet-bundle.workspace = true
+init4-bin-base.workspace = true
 alloy.workspace = true
 ajj.workspace = true
 tokio.workspace = true

@@ -7,7 +7,7 @@
 mod chain_notifier;
 pub use chain_notifier::ChainNotifier;
 mod rpc_config;
-pub use rpc_config::StorageRpcConfig;
+pub use rpc_config::{StorageRpcConfig, StorageRpcConfigEnv};
 
 mod ctx;
 pub(crate) use ctx::EvmBlockContext;

@@ -10,8 +10,13 @@ use ajj::{
     pubsub::{Connect, ServerShutdown},
 };
 use axum::http::HeaderValue;
+use init4_bin_base::utils::from_env::FromEnv;
 use interprocess::local_socket as ls;
-use std::{future::IntoFuture, net::SocketAddr};
+use std::{
+    borrow::Cow,
+    future::IntoFuture,
+    net::{AddrParseError, SocketAddr},
+};
 use tokio::{runtime::Handle, task::JoinHandle};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::error;
@@ -138,6 +143,120 @@ impl ServeConfig {
     ) -> Result<Option<ServerShutdown>, ServeError> {
         let Some(endpoint) = &self.ipc else { return Ok(None) };
         serve_ipc(handle, router, endpoint).await.map(Some)
+    }
+}
+
+/// Environment-based configuration for the RPC transport layer.
+///
+/// Loads bind addresses and CORS settings from environment variables.
+/// All fields are optional — omitting HTTP/WS fields disables that
+/// transport.
+///
+/// # Environment Variables
+///
+/// - `SIGNET_HTTP_ADDR` – HTTP bind address (default: `0.0.0.0`)
+/// - `SIGNET_HTTP_PORT` – HTTP port (enables HTTP transport)
+/// - `SIGNET_HTTP_CORS` – CORS origins for HTTP
+/// - `SIGNET_WS_ADDR` – WebSocket bind address (default: `0.0.0.0`)
+/// - `SIGNET_WS_PORT` – WebSocket port (enables WS transport)
+/// - `SIGNET_WS_CORS` – CORS origins for WebSocket
+/// - `SIGNET_IPC_ENDPOINT` – IPC socket path (enables IPC transport)
+///
+/// # Example
+///
+/// ```no_run
+/// use signet_rpc::{ServeConfig, ServeConfigEnv};
+/// use init4_bin_base::utils::from_env::FromEnv;
+///
+/// let config: ServeConfig = ServeConfigEnv::from_env().unwrap().try_into().unwrap();
+/// ```
+#[derive(Debug, Clone, FromEnv)]
+pub struct ServeConfigEnv {
+    /// HTTP bind address.
+    #[from_env(
+        var = "SIGNET_HTTP_ADDR",
+        desc = "HTTP bind address [default: 0.0.0.0]",
+        infallible,
+        optional
+    )]
+    http_addr: Option<Cow<'static, str>>,
+    /// HTTP port. Setting this enables the HTTP transport.
+    #[from_env(
+        var = "SIGNET_HTTP_PORT",
+        desc = "HTTP port; unset to disable HTTP transport [default: disabled]",
+        optional
+    )]
+    http_port: Option<u16>,
+    /// CORS origins for HTTP.
+    #[from_env(
+        var = "SIGNET_HTTP_CORS",
+        desc = "CORS origins for HTTP [default: unset]",
+        infallible,
+        optional
+    )]
+    http_cors: Option<Cow<'static, str>>,
+    /// WebSocket bind address.
+    #[from_env(
+        var = "SIGNET_WS_ADDR",
+        desc = "WebSocket bind address [default: 0.0.0.0]",
+        infallible,
+        optional
+    )]
+    ws_addr: Option<Cow<'static, str>>,
+    /// WebSocket port. Setting this enables the WS transport.
+    #[from_env(
+        var = "SIGNET_WS_PORT",
+        desc = "WebSocket port; unset to disable WS transport [default: disabled]",
+        optional
+    )]
+    ws_port: Option<u16>,
+    /// CORS origins for WebSocket.
+    #[from_env(
+        var = "SIGNET_WS_CORS",
+        desc = "CORS origins for WebSocket [default: unset]",
+        infallible,
+        optional
+    )]
+    ws_cors: Option<Cow<'static, str>>,
+    /// IPC endpoint path. Setting this enables IPC transport.
+    #[from_env(
+        var = "SIGNET_IPC_ENDPOINT",
+        desc = "IPC socket path; unset to disable IPC transport [default: disabled]",
+        infallible,
+        optional
+    )]
+    ipc: Option<Cow<'static, str>>,
+}
+
+impl TryFrom<ServeConfigEnv> for ServeConfig {
+    type Error = AddrParseError;
+
+    fn try_from(env: ServeConfigEnv) -> Result<Self, Self::Error> {
+        let http = env
+            .http_port
+            .map(|port| {
+                let addr = env.http_addr.as_deref().unwrap_or("0.0.0.0").parse()?;
+                Ok(vec![SocketAddr::new(addr, port)])
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let ws = env
+            .ws_port
+            .map(|port| {
+                let addr = env.ws_addr.as_deref().unwrap_or("0.0.0.0").parse()?;
+                Ok(vec![SocketAddr::new(addr, port)])
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Self {
+            http,
+            http_cors: env.http_cors.map(Cow::into_owned),
+            ws,
+            ws_cors: env.ws_cors.map(Cow::into_owned),
+            ipc: env.ipc.map(Cow::into_owned),
+        })
     }
 }
 
