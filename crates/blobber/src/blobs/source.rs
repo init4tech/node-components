@@ -3,10 +3,10 @@ use alloy::primitives::{B256, TxHash};
 use std::{future::Future, pin::Pin};
 
 /// Boxed error type for blob source operations.
-type BlobSourceError = Box<dyn core::error::Error + Send + Sync>;
+pub(crate) type BlobSourceError = Box<dyn core::error::Error + Send + Sync>;
 
 /// Boxed future returned by [`AsyncBlobSource::get_blob`].
-type BlobFuture<'a> =
+pub(crate) type BlobFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<Blobs>, BlobSourceError>> + Send + 'a>>;
 
 /// All known context for a blob lookup.

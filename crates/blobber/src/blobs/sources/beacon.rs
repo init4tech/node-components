@@ -1,11 +1,10 @@
-use crate::{AsyncBlobSource, BlobSpec, Blobs};
+use crate::{
+    AsyncBlobSource, BlobSpec, Blobs,
+    blobs::source::{BlobFuture, BlobSourceError},
+};
 use alloy::rpc::types::beacon::sidecar::GetBlobsResponse;
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 use tracing::instrument;
-
-type BlobSourceError = Box<dyn core::error::Error + Send + Sync>;
-type BlobFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<Blobs>, BlobSourceError>> + Send + 'a>>;
 
 /// Fetches blobs from a beacon-chain consensus-layer node.
 ///
@@ -53,8 +52,14 @@ async fn fetch_from_cl(
     let hashes = versioned_hashes.iter().map(|h| h.to_string()).collect::<Vec<_>>().join(",");
     url.query_pairs_mut().append_pair("versioned_hashes", &hashes);
 
-    let response = client.get(url).header("accept", "application/json").send().await?;
-    let response: GetBlobsResponse = response.json().await?;
+    let response: GetBlobsResponse = client
+        .get(url)
+        .header("accept", "application/json")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
 
     Ok(Arc::new(response.data).into())
 }

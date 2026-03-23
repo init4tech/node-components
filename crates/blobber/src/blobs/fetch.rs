@@ -12,8 +12,8 @@ use tracing::instrument;
 /// The contents are arc-wrapped to allow for cheap cloning.
 #[derive(Hash, Debug, Clone, PartialEq, Eq)]
 pub enum Blobs {
-    /// Local pooled transaction sidecar
-    FromPool(Arc<BlobTransactionSidecarVariant>),
+    /// Transaction sidecar from a blob source.
+    FromSidecar(Arc<BlobTransactionSidecarVariant>),
     /// Some other blob source.
     Other(Arc<Vec<Blob>>),
 }
@@ -32,32 +32,32 @@ impl From<Arc<Vec<Blob>>> for Blobs {
 
 impl From<BlobTransactionSidecarVariant> for Blobs {
     fn from(sidecar: BlobTransactionSidecarVariant) -> Self {
-        Self::FromPool(Arc::new(sidecar))
+        Self::FromSidecar(Arc::new(sidecar))
     }
 }
 
 impl From<Arc<BlobTransactionSidecarVariant>> for Blobs {
     fn from(sidecar: Arc<BlobTransactionSidecarVariant>) -> Self {
-        Self::FromPool(sidecar)
+        Self::FromSidecar(sidecar)
     }
 }
 
 impl From<BlobTransactionSidecar> for Blobs {
     fn from(sidecar: BlobTransactionSidecar) -> Self {
-        Self::FromPool(Arc::new(BlobTransactionSidecarVariant::Eip4844(sidecar)))
+        Self::FromSidecar(Arc::new(BlobTransactionSidecarVariant::Eip4844(sidecar)))
     }
 }
 
 impl From<BlobTransactionSidecarEip7594> for Blobs {
     fn from(sidecar: BlobTransactionSidecarEip7594) -> Self {
-        Self::FromPool(Arc::new(BlobTransactionSidecarVariant::Eip7594(sidecar)))
+        Self::FromSidecar(Arc::new(BlobTransactionSidecarVariant::Eip7594(sidecar)))
     }
 }
 
 impl AsRef<Vec<Blob>> for Blobs {
     fn as_ref(&self) -> &Vec<Blob> {
         match self {
-            Blobs::FromPool(variant) => match variant.deref() {
+            Blobs::FromSidecar(variant) => match variant.deref() {
                 BlobTransactionSidecarVariant::Eip4844(sidecar) => &sidecar.blobs,
                 BlobTransactionSidecarVariant::Eip7594(sidecar) => &sidecar.blobs,
             },

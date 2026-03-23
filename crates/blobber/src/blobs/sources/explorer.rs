@@ -1,9 +1,4 @@
-use crate::{AsyncBlobSource, BlobSpec, Blobs};
-use std::{future::Future, pin::Pin};
-
-type BlobSourceError = Box<dyn core::error::Error + Send + Sync>;
-type BlobFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<Blobs>, BlobSourceError>> + Send + 'a>>;
+use crate::{AsyncBlobSource, BlobSpec, Blobs, blobs::source::BlobFuture};
 
 /// Fetches blobs from a blob explorer (e.g. Blobscan) by transaction hash.
 ///

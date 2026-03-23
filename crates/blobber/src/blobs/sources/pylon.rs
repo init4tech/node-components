@@ -1,11 +1,10 @@
-use crate::{AsyncBlobSource, BlobSpec, Blobs};
+use crate::{
+    AsyncBlobSource, BlobSpec, Blobs,
+    blobs::source::{BlobFuture, BlobSourceError},
+};
 use alloy::eips::eip7594::BlobTransactionSidecarVariant;
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 use tracing::instrument;
-
-type BlobSourceError = Box<dyn core::error::Error + Send + Sync>;
-type BlobFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<Blobs>, BlobSourceError>> + Send + 'a>>;
 
 /// Fetches blobs from a Pylon blob indexer by transaction hash.
 ///
@@ -43,8 +42,14 @@ async fn fetch_from_pylon(
 ) -> Result<Blobs, BlobSourceError> {
     let url = base_url.join(&format!("sidecar/{tx_hash}"))?;
 
-    let response = client.get(url).header("accept", "application/json").send().await?;
-    let sidecar: Arc<BlobTransactionSidecarVariant> = response.json().await?;
+    let sidecar: Arc<BlobTransactionSidecarVariant> = client
+        .get(url)
+        .header("accept", "application/json")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
 
     Ok(sidecar.into())
 }

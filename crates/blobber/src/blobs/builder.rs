@@ -5,14 +5,11 @@ use crate::{
 
 /// Errors that can occur while building the [`BlobFetcher`] with a
 /// [`BlobFetcherBuilder`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum BuilderError {
     /// The URL provided was invalid.
     #[error("invalid URL provided")]
     Url(#[from] url::ParseError),
-    /// The client failed to build.
-    #[error("failed to build client: {0}")]
-    Client(#[from] reqwest::Error),
 }
 
 /// Builder for the [`BlobFetcher`].
