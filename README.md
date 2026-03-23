@@ -37,8 +37,10 @@ See the [Signet docs] for more info.
   Signet's Pylon, and the local node transaction API.
 - **signet-rpc** — An Ethereum JSON-RPC Server for Signet nodes. Makes heavy
   use of reth internals.
-- **signet-db** — An extension of reth's database, providing a Signet-specific
-  database schema and utilities for working with Signet blocks and transactions.
+- **signet-host-reth** — Reth ExEx implementation of the `HostNotifier` trait
+  for signet-node.
+- **signet-host-rpc** — RPC-based implementation of the `HostNotifier` trait
+  for signet-node.
 
 ## Contributing
 
