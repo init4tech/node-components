@@ -27,10 +27,6 @@ signet-types.workspace = true
 signet-zenith.workspace = true
 
 alloy.workspace = true
-
-reth.workspace = true
-reth-exex-test-utils.workspace = true
-
 eyre.workspace = true
 reqwest.workspace = true
 tokio.workspace = true

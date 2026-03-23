@@ -1,13 +1,22 @@
 //! Shim and utilities for signet-sdk to reth conversions.
 
-use alloy::consensus::Block;
+use alloy::{
+    consensus::{Block, BlockHeader},
+    eips::{BlockNumHash, eip1559::BaseFeeParams, eip7840::BlobParams},
+    primitives::{Address, B64, B256, BlockNumber, Bloom, Bytes, U256},
+};
+use reth::primitives::RecoveredBlock;
 use signet_extract::HasTxns;
 use signet_types::primitives::TransactionSigned;
 
 /// A type alias for Reth's recovered block with a signed transaction.
-type RethRecovered = reth::primitives::RecoveredBlock<Block<TransactionSigned>>;
+type RethRecovered = RecoveredBlock<Block<TransactionSigned>>;
 
-/// A shim for Reth's [`reth::primitives::RecoveredBlock`].
+/// A shim for Reth's [`RecoveredBlock`].
+///
+/// This transparent wrapper forwards [`BlockHeader`] and [`HasTxns`]
+/// implementations to the inner reth block, bridging the reth and signet type
+/// systems.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct RecoveredBlockShim {
@@ -29,16 +38,16 @@ impl HasTxns for RecoveredBlockShim {
     }
 }
 
-impl alloy::consensus::BlockHeader for RecoveredBlockShim {
-    fn parent_hash(&self) -> alloy::primitives::B256 {
+impl BlockHeader for RecoveredBlockShim {
+    fn parent_hash(&self) -> B256 {
         self.block.parent_hash()
     }
 
-    fn ommers_hash(&self) -> alloy::primitives::B256 {
+    fn ommers_hash(&self) -> B256 {
         self.block.ommers_hash()
     }
 
-    fn beneficiary(&self) -> alloy::primitives::Address {
+    fn beneficiary(&self) -> Address {
         self.block.beneficiary()
     }
 
@@ -46,7 +55,7 @@ impl alloy::consensus::BlockHeader for RecoveredBlockShim {
         self.block.base_fee_per_gas()
     }
 
-    fn blob_fee(&self, blob_params: alloy::eips::eip7840::BlobParams) -> Option<u128> {
+    fn blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
         self.block.blob_fee(blob_params)
     }
 
@@ -54,7 +63,7 @@ impl alloy::consensus::BlockHeader for RecoveredBlockShim {
         self.block.blob_gas_used()
     }
 
-    fn difficulty(&self) -> alloy::primitives::U256 {
+    fn difficulty(&self) -> U256 {
         self.block.difficulty()
     }
 
@@ -66,11 +75,11 @@ impl alloy::consensus::BlockHeader for RecoveredBlockShim {
         self.block.excess_blob_gas()
     }
 
-    fn extra_data(&self) -> &alloy::primitives::Bytes {
+    fn extra_data(&self) -> &Bytes {
         self.block.extra_data()
     }
 
-    fn parent_beacon_block_root(&self) -> Option<alloy::primitives::B256> {
+    fn parent_beacon_block_root(&self) -> Option<B256> {
         self.block.parent_beacon_block_root()
     }
 
@@ -94,64 +103,55 @@ impl alloy::consensus::BlockHeader for RecoveredBlockShim {
         self.block.is_zero_difficulty()
     }
 
-    fn logs_bloom(&self) -> alloy::primitives::Bloom {
+    fn logs_bloom(&self) -> Bloom {
         self.block.logs_bloom()
     }
 
-    fn maybe_next_block_blob_fee(
-        &self,
-        blob_params: Option<alloy::eips::eip7840::BlobParams>,
-    ) -> Option<u128> {
+    fn maybe_next_block_blob_fee(&self, blob_params: Option<BlobParams>) -> Option<u128> {
         self.block.maybe_next_block_blob_fee(blob_params)
     }
 
-    fn maybe_next_block_excess_blob_gas(
-        &self,
-        blob_params: Option<alloy::eips::eip7840::BlobParams>,
-    ) -> Option<u64> {
+    fn maybe_next_block_excess_blob_gas(&self, blob_params: Option<BlobParams>) -> Option<u64> {
         self.block.maybe_next_block_excess_blob_gas(blob_params)
     }
 
-    fn mix_hash(&self) -> Option<alloy::primitives::B256> {
+    fn mix_hash(&self) -> Option<B256> {
         self.block.mix_hash()
     }
 
-    fn next_block_base_fee(&self, base_fee_params: reth_chainspec::BaseFeeParams) -> Option<u64> {
+    fn next_block_base_fee(&self, base_fee_params: BaseFeeParams) -> Option<u64> {
         self.block.next_block_base_fee(base_fee_params)
     }
 
-    fn next_block_blob_fee(&self, blob_params: alloy::eips::eip7840::BlobParams) -> Option<u128> {
+    fn next_block_blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
         self.block.next_block_blob_fee(blob_params)
     }
 
-    fn next_block_excess_blob_gas(
-        &self,
-        blob_params: alloy::eips::eip7840::BlobParams,
-    ) -> Option<u64> {
+    fn next_block_excess_blob_gas(&self, blob_params: BlobParams) -> Option<u64> {
         self.block.next_block_excess_blob_gas(blob_params)
     }
 
-    fn nonce(&self) -> Option<alloy::primitives::B64> {
+    fn nonce(&self) -> Option<B64> {
         self.block.nonce()
     }
 
-    fn number(&self) -> alloy::primitives::BlockNumber {
+    fn number(&self) -> BlockNumber {
         self.block.number()
     }
 
-    fn parent_num_hash(&self) -> alloy::eips::BlockNumHash {
+    fn parent_num_hash(&self) -> BlockNumHash {
         self.block.parent_num_hash()
     }
 
-    fn receipts_root(&self) -> alloy::primitives::B256 {
+    fn receipts_root(&self) -> B256 {
         self.block.receipts_root()
     }
 
-    fn requests_hash(&self) -> Option<alloy::primitives::B256> {
+    fn requests_hash(&self) -> Option<B256> {
         self.block.requests_hash()
     }
 
-    fn state_root(&self) -> alloy::primitives::B256 {
+    fn state_root(&self) -> B256 {
         self.block.state_root()
     }
 
@@ -159,11 +159,11 @@ impl alloy::consensus::BlockHeader for RecoveredBlockShim {
         self.block.timestamp()
     }
 
-    fn transactions_root(&self) -> alloy::primitives::B256 {
+    fn transactions_root(&self) -> B256 {
         self.block.transactions_root()
     }
 
-    fn withdrawals_root(&self) -> Option<alloy::primitives::B256> {
+    fn withdrawals_root(&self) -> Option<B256> {
         self.block.withdrawals_root()
     }
 }

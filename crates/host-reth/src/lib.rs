@@ -14,6 +14,9 @@
 mod alias;
 pub use alias::{RethAliasOracle, RethAliasOracleFactory};
 
+mod blob_source;
+pub use blob_source::RethBlobSource;
+
 mod error;
 pub use error::RethHostError;
 
@@ -25,3 +28,6 @@ pub use config::{rpc_config_from_args, serve_config_from_args};
 
 mod notifier;
 pub use notifier::{DecomposedContext, RethHostNotifier, decompose_exex_context};
+
+mod shim;
+pub use shim::RecoveredBlockShim;

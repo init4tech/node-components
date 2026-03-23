@@ -38,11 +38,8 @@ async fn test_genesis() {
 
     // Build a dummy blob cacher
     let blob_cacher = signet_blobber::BlobFetcher::builder()
-        .with_test_pool()
-        .with_explorer_url("https://example.com")
-        .with_client(reqwest::Client::new())
+        .with_source(signet_blobber::MemoryBlobSource::new())
         .build_cache()
-        .unwrap()
         .spawn();
 
     let (_, _) = SignetNodeBuilder::new(cfg.clone())

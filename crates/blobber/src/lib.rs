@@ -12,9 +12,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod blobs;
+#[cfg(feature = "test-utils")]
+pub use blobs::MemoryBlobSource;
 pub use blobs::{
-    BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError, BlobFetcherConfig, Blobs,
-    CacheHandle, FetchError, FetchResult,
+    AsyncBlobSource, BlobCacher, BlobFetcher, BlobFetcherBuilder, BlobFetcherBuilderError,
+    BlobFetcherConfig, BlobSource, BlobSpec, Blobs, CacheHandle, FetchError, FetchResult, sources,
 };
 
 mod coder;
@@ -22,9 +24,6 @@ pub use coder::{DecodeError, DecodeResult, SignetBlockDecoder};
 
 mod error;
 pub use error::{BlobberError, BlobberResult};
-
-mod shim;
-pub use shim::RecoveredBlockShim;
 
 #[cfg(test)]
 mod test {

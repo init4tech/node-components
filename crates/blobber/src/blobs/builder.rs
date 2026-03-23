@@ -1,140 +1,92 @@
-use crate::{BlobCacher, BlobFetcher, BlobFetcherConfig};
-use reth::transaction_pool::TransactionPool;
-use url::Url;
+use crate::{
+    AsyncBlobSource, BlobCacher, BlobFetcher, BlobFetcherConfig, BlobSource,
+    sources::{BeaconBlobSource, BlobExplorerSource, PylonBlobSource},
+};
 
 /// Errors that can occur while building the [`BlobFetcher`] with a
 /// [`BlobFetcherBuilder`].
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum BuilderError {
-    /// The transaction pool was not provided.
-    #[error("transaction pool is required")]
-    MissingPool,
-    /// The explorer URL was not provided or could not be parsed.
-    #[error("explorer URL is required and must be valid")]
-    MissingExplorerUrl,
     /// The URL provided was invalid.
     #[error("invalid URL provided")]
     Url(#[from] url::ParseError),
-    /// The client was not provided.
-    #[error("client is required")]
-    MissingClient,
-    /// The client failed to build.
-    #[error("failed to build client: {0}")]
-    Client(#[from] reqwest::Error),
-    /// The slot calculator was not provided.
-    #[error("slot calculator is required")]
-    MissingSlotCalculator,
 }
 
 /// Builder for the [`BlobFetcher`].
-#[derive(Debug, Default, Clone)]
-pub struct BlobFetcherBuilder<Pool> {
-    pool: Option<Pool>,
-    explorer_url: Option<String>,
-    client: Option<reqwest::Client>,
-    cl_url: Option<String>,
-    pylon_url: Option<String>,
+///
+/// Add synchronous and asynchronous blob sources, then call [`build`] to
+/// produce a [`BlobFetcher`] or [`build_cache`] for a [`BlobCacher`].
+///
+/// [`build`]: BlobFetcherBuilder::build
+/// [`build_cache`]: BlobFetcherBuilder::build_cache
+#[derive(Default)]
+pub struct BlobFetcherBuilder {
+    sync_sources: Vec<Box<dyn BlobSource>>,
+    async_sources: Vec<Box<dyn AsyncBlobSource>>,
 }
 
-impl<Pool> BlobFetcherBuilder<Pool> {
-    /// Set the transaction pool to use for the extractor.
-    pub fn with_pool<P2>(self, pool: P2) -> BlobFetcherBuilder<P2> {
-        BlobFetcherBuilder {
-            pool: Some(pool),
-            explorer_url: self.explorer_url,
-            client: self.client,
-            cl_url: self.cl_url,
-            pylon_url: self.pylon_url,
-        }
+impl core::fmt::Debug for BlobFetcherBuilder {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BlobFetcherBuilder")
+            .field("sync_sources", &self.sync_sources.len())
+            .field("async_sources", &self.async_sources.len())
+            .finish()
     }
+}
 
-    /// Set the transaction pool to use a mock test pool.
-    #[cfg(feature = "test-utils")]
-    pub fn with_test_pool(self) -> BlobFetcherBuilder<reth_transaction_pool::test_utils::TestPool> {
-        self.with_pool(reth_transaction_pool::test_utils::testing_pool())
-    }
-
-    /// Set the configuration for the CL url, pylon url, from the provided
-    /// [`BlobFetcherConfig`].
-    pub fn with_config(self, config: &BlobFetcherConfig) -> Result<Self, BuilderError> {
-        let this = self.with_explorer_url(config.blob_explorer_url());
-        let this =
-            if let Some(cl_url) = config.cl_url() { this.with_cl_url(cl_url)? } else { this };
-
-        if let Some(pylon_url) = config.pylon_url() {
-            this.with_pylon_url(pylon_url)
-        } else {
-            Ok(this)
-        }
-    }
-
-    /// Set the blob explorer URL to use for the extractor. This will be used
-    /// to construct a [`foundry_blob_explorers::Client`].
-    pub fn with_explorer_url(mut self, explorer_url: &str) -> Self {
-        self.explorer_url = Some(explorer_url.to_string());
+impl BlobFetcherBuilder {
+    /// Adds a synchronous blob source.
+    pub fn with_source(mut self, source: impl BlobSource + 'static) -> Self {
+        self.sync_sources.push(Box::new(source));
         self
     }
 
-    /// Set the [`reqwest::Client`] to use for the extractor. This client will
-    /// be used to make requests to the blob explorer, and the CL and Pylon URLs
-    /// if provided.
-    pub fn with_client(mut self, client: reqwest::Client) -> Self {
-        self.client = Some(client);
+    /// Adds an asynchronous blob source.
+    pub fn with_async_source(mut self, source: impl AsyncBlobSource + 'static) -> Self {
+        self.async_sources.push(Box::new(source));
         self
     }
 
-    /// Set the [`reqwest::Client`] via a [reqwest::ClientBuilder]. This
-    /// function will immediately build the client and return an error if it
-    /// fails.
+    /// Configures standard remote sources from a [`BlobFetcherConfig`].
     ///
-    /// This client will be used to make requests to the blob explorer, and the
-    /// CL and Pylon URLs if provided.
-    pub fn with_client_builder(self, client: reqwest::ClientBuilder) -> Result<Self, BuilderError> {
-        client.build().map(|client| self.with_client(client)).map_err(Into::into)
+    /// This constructs a [`BlobExplorerSource`], and optionally a
+    /// [`BeaconBlobSource`] and [`PylonBlobSource`] depending on whether
+    /// the config provides CL and Pylon URLs.
+    pub fn with_config(
+        self,
+        config: &BlobFetcherConfig,
+        client: reqwest::Client,
+    ) -> Result<Self, BuilderError> {
+        let explorer = foundry_blob_explorers::Client::new_with_client(
+            config.blob_explorer_url(),
+            client.clone(),
+        );
+        let this = self.with_async_source(BlobExplorerSource::new(explorer));
+
+        let this = match config.cl_url() {
+            Some(cl) => {
+                let url = url::Url::parse(cl)?;
+                this.with_async_source(BeaconBlobSource::new(client.clone(), url))
+            }
+            None => this,
+        };
+
+        match config.pylon_url() {
+            Some(pylon) => {
+                let url = url::Url::parse(pylon)?;
+                Ok(this.with_async_source(PylonBlobSource::new(client, url)))
+            }
+            None => Ok(this),
+        }
     }
 
-    /// Set the CL URL to use for the extractor.
-    pub fn with_cl_url(mut self, cl_url: &str) -> Result<Self, BuilderError> {
-        self.cl_url = Some(cl_url.to_string());
-        Ok(self)
+    /// Build the [`BlobFetcher`].
+    pub fn build(self) -> BlobFetcher {
+        BlobFetcher::new(self.sync_sources, self.async_sources)
     }
 
-    /// Set the Pylon URL to use for the extractor.
-    pub fn with_pylon_url(mut self, pylon_url: &str) -> Result<Self, BuilderError> {
-        self.pylon_url = Some(pylon_url.to_string());
-        Ok(self)
+    /// Build a [`BlobCacher`] wrapping the constructed [`BlobFetcher`].
+    pub fn build_cache(self) -> BlobCacher {
+        BlobCacher::new(self.build())
     }
-}
-
-impl<Pool: TransactionPool> BlobFetcherBuilder<Pool> {
-    /// Build the [`BlobFetcher`] with the provided parameters.
-    pub fn build(self) -> Result<BlobFetcher<Pool>, BuilderError> {
-        let pool = self.pool.ok_or(BuilderError::MissingPool)?;
-
-        let explorer_url = self.explorer_url.ok_or(BuilderError::MissingExplorerUrl)?;
-
-        let cl_url = self.cl_url.map(parse_url).transpose()?;
-
-        let pylon_url = self.pylon_url.map(parse_url).transpose()?;
-
-        let client = self.client.ok_or(BuilderError::MissingClient)?;
-
-        let explorer =
-            foundry_blob_explorers::Client::new_with_client(explorer_url, client.clone());
-
-        Ok(BlobFetcher::new(pool, explorer, client, cl_url, pylon_url))
-    }
-
-    /// Build a [`BlobCacher`] with the provided parameters.
-    pub fn build_cache(self) -> Result<BlobCacher<Pool>, BuilderError>
-    where
-        Pool: 'static,
-    {
-        let fetcher = self.build()?;
-        Ok(BlobCacher::new(fetcher))
-    }
-}
-
-fn parse_url(url: String) -> Result<Url, BuilderError> {
-    Url::parse(url.as_ref()).map_err(BuilderError::Url)
 }

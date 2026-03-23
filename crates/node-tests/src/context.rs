@@ -14,11 +14,7 @@ use alloy::{
     },
     rpc::types::eth::{TransactionReceipt, TransactionRequest},
 };
-use reth::{
-    api::FullNodeComponents,
-    transaction_pool::{TransactionOrigin, TransactionPool, test_utils::MockTransaction},
-};
-use reth_exex_test_utils::Adapter;
+use signet_blobber::MemoryBlobSource;
 use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
@@ -88,7 +84,7 @@ impl HostNotifier for TestHostNotifier {
 /// This contains the following:
 ///
 /// - A channel sender for host notifications
-/// - The reth test components (for pool access)
+/// - An in-memory blob source for test blob insertion
 /// - A receiver for the node status (latest block processed)
 /// - Unified storage backed by in-memory hot and cold storage
 /// - An alloy provider connected to the Signet Node RPC,
@@ -100,8 +96,8 @@ pub struct SignetTestContext {
     /// The notification sender for the test host notifier.
     pub sender: mpsc::UnboundedSender<HostNotification<Chain>>,
 
-    /// The reth test components (for pool access).
-    pub components: Adapter,
+    /// The in-memory blob source for test blob insertion.
+    pub blob_source: MemoryBlobSource,
 
     /// The Signet Node status receiver
     pub node_status: watch::Receiver<NodeStatus>,
@@ -146,8 +142,7 @@ impl SignetTestContext {
     #[instrument]
     pub async fn new() -> (Self, JoinHandle<eyre::Result<()>>) {
         let cfg = test_config();
-        let (ctx, _handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
-        let components = ctx.components.clone();
+        let blob_source = MemoryBlobSource::new();
 
         // set up Signet Node storage
         let constants = cfg.constants().unwrap();
@@ -197,14 +192,12 @@ impl SignetTestContext {
         let (sender, receiver) = mpsc::unbounded_channel();
         let notifier = TestHostNotifier { receiver };
 
-        // Build the blob cacher from the reth test pool
+        // Build the blob cacher from the in-memory blob source
         let blob_cacher = signet_blobber::BlobFetcher::builder()
-            .with_config(cfg.block_extractor())
+            .with_source(blob_source.clone())
+            .with_config(cfg.block_extractor(), reqwest::Client::new())
             .unwrap()
-            .with_pool(components.pool().clone())
-            .with_client(reqwest::Client::new())
             .build_cache()
-            .unwrap()
             .spawn();
 
         // Build ServeConfig from the test config's IPC endpoint
@@ -251,7 +244,7 @@ impl SignetTestContext {
 
         let this = Self {
             sender,
-            components,
+            blob_source,
             node_status,
             storage,
             alloy_provider,
@@ -343,18 +336,14 @@ impl SignetTestContext {
 
     /// Send a notification to the Signet Node instance
     pub async fn send_notification(&self, notification: NotificationWithSidecars) {
-        let pool = self.components.pool();
-
-        // Put these into the pool so that Signet Node can find them
+        // Insert blob sidecars into the in-memory source
         for (_, (sidecar, tx_signed)) in notification.sidecars {
             let tx_hash = *tx_signed.hash();
-            let mut tx = MockTransaction::eip4844_with_sidecar(sidecar.into());
-            tx.set_hash(tx_hash);
-            pool.add_transaction(TransactionOrigin::Local, tx).await.unwrap();
-
-            assert!(pool.get_blob(tx_hash).unwrap().is_some(), "Missing blob we just inserted");
+            self.blob_source.insert(
+                tx_hash,
+                Arc::new(alloy::eips::eip7594::BlobTransactionSidecarVariant::Eip4844(sidecar)),
+            );
         }
-
         let host_notification = to_host_notification(&notification.notification);
         self.sender.send(host_notification).unwrap();
     }
