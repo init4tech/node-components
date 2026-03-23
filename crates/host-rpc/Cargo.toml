@@ -10,11 +10,13 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+signet-block-processor.workspace = true
 signet-node-types.workspace = true
 signet-extract.workspace = true
 signet-types.workspace = true
 
 alloy.workspace = true
+eyre.workspace = true
 init4-bin-base.workspace = true
 futures-util.workspace = true
 metrics.workspace = true

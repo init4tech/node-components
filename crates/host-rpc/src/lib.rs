@@ -31,3 +31,6 @@ pub use notifier::RpcHostNotifier;
 mod segment;
 pub use segment::{RpcBlock, RpcChainSegment};
 mod metrics;
+
+mod alias;
+pub use alias::RpcAliasOracle;
