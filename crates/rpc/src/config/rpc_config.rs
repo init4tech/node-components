@@ -78,7 +78,9 @@ pub struct StorageRpcConfig {
 
     /// Default gas price returned when no recent transactions exist.
     ///
-    /// Reth defaults to 1 Gwei. Set to `None` to return zero.
+    /// Reth defaults to 1 Gwei. Set to `None` to disable (returns
+    /// zero). When configured via environment variable, set to `0` to
+    /// disable.
     ///
     /// Default: `Some(1_000_000_000)` (1 Gwei).
     pub default_gas_price: Option<u128>,
@@ -86,12 +88,17 @@ pub struct StorageRpcConfig {
     /// Minimum effective tip to include in the oracle sample.
     ///
     /// Tips below this threshold are discarded, matching reth's
-    /// `ignore_price` behavior.
+    /// `ignore_price` behavior. Set to `None` to include all tips.
+    /// When configured via environment variable, set to `0` to
+    /// disable.
     ///
     /// Default: `Some(2)` (2 wei).
     pub ignore_price: Option<u128>,
 
     /// Maximum gas price the oracle will ever suggest.
+    ///
+    /// Set to `None` for no cap. When configured via environment
+    /// variable, set to `0` to disable.
     ///
     /// Default: `Some(500_000_000_000)` (500 Gwei).
     pub max_price: Option<u128>,
@@ -257,59 +264,108 @@ impl StorageRpcConfigBuilder {
 #[derive(Debug, Clone, FromEnv)]
 pub struct StorageRpcConfigEnv {
     /// Maximum gas for `eth_call` and `eth_estimateGas`.
-    #[from_env(var = "SIGNET_RPC_GAS_CAP", desc = "Max gas for eth_call", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_GAS_CAP",
+        desc = "Max gas for eth_call [default: 30000000]",
+        optional
+    )]
     rpc_gas_cap: Option<u64>,
     /// Maximum block range per `eth_getLogs` query.
     #[from_env(
         var = "SIGNET_RPC_MAX_BLOCKS_PER_FILTER",
-        desc = "Max block range for getLogs",
+        desc = "Max block range for getLogs [default: 10000]",
         optional
     )]
     max_blocks_per_filter: Option<u64>,
     /// Maximum number of logs returned per response.
-    #[from_env(var = "SIGNET_RPC_MAX_LOGS", desc = "Max logs per response", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_MAX_LOGS",
+        desc = "Max logs per response [default: 20000]",
+        optional
+    )]
     max_logs_per_response: Option<u64>,
     /// Maximum seconds for a single log query.
     #[from_env(
         var = "SIGNET_RPC_LOG_QUERY_DEADLINE_SECS",
-        desc = "Max seconds for log query",
+        desc = "Max seconds for log query [default: 10]",
         optional
     )]
     max_log_query_deadline_secs: Option<u64>,
     /// Maximum concurrent tracing/debug requests.
     #[from_env(
         var = "SIGNET_RPC_MAX_TRACING_REQUESTS",
-        desc = "Concurrent tracing limit",
+        desc = "Concurrent tracing limit [default: 25]",
         optional
     )]
     max_tracing_requests: Option<u64>,
     /// Filter TTL in seconds.
-    #[from_env(var = "SIGNET_RPC_STALE_FILTER_TTL_SECS", desc = "Filter TTL in seconds", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_STALE_FILTER_TTL_SECS",
+        desc = "Filter TTL in seconds [default: 300]",
+        optional
+    )]
     stale_filter_ttl_secs: Option<u64>,
     /// Number of recent blocks for gas oracle.
-    #[from_env(var = "SIGNET_RPC_GAS_ORACLE_BLOCKS", desc = "Blocks for gas oracle", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_GAS_ORACLE_BLOCKS",
+        desc = "Blocks for gas oracle [default: 20]",
+        optional
+    )]
     gas_oracle_block_count: Option<u64>,
     /// Tip percentile for gas oracle.
-    #[from_env(var = "SIGNET_RPC_GAS_ORACLE_PERCENTILE", desc = "Tip percentile", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_GAS_ORACLE_PERCENTILE",
+        desc = "Tip percentile [default: 60]",
+        optional
+    )]
     gas_oracle_percentile: Option<u64>,
     /// Default gas price in wei.
-    #[from_env(var = "SIGNET_RPC_DEFAULT_GAS_PRICE", desc = "Default gas price in wei", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_DEFAULT_GAS_PRICE",
+        desc = "Default gas price in wei, 0 to disable [default: 1000000000]",
+        optional
+    )]
     default_gas_price: Option<u128>,
     /// Minimum effective tip in wei.
-    #[from_env(var = "SIGNET_RPC_IGNORE_PRICE", desc = "Min tip in wei", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_IGNORE_PRICE",
+        desc = "Min tip in wei, 0 to disable [default: 2]",
+        optional
+    )]
     ignore_price: Option<u128>,
     /// Maximum gas price in wei.
-    #[from_env(var = "SIGNET_RPC_MAX_PRICE", desc = "Max gas price in wei", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_MAX_PRICE",
+        desc = "Max gas price in wei, 0 to disable [default: 500000000000]",
+        optional
+    )]
     max_price: Option<u128>,
     /// Maximum header history for `eth_feeHistory`.
-    #[from_env(var = "SIGNET_RPC_MAX_HEADER_HISTORY", desc = "Max feeHistory headers", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_MAX_HEADER_HISTORY",
+        desc = "Max feeHistory headers [default: 1024]",
+        optional
+    )]
     max_header_history: Option<u64>,
     /// Maximum block history for `eth_feeHistory`.
-    #[from_env(var = "SIGNET_RPC_MAX_BLOCK_HISTORY", desc = "Max feeHistory blocks", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_MAX_BLOCK_HISTORY",
+        desc = "Max feeHistory blocks [default: 1024]",
+        optional
+    )]
     max_block_history: Option<u64>,
     /// Default bundle simulation timeout in milliseconds.
-    #[from_env(var = "SIGNET_RPC_BUNDLE_TIMEOUT_MS", desc = "Bundle sim timeout in ms", optional)]
+    #[from_env(
+        var = "SIGNET_RPC_BUNDLE_TIMEOUT_MS",
+        desc = "Bundle sim timeout in ms [default: 1000]",
+        optional
+    )]
     default_bundle_timeout_ms: Option<u64>,
+}
+
+/// Map `0` to `None`, preserving all other values.
+const fn nonzero(v: u128) -> Option<u128> {
+    if v == 0 { None } else { Some(v) }
 }
 
 impl From<StorageRpcConfigEnv> for StorageRpcConfig {
@@ -338,9 +394,9 @@ impl From<StorageRpcConfigEnv> for StorageRpcConfig {
             gas_oracle_percentile: env
                 .gas_oracle_percentile
                 .map_or(defaults.gas_oracle_percentile, |v| v as f64),
-            default_gas_price: env.default_gas_price.or(defaults.default_gas_price),
-            ignore_price: env.ignore_price.or(defaults.ignore_price),
-            max_price: env.max_price.or(defaults.max_price),
+            default_gas_price: env.default_gas_price.map_or(defaults.default_gas_price, nonzero),
+            ignore_price: env.ignore_price.map_or(defaults.ignore_price, nonzero),
+            max_price: env.max_price.map_or(defaults.max_price, nonzero),
             max_header_history: env.max_header_history.unwrap_or(defaults.max_header_history),
             max_block_history: env.max_block_history.unwrap_or(defaults.max_block_history),
             default_bundle_timeout_ms: env

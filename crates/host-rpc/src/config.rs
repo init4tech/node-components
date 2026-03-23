@@ -27,13 +27,21 @@ use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv, provider::P
 #[derive(Debug, Clone, FromEnv)]
 pub struct HostRpcConfig {
     /// WebSocket or IPC connection to the host execution layer client.
-    #[from_env(var = "SIGNET_HOST_URL", desc = "Host EL pubsub URL (ws:// or ipc)")]
+    #[from_env(var = "SIGNET_HOST_URL", desc = "Host EL pubsub URL (ws:// or ipc) [required]")]
     provider: PubSubConfig,
     /// Local chain view buffer capacity.
-    #[from_env(var = "SIGNET_HOST_BUFFER_CAPACITY", desc = "Chain view buffer capacity", optional)]
+    #[from_env(
+        var = "SIGNET_HOST_BUFFER_CAPACITY",
+        desc = "Chain view buffer capacity [default: 64]",
+        optional
+    )]
     buffer_capacity: Option<usize>,
     /// Blocks per backfill RPC batch.
-    #[from_env(var = "SIGNET_HOST_BACKFILL_BATCH_SIZE", desc = "Backfill batch size", optional)]
+    #[from_env(
+        var = "SIGNET_HOST_BACKFILL_BATCH_SIZE",
+        desc = "Backfill batch size [default: 32]",
+        optional
+    )]
     backfill_batch_size: Option<u64>,
 }
 
