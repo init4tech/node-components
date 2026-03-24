@@ -283,8 +283,12 @@ impl<H: HotKv> StorageRpcCtx<H> {
 
     /// Resolve a [`BlockId`] to a header and revm database in one pass.
     ///
-    /// Fetches the header from hot storage and creates a revm-compatible
-    /// database snapshot at the resolved block height.
+    /// Opens a single MDBX read transaction and uses it for both the
+    /// header lookup and the revm-compatible database snapshot. This
+    /// ensures the header and EVM state come from the same database
+    /// snapshot, eliminating races where a reorg between two separate
+    /// transactions could yield a header from one fork and state from
+    /// another.
     ///
     /// For `Pending` block IDs, remaps to `Latest` and synthesizes a
     /// next-block header (incremented number, timestamp +12s, projected
@@ -294,14 +298,29 @@ impl<H: HotKv> StorageRpcCtx<H> {
         id: BlockId,
     ) -> Result<EvmBlockContext<RevmRead<H::RoTx>>, EthError>
     where
-        <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+        <H::RoTx as HotKvRead>::Error: DBErrorMarker + std::error::Error + Send + Sync + 'static,
     {
         let pending = id.is_pending();
         let id = if pending { BlockId::latest() } else { id };
 
-        let sealed = self.resolve_header(id)?.ok_or(EthError::BlockNotFound(id))?;
-        let db = self.revm_state_at_height(sealed.number)?;
+        // Single MDBX read transaction for both header lookup and
+        // RevmRead construction. `hot_reader()` returns
+        // `Result<H::RoTx, StorageError>` — the `?` converts through
+        // `StorageError -> EthError::Hot`.
+        let reader = self.hot_reader()?;
 
+        let sealed = match id {
+            BlockId::Hash(h) => {
+                reader.header_by_hash(&h.block_hash).map_err(|e| ResolveError::Db(Box::new(e)))?
+            }
+            BlockId::Number(tag) => {
+                let height = self.resolve_block_tag(tag);
+                reader.get_header(height).map_err(|e| ResolveError::Db(Box::new(e)))?
+            }
+        }
+        .ok_or(EthError::BlockNotFound(id))?;
+
+        let height = sealed.number;
         let parent_hash = sealed.hash();
         let mut header = sealed.into_inner();
 
@@ -314,6 +333,10 @@ impl<H: HotKv> StorageRpcCtx<H> {
         }
 
         let spec_id = self.spec_id_for_header(&header);
+
+        // Wrap the same reader in RevmRead — no range validation needed
+        // because we already proved the height exists by fetching the header.
+        let db = StateBuilder::new_with_database(RevmRead::at_height(reader, height)).build();
 
         Ok(EvmBlockContext { header, db, spec_id })
     }
