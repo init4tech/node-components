@@ -15,6 +15,7 @@ use alloy::{
 };
 use serde::Deserialize;
 use signet_cold::ColdReceipt;
+use signet_hot::db::HotDbRead;
 use signet_storage_types::ConfirmationMeta;
 use trevm::MIN_TRANSACTION_GAS;
 
@@ -129,9 +130,17 @@ pub(crate) use response_tri;
 
 /// Resolve a block ID and open a hot storage reader at that height.
 ///
-/// Shared by account-state endpoints (`balance`, `storage_at`,
-/// `addr_tx_count`, `code_at`) which all follow the same
-/// resolve → open reader → query pattern.
+/// Opens a single MDBX read transaction and resolves the block ID
+/// within it, ensuring the resolution and subsequent data query share
+/// the same database snapshot.
+///
+/// For hash-based [`BlockId`]s, the hash→number lookup happens inside
+/// the returned transaction. For tag-based IDs, the atomic tag read
+/// is outside MDBX (unavoidable), but the snapshot is opened first so
+/// data is guaranteed to be at least as fresh as the resolved tag.
+///
+/// Used by account-state endpoints (`balance`, `storage_at`,
+/// `addr_tx_count`, `code_at`).
 pub(crate) fn hot_reader_at_block<H>(
     ctx: &crate::config::StorageRpcCtx<H>,
     id: BlockId,
@@ -140,8 +149,14 @@ where
     H: signet_hot::HotKv,
     <H::RoTx as signet_hot::model::HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
 {
-    let height = ctx.resolve_block_id(id).map_err(|e| e.to_string())?;
     let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+    let height = match id {
+        BlockId::Number(tag) => ctx.resolve_block_tag(tag),
+        BlockId::Hash(h) => reader
+            .get_header_number(&h.block_hash)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("block hash not found: {}", h.block_hash))?,
+    };
     Ok((reader, height))
 }
 
