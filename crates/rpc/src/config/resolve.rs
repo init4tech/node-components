@@ -1,8 +1,42 @@
-//! Block tag tracking and BlockId resolution.
+//! Block tag tracking and `BlockId` resolution.
 //!
 //! [`BlockTags`] holds externally-updated atomic values for Latest, Safe,
 //! and Finalized block numbers. The RPC context owner is responsible for
 //! updating these as the chain progresses.
+//!
+//! # Atomic Ordering Guarantees
+//!
+//! All tag loads use [`Acquire`] ordering and all stores use [`Release`]
+//! ordering. This establishes a happens-before relationship: any data
+//! written before a tag update is visible to readers who observe the new
+//! tag value.
+//!
+//! Multi-tag updates ([`BlockTags::update_all`]) store in order:
+//! finalized → safe → latest. This ensures readers never observe a
+//! state where `latest` is behind `finalized` — they may see a
+//! slightly stale view (old latest with new finalized), but never an
+//! inverted one.
+//!
+//! During reorgs, [`BlockTags::rewind_to`] uses [`fetch_min`] with the
+//! same finalized → safe → latest order, atomically capping each tag
+//! without risk of a reader seeing `latest > finalized` while values
+//! are being decreased.
+//!
+//! # Race Window
+//!
+//! Between [`StorageRpcCtx::resolve_block_tag`] and the subsequent
+//! storage query, tags can advance. The caller gets a point-in-time
+//! snapshot of the tag values — not a guarantee that those values are
+//! still current by the time the query executes. For hot-only queries,
+//! the MDBX read transaction provides snapshot isolation. For cold
+//! queries, the resolved number may reference a block that cold storage
+//! has not yet received (returning `None`) or that a reorg has since
+//! replaced (returning stale data).
+//!
+//! [`Acquire`]: std::sync::atomic::Ordering::Acquire
+//! [`Release`]: std::sync::atomic::Ordering::Release
+//! [`fetch_min`]: std::sync::atomic::AtomicU64::fetch_min
+//! [`StorageRpcCtx::resolve_block_tag`]: crate::StorageRpcCtx::resolve_block_tag
 
 use alloy::primitives::B256;
 use signet_storage::StorageError;
@@ -29,8 +63,20 @@ pub struct SyncStatus {
 
 /// Externally-updated block tag tracker.
 ///
-/// Each tag is an `Arc<AtomicU64>` that the caller updates as the chain
-/// progresses. The RPC layer reads these atomically for tag resolution.
+/// Each tag is an [`Arc<AtomicU64>`] that the caller updates as the
+/// chain progresses. The RPC layer reads these atomically for tag
+/// resolution.
+///
+/// Tags are updated in a specific order to maintain consistency:
+/// - **Writes** ([`update_all`](Self::update_all)): finalized → safe →
+///   latest, so readers never see `latest` behind `finalized`.
+/// - **Rewinds** ([`rewind_to`](Self::rewind_to)): same order, using
+///   [`fetch_min`](AtomicU64::fetch_min) for atomic capping.
+/// - **Reads**: each tag is loaded independently with [`Acquire`]
+///   ordering. A reader may see a slightly stale combination (e.g.,
+///   new `finalized` but old `latest`) but never an inverted one.
+///
+/// [`Acquire`]: std::sync::atomic::Ordering::Acquire
 ///
 /// # Example
 ///

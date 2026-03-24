@@ -1,4 +1,60 @@
 //! RPC context wrapping [`UnifiedStorage`].
+//!
+//! # Consistency Model
+//!
+//! The RPC layer reads from two storage tiers with different consistency
+//! guarantees:
+//!
+//! - **Hot storage** (MDBX): synchronous writes, MVCC snapshot isolation,
+//!   authoritative source for state and headers. Reads open an MDBX read
+//!   transaction that provides a consistent point-in-time snapshot.
+//!
+//! - **Cold storage** (async task): eventually consistent. Writes are
+//!   dispatched asynchronously after hot storage commits via
+//!   `append_blocks()`, so cold may lag by milliseconds to seconds under
+//!   normal operation.
+//!
+//! # Query Routing
+//!
+//! | Query type | Resolution | Data source | Staleness risk |
+//! |---|---|---|---|
+//! | State (`getBalance`, `getStorageAt`, `getCode`, `getTransactionCount`) | Hot tag → height | Hot | Low — single tier, single transaction |
+//! | EVM execution (`eth_call`, `estimateGas`) | Hot tag → height | Hot | Low — single tier, single transaction |
+//! | Block/header queries | Hot tag → height | Cold | Medium — cold lag |
+//! | Transaction queries | Hot tag or hash → height | Cold | Medium — cold lag |
+//! | Receipt queries | Hot tag or hash → height | Cold | Medium — cold lag |
+//! | Log queries (`getLogs`) | Hot tag → height range | Cold | Medium — cold lag |
+//! | Filter changes | Hot tag → latest | Cold | Medium — reorg detection via ring buffer mitigates |
+//!
+//! # Resolve-then-Query Pattern
+//!
+//! Most endpoints follow a two-step pattern:
+//!
+//! 1. **Resolve** a block tag or hash to a concrete block number (reads
+//!    atomic tag values or queries hot storage's `HeaderNumbers` table).
+//! 2. **Query** the resolved block number against hot or cold storage.
+//!
+//! For hot-only queries (state, EVM), both steps share a single MDBX
+//! read transaction, eliminating races between resolution and query.
+//!
+//! For cold queries, the resolved number is passed to cold storage.
+//! Between resolution and cold query, tags can advance or a reorg can
+//! replace the block at that height. The caller gets a consistent view
+//! of the **resolved** height but may miss a newer block. This is
+//! acceptable per JSON-RPC spec — clients retry on stale data.
+//!
+//! # Future Work: Hash-based Consistency Verification
+//!
+//! For queries where correctness is critical (e.g., `eth_call`), a
+//! stronger guarantee is possible: after resolving the block number,
+//! read the block hash from hot storage and pass both (number, hash) to
+//! cold. Cold verifies the hash matches before returning data, catching
+//! reorgs that replaced the block between resolution and query.
+//!
+//! This was deferred because: (a) the reorg window is small
+//! (milliseconds), (b) it adds one extra hot storage read per query,
+//! and (c) for read-only queries the impact of returning stale data is
+//! low. See ENG-1901 for the full trade-off analysis.
 
 use crate::{
     config::{
@@ -51,8 +107,16 @@ pub(crate) struct EvmBlockContext<Db> {
 
 /// RPC context backed by [`UnifiedStorage`].
 ///
-/// Provides access to hot storage (state), cold storage (blocks/txs/receipts),
-/// block tag resolution, and optional transaction forwarding.
+/// Provides access to hot storage (state, headers), cold storage
+/// (blocks, transactions, receipts, logs), block tag resolution,
+/// filter/subscription management, and optional transaction forwarding.
+///
+/// Hot-only queries (state reads, EVM execution) open a single MDBX
+/// read transaction for both block resolution and data access. Cold
+/// queries resolve a block number from hot storage, then pass it to
+/// the cold read handle.
+///
+/// See the module-level documentation for the full consistency model.
 ///
 /// # Construction
 ///
@@ -283,8 +347,12 @@ impl<H: HotKv> StorageRpcCtx<H> {
 
     /// Resolve a [`BlockId`] to a header and revm database in one pass.
     ///
-    /// Fetches the header from hot storage and creates a revm-compatible
-    /// database snapshot at the resolved block height.
+    /// Opens a single MDBX read transaction and uses it for both the
+    /// header lookup and the revm-compatible database snapshot. This
+    /// ensures the header and EVM state come from the same database
+    /// snapshot, eliminating races where a reorg between two separate
+    /// transactions could yield a header from one fork and state from
+    /// another.
     ///
     /// For `Pending` block IDs, remaps to `Latest` and synthesizes a
     /// next-block header (incremented number, timestamp +12s, projected
@@ -294,14 +362,29 @@ impl<H: HotKv> StorageRpcCtx<H> {
         id: BlockId,
     ) -> Result<EvmBlockContext<RevmRead<H::RoTx>>, EthError>
     where
-        <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+        <H::RoTx as HotKvRead>::Error: DBErrorMarker + std::error::Error + Send + Sync + 'static,
     {
         let pending = id.is_pending();
         let id = if pending { BlockId::latest() } else { id };
 
-        let sealed = self.resolve_header(id)?.ok_or(EthError::BlockNotFound(id))?;
-        let db = self.revm_state_at_height(sealed.number)?;
+        // Single MDBX read transaction for both header lookup and
+        // RevmRead construction. `hot_reader()` returns
+        // `Result<H::RoTx, StorageError>` — the `?` converts through
+        // `StorageError -> EthError::Hot`.
+        let reader = self.hot_reader()?;
 
+        let sealed = match id {
+            BlockId::Hash(h) => {
+                reader.header_by_hash(&h.block_hash).map_err(|e| ResolveError::Db(Box::new(e)))?
+            }
+            BlockId::Number(tag) => {
+                let height = self.resolve_block_tag(tag);
+                reader.get_header(height).map_err(|e| ResolveError::Db(Box::new(e)))?
+            }
+        }
+        .ok_or(EthError::BlockNotFound(id))?;
+
+        let height = sealed.number;
         let parent_hash = sealed.hash();
         let mut header = sealed.into_inner();
 
@@ -314,6 +397,10 @@ impl<H: HotKv> StorageRpcCtx<H> {
         }
 
         let spec_id = self.spec_id_for_header(&header);
+
+        // Wrap the same reader in RevmRead — no range validation needed
+        // because we already proved the height exists by fetching the header.
+        let db = StateBuilder::new_with_database(RevmRead::at_height(reader, height)).build();
 
         Ok(EvmBlockContext { header, db, spec_id })
     }
