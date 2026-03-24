@@ -1,4 +1,4 @@
-//! Block tag tracking and [`BlockId`] resolution.
+//! Block tag tracking and `BlockId` resolution.
 //!
 //! [`BlockTags`] holds externally-updated atomic values for Latest, Safe,
 //! and Finalized block numbers. The RPC context owner is responsible for
