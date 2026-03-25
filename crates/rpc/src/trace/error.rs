@@ -48,10 +48,7 @@ impl ajj::IntoErrorPayload for TraceError {
 
     fn error_code(&self) -> i64 {
         match self {
-            Self::Cold(_)
-            | Self::Hot(_)
-            | Self::EvmHalt { .. }
-            | Self::SenderRecovery => -32000,
+            Self::Cold(_) | Self::Hot(_) | Self::EvmHalt { .. } | Self::SenderRecovery => -32000,
             Self::Resolve(r) => crate::eth::error::resolve_error_code(r),
             Self::BlockNotFound(_) | Self::TransactionNotFound(_) => -32001,
             Self::RlpDecode(_) | Self::BlockRangeExceeded { .. } => -32602,
@@ -62,24 +59,13 @@ impl ajj::IntoErrorPayload for TraceError {
         match self {
             Self::Cold(_) | Self::Hot(_) => "server error".into(),
             Self::Resolve(r) => crate::eth::error::resolve_error_message(r),
-            Self::EvmHalt { reason } => {
-                format!("execution halted: {reason}").into()
-            }
-            Self::BlockNotFound(id) => {
-                format!("block not found: {id}").into()
-            }
-            Self::TransactionNotFound(h) => {
-                format!("transaction not found: {h}").into()
-            }
-            Self::RlpDecode(msg) => {
-                format!("RLP decode error: {msg}").into()
-            }
+            Self::EvmHalt { reason } => format!("execution halted: {reason}").into(),
+            Self::BlockNotFound(id) => format!("block not found: {id}").into(),
+            Self::TransactionNotFound(h) => format!("transaction not found: {h}").into(),
+            Self::RlpDecode(msg) => format!("RLP decode error: {msg}").into(),
             Self::SenderRecovery => "sender recovery failed".into(),
             Self::BlockRangeExceeded { requested, max } => {
-                format!(
-                    "block range too large: {requested} blocks (max {max})"
-                )
-                .into()
+                format!("block range too large: {requested} blocks (max {max})").into()
             }
         }
     }
@@ -122,10 +108,7 @@ mod tests {
 
     #[test]
     fn block_range_exceeded_code() {
-        let err = TraceError::BlockRangeExceeded {
-            requested: 200,
-            max: 100,
-        };
+        let err = TraceError::BlockRangeExceeded { requested: 200, max: 100 };
         assert_eq!(err.error_code(), -32602);
         assert!(err.error_message().contains("200"));
     }
