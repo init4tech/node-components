@@ -2,8 +2,8 @@
 
 mod endpoints;
 use endpoints::{
-    get_raw_block, get_raw_header, get_raw_receipts, get_raw_transaction, trace_block,
-    trace_block_rlp, trace_transaction,
+    debug_trace_call, get_raw_block, get_raw_header, get_raw_receipts, get_raw_transaction,
+    trace_block, trace_block_rlp, trace_transaction,
 };
 mod error;
 pub use error::DebugError;
@@ -30,4 +30,5 @@ where
         .route("getRawHeader", get_raw_header::<H>)
         .route("getRawReceipts", get_raw_receipts::<H>)
         .route("getRawTransaction", get_raw_transaction::<H>)
+        .route("traceCall", debug_trace_call::<H>)
 }

@@ -450,6 +450,66 @@ where
     )
 }
 
+/// `debug_traceCall` — trace a call without submitting a transaction.
+///
+/// Resolves EVM state at the target block, prepares the transaction
+/// from a [`alloy::rpc::types::TransactionRequest`], then routes through
+/// the tracer. State overrides are not supported in this initial
+/// implementation.
+pub(super) async fn debug_trace_call<H>(
+    hctx: HandlerCtx,
+    (request, block_id, opts): (
+        alloy::rpc::types::TransactionRequest,
+        Option<BlockId>,
+        Option<GethDebugTracingOptions>,
+    ),
+    ctx: StorageRpcCtx<H>,
+) -> Result<GethTrace, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let _permit = ctx.acquire_tracing_permit().await;
+
+    let id = block_id.unwrap_or(BlockId::latest());
+    let span = tracing::debug_span!("traceCall", ?id, tracer = ?opts.tracer.as_ref());
+
+    let fut = async move {
+        use crate::config::EvmBlockContext;
+
+        let EvmBlockContext { header, db, spec_id } =
+            ctx.resolve_evm_block(id).map_err(|e| match e {
+                crate::eth::EthError::BlockNotFound(id) => DebugError::BlockNotFound(id),
+                other => DebugError::EvmHalt { reason: other.to_string() },
+            })?;
+
+        let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
+        evm.set_spec_id(spec_id);
+        let trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
+
+        let trevm = trevm.fill_tx(&request);
+
+        let tx_info = alloy::rpc::types::TransactionInfo {
+            hash: None,
+            index: None,
+            block_hash: None,
+            block_number: Some(header.number),
+            base_fee: header.base_fee_per_gas(),
+        };
+
+        let res = crate::debug::tracer::trace(trevm, &opts, tx_info)?.0;
+
+        Ok(res)
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
+}
+
 /// `debug_getRawTransaction` handler.
 ///
 /// Fetches the transaction by hash from cold storage and returns the
