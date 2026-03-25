@@ -3,11 +3,17 @@
 //! Largely adapted from reth: `crates/rpc/rpc/src/debug.rs`.
 
 use crate::debug::DebugError;
-use alloy::rpc::types::{
-    TransactionInfo,
-    trace::geth::{
-        FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig, GethDebugTracerType,
-        GethDebugTracingOptions, GethTrace, NoopFrame,
+use alloy::{
+    primitives::map::HashSet,
+    rpc::types::{
+        TransactionInfo,
+        trace::{
+            geth::{
+                FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
+                GethDebugTracerType, GethDebugTracingOptions, GethTrace, NoopFrame,
+            },
+            parity::{LocalizedTransactionTrace, TraceResults, TraceType},
+        },
     },
 };
 use revm_inspectors::tracing::{
@@ -195,6 +201,67 @@ where
     trevm.inner_mut_unchecked().db_mut().commit(result.state);
 
     Ok((frame.into(), trevm))
+}
+
+/// Trace a transaction and return Parity-format localized traces.
+///
+/// Used by `trace_block`, `trace_transaction`, `trace_get`, and
+/// `trace_filter`.
+pub(crate) fn trace_parity_localized<Db, Insp>(
+    trevm: EvmReady<Db, Insp>,
+    tx_info: TransactionInfo,
+) -> Result<(Vec<LocalizedTransactionTrace>, EvmNeedsTx<Db, Insp>), DebugError>
+where
+    Db: Database + DatabaseCommit + DatabaseRef,
+    Insp: Inspector<Ctx<Db>>,
+{
+    let gas_limit = trevm.gas_limit();
+    let mut inspector = TracingInspector::new(TracingInspectorConfig::default_parity());
+    let trevm = trevm
+        .try_with_inspector(&mut inspector, |trevm| trevm.run())
+        .map_err(|err| DebugError::EvmHalt { reason: err.into_error().to_string() })?;
+
+    let traces = inspector
+        .with_transaction_gas_limit(gas_limit)
+        .into_parity_builder()
+        .into_localized_transaction_traces(tx_info);
+
+    Ok((traces, trevm.accept_state()))
+}
+
+/// Trace a transaction and return Parity-format [`TraceResults`].
+///
+/// When [`TraceType::StateDiff`] is in `trace_types`, the state diff is
+/// enriched with pre-transaction balance/nonce from the database.
+///
+/// Used by `trace_replayBlockTransactions`, `trace_call`,
+/// `trace_callMany`, and `trace_rawTransaction`.
+pub(crate) fn trace_parity_replay<Db, Insp>(
+    trevm: EvmReady<Db, Insp>,
+    trace_types: &HashSet<TraceType>,
+) -> Result<(TraceResults, EvmNeedsTx<Db, Insp>), DebugError>
+where
+    Db: Database + DatabaseCommit + DatabaseRef,
+    <Db as DatabaseRef>::Error: std::fmt::Debug,
+    Insp: Inspector<Ctx<Db>>,
+{
+    let mut inspector =
+        TracingInspector::new(TracingInspectorConfig::from_parity_config(trace_types));
+    let trevm = trevm
+        .try_with_inspector(&mut inspector, |trevm| trevm.run())
+        .map_err(|err| DebugError::EvmHalt { reason: err.into_error().to_string() })?;
+
+    let (result, mut trevm) = trevm.take_result_and_state();
+
+    let trace_res = inspector
+        .into_parity_builder()
+        .into_trace_results_with_state(&result, trace_types, trevm.inner_mut_unchecked().db_mut())
+        .map_err(|e| DebugError::EvmHalt { reason: format!("state diff: {e:?}") })?;
+
+    // Equivalent to `trevm.accept_state()`.
+    trevm.inner_mut_unchecked().db_mut().commit(result.state);
+
+    Ok((trace_res, trevm))
 }
 
 // Some code in this file has been copied and modified from reth
