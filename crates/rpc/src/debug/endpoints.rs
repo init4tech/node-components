@@ -10,9 +10,9 @@ use crate::{
 };
 use ajj::HandlerCtx;
 use alloy::{
-    consensus::BlockHeader,
+    consensus::{BlockHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt},
     eips::{BlockId, eip2718::Encodable2718},
-    primitives::{B256, Bytes},
+    primitives::{B256, Bytes, Log},
     rpc::types::trace::geth::{GethTrace, TraceResult},
 };
 use itertools::Itertools;
@@ -198,6 +198,122 @@ where
     .instrument(span);
 
     await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
+}
+
+/// `debug_getRawBlock` handler.
+///
+/// Resolves the given [`BlockId`], fetches header and transactions from cold
+/// storage, assembles them into an [`alloy::consensus::Block`], and returns
+/// the RLP-encoded bytes.
+pub(super) async fn get_raw_block<H>(
+    hctx: HandlerCtx,
+    (id,): (BlockId,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Bytes, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let span = tracing::debug_span!("getRawBlock", ?id);
+
+    let fut = async move {
+        let cold = ctx.cold();
+        let block_num = ctx.resolve_block_id(id).map_err(|e| {
+            tracing::warn!(error = %e, ?id, "block resolution failed");
+            DebugError::Resolve(e)
+        })?;
+
+        let sealed = ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "header resolution failed");
+            DebugError::BlockNotFound(id)
+        })?;
+
+        let Some(sealed) = sealed else {
+            return Err(DebugError::BlockNotFound(id));
+        };
+
+        let txs = cold.get_transactions_in_block(block_num).await.map_err(|e| {
+            tracing::warn!(error = %e, block_num, "cold storage read failed");
+            DebugError::from(e)
+        })?;
+
+        let header = sealed.into_inner();
+        let tx_bodies: Vec<_> = txs.into_iter().map(|tx| tx.into_inner()).collect();
+        let block = alloy::consensus::Block {
+            header,
+            body: alloy::consensus::BlockBody {
+                transactions: tx_bodies,
+                ommers: vec![],
+                withdrawals: None,
+            },
+        };
+
+        Ok(Bytes::from(alloy::rlp::encode(&block)))
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
+}
+
+/// `debug_getRawReceipts` handler.
+///
+/// Fetches all receipts for the given [`BlockId`] and returns a list of
+/// EIP-2718 encoded consensus receipt envelopes (one per transaction).
+pub(super) async fn get_raw_receipts<H>(
+    hctx: HandlerCtx,
+    (id,): (BlockId,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Vec<Bytes>, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let span = tracing::debug_span!("getRawReceipts", ?id);
+
+    let fut = async move {
+        let block_num = ctx.resolve_block_id(id).map_err(|e| {
+            tracing::warn!(error = %e, ?id, "block resolution failed");
+            DebugError::Resolve(e)
+        })?;
+
+        let receipts = ctx.cold().get_receipts_in_block(block_num).await.map_err(|e| {
+            tracing::warn!(error = %e, block_num, "cold storage read failed");
+            DebugError::from(e)
+        })?;
+
+        let encoded = receipts
+            .into_iter()
+            .map(|cr| {
+                let logs_bloom = cr.receipt.bloom();
+                let logs: Vec<Log> = cr.receipt.logs.into_iter().map(|l| l.inner).collect();
+                let receipt = Receipt {
+                    status: cr.receipt.status,
+                    cumulative_gas_used: cr.receipt.cumulative_gas_used,
+                    logs,
+                };
+                let rwb = ReceiptWithBloom { receipt, logs_bloom };
+                let envelope: ReceiptEnvelope<Log> = match cr.tx_type {
+                    alloy::consensus::TxType::Legacy => ReceiptEnvelope::Legacy(rwb),
+                    alloy::consensus::TxType::Eip2930 => ReceiptEnvelope::Eip2930(rwb),
+                    alloy::consensus::TxType::Eip1559 => ReceiptEnvelope::Eip1559(rwb),
+                    alloy::consensus::TxType::Eip4844 => ReceiptEnvelope::Eip4844(rwb),
+                    alloy::consensus::TxType::Eip7702 => ReceiptEnvelope::Eip7702(rwb),
+                };
+                Bytes::from(envelope.encoded_2718())
+            })
+            .collect();
+
+        Ok(encoded)
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
 }
 
 /// `debug_getRawHeader` handler.
