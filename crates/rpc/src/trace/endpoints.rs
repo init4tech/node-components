@@ -16,7 +16,7 @@ use ajj::HandlerCtx;
 use alloy::{
     consensus::BlockHeader,
     eips::BlockId,
-    primitives::{B256, Bytes, map::HashSet},
+    primitives::{B256, map::HashSet},
     rpc::types::trace::parity::{
         LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
     },
@@ -286,9 +286,8 @@ where
             TraceError::Resolve(e)
         })?;
 
-        let sealed = ctx
-            .resolve_header(BlockId::Number(block_num.into()))
-            .map_err(|e| TraceError::Resolve(e))?;
+        let sealed =
+            ctx.resolve_header(BlockId::Number(block_num.into())).map_err(TraceError::Resolve)?;
 
         let Some(sealed) = sealed else {
             return Ok(None);
@@ -349,7 +348,7 @@ where
         let block_num = meta.block_number();
 
         let block_id = BlockId::Number(block_num.into());
-        let sealed = ctx.resolve_header(block_id).map_err(|e| TraceError::Resolve(e))?;
+        let sealed = ctx.resolve_header(block_id).map_err(TraceError::Resolve)?;
         let header = sealed.ok_or(TraceError::BlockNotFound(block_id))?.into_inner();
 
         let txs = cold.get_transactions_in_block(block_num).await.map_err(TraceError::from)?;
@@ -467,12 +466,11 @@ where
 
         for (request, trace_types) in calls {
             let filled = trevm.fill_tx(&request);
-            let (trace_res, next) =
-                crate::debug::tracer::trace_parity_replay(filled, &trace_types)
-                    .map_err(|e| TraceError::EvmHalt { reason: e.to_string() })?;
+            let (trace_res, next) = crate::debug::tracer::trace_parity_replay(filled, &trace_types)
+                .map_err(|e| TraceError::EvmHalt { reason: e.to_string() })?;
 
             results.push(trace_res);
-            trevm = next.accept_state();
+            trevm = next;
         }
 
         Ok(results)
@@ -506,8 +504,7 @@ where
         let tx: signet_storage_types::TransactionSigned =
             alloy::rlp::Decodable::decode(&mut rlp_bytes.as_ref())
                 .map_err(|e| TraceError::RlpDecode(e.to_string()))?;
-        let recovered =
-            tx.try_into_recovered().map_err(|_| TraceError::SenderRecovery)?;
+        let recovered = tx.try_into_recovered().map_err(|_| TraceError::SenderRecovery)?;
 
         let EvmBlockContext { header, db, spec_id } =
             ctx.resolve_evm_block(id).map_err(|e| match e {
@@ -517,10 +514,8 @@ where
 
         let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
         evm.set_spec_id(spec_id);
-        let trevm = evm
-            .fill_cfg(&CfgFiller(ctx.chain_id()))
-            .fill_block(&header)
-            .fill_tx(&recovered);
+        let trevm =
+            evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header).fill_tx(&recovered);
 
         let (results, _) = crate::debug::tracer::trace_parity_replay(trevm, &trace_types)
             .map_err(|e| TraceError::EvmHalt { reason: e.to_string() })?;
@@ -600,9 +595,7 @@ where
             let cold = ctx.cold();
             let block_id = BlockId::Number(block_num.into());
 
-            let sealed = ctx
-                .resolve_header(block_id)
-                .map_err(TraceError::Resolve)?;
+            let sealed = ctx.resolve_header(block_id).map_err(TraceError::Resolve)?;
 
             let Some(sealed) = sealed else {
                 continue;
@@ -611,10 +604,7 @@ where
             let block_hash = sealed.hash();
             let header = sealed.into_inner();
 
-            let txs = cold
-                .get_transactions_in_block(block_num)
-                .await
-                .map_err(TraceError::from)?;
+            let txs = cold.get_transactions_in_block(block_num).await.map_err(TraceError::from)?;
 
             let db = ctx
                 .revm_state_at_height(header.number.saturating_sub(1))

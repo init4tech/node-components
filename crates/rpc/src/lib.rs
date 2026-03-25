@@ -25,13 +25,16 @@ pub use interest::{ChainEvent, NewBlockNotification, RemovedBlock, ReorgNotifica
 mod debug;
 pub use debug::DebugError;
 
+mod trace;
+pub use trace::TraceError;
+
 mod signet;
 pub use signet::error::SignetError;
 
 pub mod serve;
 pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
-/// Instantiate a combined router with `eth`, `debug`, and `signet`
+/// Instantiate a combined router with `eth`, `debug`, `trace`, and `signet`
 /// namespaces.
 pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
@@ -41,5 +44,6 @@ where
     ajj::Router::new()
         .nest("eth", eth::eth())
         .nest("debug", debug::debug())
+        .nest("trace", trace::trace())
         .nest("signet", signet::signet())
 }
