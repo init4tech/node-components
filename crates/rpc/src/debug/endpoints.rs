@@ -11,7 +11,8 @@ use crate::{
 use ajj::HandlerCtx;
 use alloy::{
     consensus::BlockHeader,
-    eips::BlockId,
+    eips::{BlockId, eip2718::Encodable2718},
+    primitives::{B256, Bytes},
     rpc::types::trace::geth::{GethTrace, TraceResult},
 };
 use itertools::Itertools;
@@ -197,4 +198,81 @@ where
     .instrument(span);
 
     await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
+}
+
+/// `debug_getRawHeader` handler.
+///
+/// Resolves the given [`BlockId`] and returns the RLP-encoded block header.
+pub(super) async fn get_raw_header<H>(
+    hctx: HandlerCtx,
+    (id,): (BlockId,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Bytes, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let span = tracing::debug_span!("getRawHeader", ?id);
+
+    let fut = async move {
+        let block_num = ctx.resolve_block_id(id).map_err(|e| {
+            tracing::warn!(error = %e, ?id, "block resolution failed");
+            DebugError::Resolve(e)
+        })?;
+
+        let sealed = ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "header resolution failed");
+            DebugError::BlockNotFound(id)
+        })?;
+
+        let Some(sealed) = sealed else {
+            return Err(DebugError::BlockNotFound(id));
+        };
+
+        let header = sealed.into_inner();
+        Ok(Bytes::from(alloy::rlp::encode(&header)))
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
+}
+
+/// `debug_getRawTransaction` handler.
+///
+/// Fetches the transaction by hash from cold storage and returns the
+/// EIP-2718 encoded bytes.
+pub(super) async fn get_raw_transaction<H>(
+    hctx: HandlerCtx,
+    (hash,): (B256,),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Bytes, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let span = tracing::debug_span!("getRawTransaction", %hash);
+
+    let fut = async move {
+        let confirmed = ctx
+            .cold()
+            .get_tx_by_hash(hash)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, %hash, "cold storage read failed");
+                DebugError::from(e)
+            })?
+            .ok_or(DebugError::TransactionNotFound(hash))?;
+
+        let tx = confirmed.into_inner().into_inner();
+        Ok(Bytes::from(tx.encoded_2718()))
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
 }
