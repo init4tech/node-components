@@ -51,10 +51,9 @@ impl ajj::IntoErrorPayload for DebugError {
         match self {
             Self::Cold(_) | Self::Hot(_) | Self::EvmHalt { .. } | Self::Internal(_) => -32000,
             Self::Resolve(r) => crate::eth::error::resolve_error_code(r),
-            Self::InvalidTracerConfig => -32602,
+            Self::InvalidTracerConfig | Self::RlpDecode(_) => -32602,
             Self::Unsupported(_) => -32601,
             Self::BlockNotFound(_) | Self::TransactionNotFound(_) => -32001,
-            Self::RlpDecode(_) => -32602,
             Self::SenderRecovery => -32000,
         }
     }

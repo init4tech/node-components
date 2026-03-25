@@ -319,7 +319,7 @@ where
 
         let sealed = ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
             tracing::warn!(error = %e, block_num, "header resolution failed");
-            DebugError::BlockNotFound(id)
+            DebugError::Resolve(e)
         })?;
 
         let Some(sealed) = sealed else {
@@ -381,6 +381,9 @@ where
         let encoded = receipts
             .into_iter()
             .map(|cr| {
+                // Compute bloom before moving logs out. `status` and
+                // `cumulative_gas_used` are Copy, so they remain
+                // accessible after the partial move of `logs`.
                 let logs_bloom = cr.receipt.bloom();
                 let logs: Vec<Log> = cr.receipt.logs.into_iter().map(|l| l.inner).collect();
                 let receipt = Receipt {
@@ -432,7 +435,7 @@ where
 
         let sealed = ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
             tracing::warn!(error = %e, block_num, "header resolution failed");
-            DebugError::BlockNotFound(id)
+            DebugError::Resolve(e)
         })?;
 
         let Some(sealed) = sealed else {
