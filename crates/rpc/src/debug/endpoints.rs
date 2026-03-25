@@ -13,13 +13,67 @@ use alloy::{
     consensus::{BlockHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt},
     eips::{BlockId, eip2718::Encodable2718},
     primitives::{B256, Bytes, Log},
-    rpc::types::trace::geth::{GethTrace, TraceResult},
+    rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
 };
 use itertools::Itertools;
 use signet_hot::{HotKv, model::HotKvRead};
-use signet_types::MagicSig;
+use signet_types::{MagicSig, constants::SignetSystemConstants};
 use tracing::Instrument;
-use trevm::revm::database::DBErrorMarker;
+use trevm::revm::{
+    Database, DatabaseRef,
+    database::{DBErrorMarker, State},
+    primitives::hardfork::SpecId,
+};
+
+/// Shared tracing loop used by block-level debug handlers.
+///
+/// Sets up the EVM from pre-resolved components, iterates through
+/// transactions (stopping at the first magic-signature tx), and traces
+/// each one according to the provided [`GethDebugTracingOptions`].
+#[allow(clippy::too_many_arguments)]
+fn trace_block_inner<Db>(
+    ctx_chain_id: u64,
+    constants: SignetSystemConstants,
+    spec_id: SpecId,
+    header: &alloy::consensus::Header,
+    block_hash: B256,
+    txs: &[signet_storage_types::RecoveredTx],
+    db: State<Db>,
+    opts: &GethDebugTracingOptions,
+) -> Result<Vec<TraceResult>, DebugError>
+where
+    Db: Database + DatabaseRef,
+    <Db as Database>::Error: DBErrorMarker,
+    <Db as DatabaseRef>::Error: DBErrorMarker,
+{
+    let mut evm = signet_evm::signet_evm(db, constants);
+    evm.set_spec_id(spec_id);
+    let mut trevm = evm.fill_cfg(&CfgFiller(ctx_chain_id)).fill_block(header);
+
+    let mut frames = Vec::with_capacity(txs.len());
+    let mut txns = txs.iter().enumerate().peekable();
+    for (idx, tx) in txns
+        .by_ref()
+        .peeking_take_while(|(_, t)| MagicSig::try_from_signature(t.signature()).is_none())
+    {
+        let tx_info = alloy::rpc::types::TransactionInfo {
+            hash: Some(*tx.tx_hash()),
+            index: Some(idx as u64),
+            block_hash: Some(block_hash),
+            block_number: Some(header.number),
+            base_fee: header.base_fee_per_gas(),
+        };
+
+        let t = trevm.fill_tx(tx);
+        let frame;
+        (frame, trevm) = crate::debug::tracer::trace(t, opts, tx_info)?;
+        frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.tx_hash()) });
+
+        tracing::debug!(tx_index = idx, tx_hash = ?tx.tx_hash(), "Traced transaction");
+    }
+
+    Ok(frames)
+}
 
 /// `debug_traceBlockByNumber` and `debug_traceBlockByHash` handler.
 pub(super) async fn trace_block<T, H>(
@@ -68,8 +122,6 @@ where
 
         tracing::debug!(number = header.number, "Loaded block");
 
-        let mut frames = Vec::with_capacity(txs.len());
-
         // State BEFORE this block.
         let db = ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
             tracing::warn!(error = %e, block_num, "hot storage read failed");
@@ -77,32 +129,16 @@ where
         })?;
 
         let spec_id = ctx.spec_id_for_header(&header);
-        let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
-        evm.set_spec_id(spec_id);
-        let mut trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
-
-        let mut txns = txs.iter().enumerate().peekable();
-        for (idx, tx) in txns
-            .by_ref()
-            .peeking_take_while(|(_, t)| MagicSig::try_from_signature(t.signature()).is_none())
-        {
-            let tx_info = alloy::rpc::types::TransactionInfo {
-                hash: Some(*tx.tx_hash()),
-                index: Some(idx as u64),
-                block_hash: Some(block_hash),
-                block_number: Some(header.number),
-                base_fee: header.base_fee_per_gas(),
-            };
-
-            let t = trevm.fill_tx(tx);
-            let frame;
-            (frame, trevm) = crate::debug::tracer::trace(t, &opts, tx_info)?;
-            frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.tx_hash()) });
-
-            tracing::debug!(tx_index = idx, tx_hash = ?tx.tx_hash(), "Traced transaction");
-        }
-
-        Ok(frames)
+        trace_block_inner(
+            ctx.chain_id(),
+            ctx.constants().clone(),
+            spec_id,
+            &header,
+            block_hash,
+            &txs,
+            db,
+            &opts,
+        )
     }
     .instrument(span);
 
