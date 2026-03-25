@@ -10,7 +10,10 @@ use crate::{
 };
 use ajj::HandlerCtx;
 use alloy::{
-    consensus::{BlockHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt},
+    consensus::{
+        BlockHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt,
+        transaction::SignerRecoverable,
+    },
     eips::{BlockId, eip2718::Encodable2718},
     primitives::{B256, Bytes, Log},
     rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
@@ -234,6 +237,61 @@ where
     .instrument(span);
 
     await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
+}
+
+/// `debug_traceBlock` — trace all transactions in a raw RLP-encoded block.
+pub(super) async fn trace_block_rlp<H>(
+    hctx: HandlerCtx,
+    (rlp_bytes, opts): (Bytes, Option<GethDebugTracingOptions>),
+    ctx: StorageRpcCtx<H>,
+) -> Result<Vec<TraceResult>, DebugError>
+where
+    H: HotKv + Send + Sync + 'static,
+    <H::RoTx as HotKvRead>::Error: DBErrorMarker,
+{
+    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let _permit = ctx.acquire_tracing_permit().await;
+
+    let span = tracing::debug_span!("traceBlock(RLP)", bytes_len = rlp_bytes.len());
+
+    let fut = async move {
+        let block: alloy::consensus::Block<signet_storage_types::TransactionSigned> =
+            alloy::rlp::Decodable::decode(&mut rlp_bytes.as_ref())
+                .map_err(|e| DebugError::RlpDecode(e.to_string()))?;
+
+        let block_hash = block.header.hash_slow();
+
+        let txs = block
+            .body
+            .transactions
+            .into_iter()
+            .map(|tx| tx.try_into_recovered().map_err(|_| DebugError::SenderRecovery))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let db = ctx.revm_state_at_height(block.header.number.saturating_sub(1)).map_err(|e| {
+            tracing::warn!(error = %e, number = block.header.number, "hot storage read failed");
+            DebugError::from(e)
+        })?;
+
+        let spec_id = ctx.spec_id_for_header(&block.header);
+
+        trace_block_inner(
+            ctx.chain_id(),
+            ctx.constants().clone(),
+            spec_id,
+            &block.header,
+            block_hash,
+            &txs,
+            db,
+            &opts,
+        )
+    }
+    .instrument(span);
+
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
 }
 
 /// `debug_getRawBlock` handler.
