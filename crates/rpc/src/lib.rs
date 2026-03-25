@@ -28,11 +28,14 @@ pub use debug::DebugError;
 mod signet;
 pub use signet::error::SignetError;
 
+mod net;
+mod web3;
+
 pub mod serve;
 pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
-/// Instantiate a combined router with `eth`, `debug`, and `signet`
-/// namespaces.
+/// Instantiate a combined router with `eth`, `debug`, `signet`, `web3`, and
+/// `net` namespaces.
 pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
     H: signet_hot::HotKv + Send + Sync + 'static,
@@ -42,4 +45,6 @@ where
         .nest("eth", eth::eth())
         .nest("debug", debug::debug())
         .nest("signet", signet::signet())
+        .nest("web3", web3::web3())
+        .nest("net", net::net())
 }
