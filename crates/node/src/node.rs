@@ -287,7 +287,7 @@ where
             match self.storage.append_blocks(vec![executed]) {
                 Ok(()) => {}
                 Err(StorageError::Cold(e)) => {
-                    tracing::warn!(%e, "cold storage backpressure, hot storage is ahead");
+                    tracing::debug!(%e, "cold storage backpressure, hot storage is ahead");
                 }
                 Err(e) => return Err(e.into()),
             }
