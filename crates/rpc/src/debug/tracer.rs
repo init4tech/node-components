@@ -53,7 +53,7 @@ where
             NoopFrame::default().into(),
             trevm
                 .run()
-                .map_err(|err| DebugError::Evm(err.into_error().to_string()))?
+                .map_err(|err| DebugError::EvmHalt { reason: err.into_error().to_string() })?
                 .accept_state(),
         )),
         GethDebugBuiltInTracerType::MuxTracer => trace_mux(&config.tracer_config, trevm, tx_info),
@@ -70,7 +70,7 @@ where
     let mut four_byte = FourByteInspector::default();
     let trevm = trevm
         .try_with_inspector(&mut four_byte, |trevm| trevm.run())
-        .map_err(|e| DebugError::Evm(e.into_error().to_string()))?;
+        .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?;
     Ok((FourByteFrame::from(four_byte).into(), trevm.accept_state()))
 }
 
@@ -90,7 +90,7 @@ where
 
     let trevm = trevm
         .try_with_inspector(&mut inspector, |trevm| trevm.run())
-        .map_err(|e| DebugError::Evm(e.into_error().to_string()))?;
+        .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?;
 
     let frame = inspector
         .with_transaction_gas_limit(trevm.gas_limit())
@@ -118,7 +118,7 @@ where
 
     let trevm = trevm
         .try_with_inspector(&mut inspector, |trevm| trevm.run())
-        .map_err(|e| DebugError::Evm(e.into_error().to_string()))?;
+        .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?;
     let gas_limit = trevm.gas_limit();
 
     // NB: state must be UNCOMMITTED for prestate diff computation.
@@ -128,7 +128,7 @@ where
         .with_transaction_gas_limit(gas_limit)
         .into_geth_builder()
         .geth_prestate_traces(&result, &prestate_config, trevm.inner_mut_unchecked().db_mut())
-        .map_err(|err| DebugError::Evm(err.to_string()))?;
+        .map_err(|err| DebugError::EvmHalt { reason: err.to_string() })?;
 
     // Equivalent to `trevm.accept_state()`.
     trevm.inner_mut_unchecked().db_mut().commit(result.state);
@@ -155,7 +155,7 @@ where
 
     let trevm = trevm
         .try_with_inspector(&mut inspector, |trevm| trevm.run())
-        .map_err(|e| DebugError::Evm(e.into_error().to_string()))?;
+        .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?;
 
     let frame = inspector
         .with_transaction_gas_limit(trevm.gas_limit())
@@ -178,18 +178,18 @@ where
         tracer_config.clone().into_mux_config().map_err(|_| DebugError::InvalidTracerConfig)?;
 
     let mut inspector = MuxInspector::try_from_config(mux_config)
-        .map_err(|err| DebugError::Evm(err.to_string()))?;
+        .map_err(|err| DebugError::EvmHalt { reason: err.to_string() })?;
 
     let trevm = trevm
         .try_with_inspector(&mut inspector, |trevm| trevm.run())
-        .map_err(|e| DebugError::Evm(e.into_error().to_string()))?;
+        .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?;
 
     // NB: state must be UNCOMMITTED for prestate diff computation.
     let (result, mut trevm) = trevm.take_result_and_state();
 
     let frame = inspector
         .try_into_mux_frame(&result, trevm.inner_mut_unchecked().db_mut(), tx_info)
-        .map_err(|err| DebugError::Evm(err.to_string()))?;
+        .map_err(|err| DebugError::EvmHalt { reason: err.to_string() })?;
 
     // Equivalent to `trevm.accept_state()`.
     trevm.inner_mut_unchecked().db_mut().commit(result.state);

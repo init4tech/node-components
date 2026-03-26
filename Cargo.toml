@@ -64,7 +64,7 @@ signet-cold-mdbx = "0.6.5"
 signet-storage-types = "0.6.5"
 
 # ajj
-ajj = { version = "0.6.0" }
+ajj = "0.7.0"
 
 # trevm
 trevm = { version = "0.34.0", features = ["full_env_cfg"] }

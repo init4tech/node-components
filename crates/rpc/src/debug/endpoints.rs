@@ -6,16 +6,15 @@ use crate::{
         DebugError,
         types::{TraceBlockParams, TraceTransactionParams},
     },
-    eth::helpers::{CfgFiller, await_handler, response_tri},
+    eth::helpers::{CfgFiller, await_handler},
 };
-use ajj::{HandlerCtx, ResponsePayload};
+use ajj::HandlerCtx;
 use alloy::{
     consensus::BlockHeader,
     eips::BlockId,
     rpc::types::trace::geth::{GethTrace, TraceResult},
 };
 use itertools::Itertools;
-use signet_evm::EvmErrored;
 use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::MagicSig;
 use tracing::Instrument;
@@ -26,13 +25,13 @@ pub(super) async fn trace_block<T, H>(
     hctx: HandlerCtx,
     TraceBlockParams(id, opts): TraceBlockParams<T>,
     ctx: StorageRpcCtx<H>,
-) -> ResponsePayload<Vec<TraceResult>, DebugError>
+) -> Result<Vec<TraceResult>, DebugError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
+    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
 
     // Acquire a tracing semaphore permit to limit concurrent debug
     // requests. The permit is held for the entire handler lifetime and
@@ -44,41 +43,37 @@ where
 
     let fut = async move {
         let cold = ctx.cold();
-        let block_num = response_tri!(ctx.resolve_block_id(id).map_err(|e| {
+        let block_num = ctx.resolve_block_id(id).map_err(|e| {
             tracing::warn!(error = %e, ?id, "block resolution failed");
-            DebugError::BlockNotFound(id)
-        }));
+            DebugError::Resolve(e)
+        })?;
 
-        let sealed =
-            response_tri!(ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
-                tracing::warn!(error = %e, block_num, "header resolution failed");
-                DebugError::BlockNotFound(id)
-            }));
+        let sealed = ctx.resolve_header(BlockId::Number(block_num.into())).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "header resolution failed");
+            DebugError::Resolve(e)
+        })?;
 
         let Some(sealed) = sealed else {
-            return ResponsePayload::internal_error_message(
-                format!("block not found: {id}").into(),
-            );
+            return Err(DebugError::BlockNotFound(id));
         };
 
         let block_hash = sealed.hash();
         let header = sealed.into_inner();
 
-        let txs = response_tri!(cold.get_transactions_in_block(block_num).await.map_err(|e| {
+        let txs = cold.get_transactions_in_block(block_num).await.map_err(|e| {
             tracing::warn!(error = %e, block_num, "cold storage read failed");
             DebugError::from(e)
-        }));
+        })?;
 
         tracing::debug!(number = header.number, "Loaded block");
 
         let mut frames = Vec::with_capacity(txs.len());
 
         // State BEFORE this block.
-        let db =
-            response_tri!(ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
-                tracing::warn!(error = %e, block_num, "hot storage read failed");
-                DebugError::from(e)
-            }));
+        let db = ctx.revm_state_at_height(header.number.saturating_sub(1)).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "hot storage read failed");
+            DebugError::from(e)
+        })?;
 
         let spec_id = ctx.spec_id_for_header(&header);
         let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
@@ -100,17 +95,20 @@ where
 
             let t = trevm.fill_tx(tx);
             let frame;
-            (frame, trevm) = response_tri!(crate::debug::tracer::trace(t, &opts, tx_info));
+            (frame, trevm) = crate::debug::tracer::trace(t, &opts, tx_info)?;
             frames.push(TraceResult::Success { result: frame, tx_hash: Some(*tx.tx_hash()) });
 
             tracing::debug!(tx_index = idx, tx_hash = ?tx.tx_hash(), "Traced transaction");
         }
 
-        ResponsePayload(Ok(frames))
+        Ok(frames)
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn(fut))
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
 }
 
 /// `debug_traceTransaction` handler.
@@ -118,12 +116,12 @@ pub(super) async fn trace_transaction<H>(
     hctx: HandlerCtx,
     TraceTransactionParams(tx_hash, opts): TraceTransactionParams,
     ctx: StorageRpcCtx<H>,
-) -> ResponsePayload<GethTrace, DebugError>
+) -> Result<GethTrace, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = response_tri!(opts.ok_or(DebugError::InvalidTracerConfig));
+    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
 
     // Held for the handler duration; dropped when the async block completes.
     let _permit = ctx.acquire_tracing_permit().await;
@@ -134,37 +132,36 @@ where
         let cold = ctx.cold();
 
         // Look up the transaction and its containing block.
-        let confirmed = response_tri!(cold.get_tx_by_hash(tx_hash).await.map_err(|e| {
+        let confirmed = cold.get_tx_by_hash(tx_hash).await.map_err(|e| {
             tracing::warn!(error = %e, %tx_hash, "cold storage read failed");
             DebugError::from(e)
-        }));
+        })?;
 
-        let confirmed = response_tri!(confirmed.ok_or(DebugError::TransactionNotFound));
+        let confirmed = confirmed.ok_or(DebugError::TransactionNotFound(tx_hash))?;
         let (_tx, meta) = confirmed.into_parts();
 
         let block_num = meta.block_number();
         let block_hash = meta.block_hash();
 
         let block_id = BlockId::Number(block_num.into());
-        let sealed = response_tri!(ctx.resolve_header(block_id).map_err(|e| {
+        let sealed = ctx.resolve_header(block_id).map_err(|e| {
             tracing::warn!(error = %e, block_num, "header resolution failed");
             DebugError::BlockNotFound(block_id)
-        }));
-        let header = response_tri!(sealed.ok_or(DebugError::BlockNotFound(block_id))).into_inner();
+        })?;
+        let header = sealed.ok_or(DebugError::BlockNotFound(block_id))?.into_inner();
 
-        let txs = response_tri!(cold.get_transactions_in_block(block_num).await.map_err(|e| {
+        let txs = cold.get_transactions_in_block(block_num).await.map_err(|e| {
             tracing::warn!(error = %e, block_num, "cold storage read failed");
             DebugError::from(e)
-        }));
+        })?;
 
         tracing::debug!(number = block_num, "Loaded containing block");
 
         // State BEFORE this block.
-        let db =
-            response_tri!(ctx.revm_state_at_height(block_num.saturating_sub(1)).map_err(|e| {
-                tracing::warn!(error = %e, block_num, "hot storage read failed");
-                DebugError::from(e)
-            }));
+        let db = ctx.revm_state_at_height(block_num.saturating_sub(1)).map_err(|e| {
+            tracing::warn!(error = %e, block_num, "hot storage read failed");
+            DebugError::from(e)
+        })?;
 
         let spec_id = ctx.spec_id_for_header(&header);
         let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
@@ -175,15 +172,16 @@ where
         let mut txns = txs.iter().enumerate().peekable();
         for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.tx_hash() != &tx_hash) {
             if MagicSig::try_from_signature(tx.signature()).is_some() {
-                return ResponsePayload::internal_error_message(
-                    DebugError::TransactionNotFound.to_string().into(),
-                );
+                return Err(DebugError::TransactionNotFound(tx_hash));
             }
 
-            trevm = response_tri!(trevm.run_tx(tx).map_err(EvmErrored::into_error)).accept_state();
+            trevm = trevm
+                .run_tx(tx)
+                .map_err(|e| DebugError::EvmHalt { reason: e.into_error().to_string() })?
+                .accept_state();
         }
 
-        let (index, tx) = response_tri!(txns.next().ok_or(DebugError::TransactionNotFound));
+        let (index, tx) = txns.next().ok_or(DebugError::TransactionNotFound(tx_hash))?;
 
         let trevm = trevm.fill_tx(tx);
 
@@ -195,11 +193,14 @@ where
             base_fee: header.base_fee_per_gas(),
         };
 
-        let res = response_tri!(crate::debug::tracer::trace(trevm, &opts, tx_info)).0;
+        let res = crate::debug::tracer::trace(trevm, &opts, tx_info)?.0;
 
-        ResponsePayload(Ok(res))
+        Ok(res)
     }
     .instrument(span);
 
-    await_handler!(@response_option hctx.spawn(fut))
+    await_handler!(
+        hctx.spawn(fut),
+        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
+    )
 }

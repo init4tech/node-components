@@ -2,10 +2,10 @@
 
 use crate::{
     config::{EvmBlockContext, StorageRpcCtx},
-    eth::helpers::{CfgFiller, await_handler, response_tri},
+    eth::helpers::{CfgFiller, await_handler},
     signet::error::SignetError,
 };
-use ajj::{HandlerCtx, ResponsePayload};
+use ajj::HandlerCtx;
 use alloy::eips::BlockId;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
 use signet_hot::{HotKv, model::HotKvRead};
@@ -23,13 +23,13 @@ pub(super) async fn send_order<H>(
     hctx: HandlerCtx,
     order: SignedOrder,
     ctx: StorageRpcCtx<H>,
-) -> ResponsePayload<(), SignetError>
+) -> Result<(), SignetError>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let Some(tx_cache) = ctx.tx_cache().cloned() else {
-        return ResponsePayload(Err(SignetError::TxCacheNotProvided.into()));
+        return Err(SignetError::TxCacheNotProvided);
     };
 
     let task = |hctx: HandlerCtx| async move {
@@ -38,10 +38,10 @@ where
                 tracing::warn!(error = %e, "failed to forward order");
             }
         });
-        ResponsePayload(Ok(()))
+        Ok(())
     };
 
-    await_handler!(@response_option hctx.spawn_with_ctx(task))
+    await_handler!(hctx.spawn_with_ctx(task), SignetError::Timeout)
 }
 
 /// `signet_callBundle` handler.
@@ -49,7 +49,7 @@ pub(super) async fn call_bundle<H>(
     hctx: HandlerCtx,
     bundle: SignetCallBundle,
     ctx: StorageRpcCtx<H>,
-) -> ResponsePayload<SignetCallBundleResponse, SignetError>
+) -> Result<SignetCallBundleResponse, SignetError>
 where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
@@ -61,10 +61,10 @@ where
         let block_id: BlockId = id.into();
 
         let EvmBlockContext { header, db, spec_id } =
-            response_tri!(ctx.resolve_evm_block(block_id).map_err(|e| {
+            ctx.resolve_evm_block(block_id).map_err(|e| {
                 tracing::warn!(error = %e, ?block_id, "block resolution failed for bundle");
                 SignetError::Resolve(e.to_string())
-            }));
+            })?;
 
         let mut driver = SignetBundleDriver::from(&bundle);
 
@@ -72,21 +72,19 @@ where
         trevm.set_spec_id(spec_id);
         let trevm = trevm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
-        response_tri!(trevm.drive_bundle(&mut driver).map_err(|e| {
+        trevm.drive_bundle(&mut driver).map_err(|e| {
             let e = e.into_error();
             tracing::warn!(error = %e, "evm error during bundle simulation");
-            SignetError::Evm(e.to_string())
-        }));
+            SignetError::EvmHalt { reason: e.to_string() }
+        })?;
 
-        ResponsePayload(Ok(driver.into_response()))
+        Ok(driver.into_response())
     };
 
     let task = async move {
         select! {
             _ = tokio::time::sleep(Duration::from_millis(timeout)) => {
-                ResponsePayload::internal_error_message(
-                    SignetError::Timeout.to_string().into(),
-                )
+                Err(SignetError::Timeout)
             }
             result = task => {
                 result
@@ -94,5 +92,5 @@ where
         }
     };
 
-    await_handler!(@response_option hctx.spawn(task))
+    await_handler!(hctx.spawn(task), SignetError::Timeout)
 }
