@@ -11,7 +11,7 @@ use signet_rpc::{
     ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
     ServeConfig, StorageRpcConfig,
 };
-use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
+use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, StorageError, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{fmt, sync::Arc};
 use tokio::sync::watch;
@@ -282,7 +282,15 @@ where
             );
             let executed = processor.process_block(block_extracts).await?;
             self.notify_new_block(&executed);
-            self.storage.append_blocks(vec![executed])?;
+            // Cold backpressure is non-fatal: hot storage is authoritative
+            // and cold will catch up once the channel drains.
+            match self.storage.append_blocks(vec![executed]) {
+                Ok(()) => {}
+                Err(StorageError::Cold(e)) => {
+                    tracing::warn!(%e, "cold storage backpressure, hot storage is ahead");
+                }
+                Err(e) => return Err(e.into()),
+            }
             processed = true;
         }
         Ok(processed)
