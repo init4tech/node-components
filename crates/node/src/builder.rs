@@ -5,7 +5,11 @@ use eyre::OptionExt;
 use signet_blobber::CacheHandle;
 use signet_block_processor::AliasOracleFactory;
 use signet_cold::BlockData;
-use signet_hot::db::{HotDbRead, UnsafeDbWrite};
+use signet_hot::{
+    db::{HotDbRead, UnsafeDbWrite},
+    model::HotKvWrite,
+    tables,
+};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::HostNotifier;
 use signet_rpc::{ServeConfig, StorageRpcConfig};
@@ -176,6 +180,23 @@ where
         self.client.get_or_insert_default();
         self.notifier.as_ref().ok_or_eyre("Notifier must be set")?;
         let storage = self.storage.as_ref().ok_or_eyre("Storage must be set")?;
+
+        // Ensure all hot storage tables exist. On a fresh MDBX database,
+        // named tables must be created in a write transaction before
+        // read-only transactions can open them.
+        {
+            let writer = storage.hot().writer()?;
+            writer.queue_create::<tables::Headers>()?;
+            writer.queue_create::<tables::HeaderNumbers>()?;
+            writer.queue_create::<tables::Bytecodes>()?;
+            writer.queue_create::<tables::PlainAccountState>()?;
+            writer.queue_create::<tables::PlainStorageState>()?;
+            writer.queue_create::<tables::AccountsHistory>()?;
+            writer.queue_create::<tables::AccountChangeSets>()?;
+            writer.queue_create::<tables::StorageHistory>()?;
+            writer.queue_create::<tables::StorageChangeSets>()?;
+            writer.raw_commit()?;
+        }
 
         // Load genesis into hot storage if absent.
         let reader = storage.reader()?;
