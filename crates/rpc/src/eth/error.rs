@@ -114,24 +114,40 @@ impl IntoErrorPayload for EthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::resolve::ResolveError;
     use alloy::primitives::B256;
 
     #[test]
-    fn block_not_found_code() {
+    fn cold_storage_error() {
+        let err = EthError::Cold(signet_cold::ColdStorageError::NotFound("test".into()));
+        assert_eq!(err.error_code(), -32000);
+        assert_eq!(err.error_message(), "server error");
+        assert_eq!(err.error_data(), None);
+    }
+
+    #[test]
+    fn resolve_hash_not_found() {
+        let err = EthError::Resolve(ResolveError::HashNotFound(B256::ZERO));
+        assert_eq!(err.error_code(), -32001);
+        assert!(err.error_message().contains("block hash not found"));
+    }
+
+    #[test]
+    fn block_not_found() {
         let err = EthError::BlockNotFound(BlockId::latest());
         assert_eq!(err.error_code(), -32001);
         assert!(err.error_message().contains("block not found"));
     }
 
     #[test]
-    fn transaction_missing_code() {
+    fn transaction_missing() {
         let err = EthError::TransactionMissing(B256::ZERO);
         assert_eq!(err.error_code(), -32001);
         assert!(err.error_message().contains("transaction not found"));
     }
 
     #[test]
-    fn evm_revert_code_and_data() {
+    fn evm_revert() {
         let output = Bytes::from(vec![0xde, 0xad]);
         let err = EthError::EvmRevert { output: output.clone() };
         assert_eq!(err.error_code(), 3);
@@ -140,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn evm_halt_code() {
+    fn evm_halt() {
         let err = EthError::EvmHalt { reason: "OutOfGas".into() };
         assert_eq!(err.error_code(), -32000);
         assert!(err.error_message().contains("OutOfGas"));
@@ -148,24 +164,23 @@ mod tests {
     }
 
     #[test]
-    fn invalid_params_code() {
+    fn invalid_params() {
         let err = EthError::InvalidParams("bad param".into());
         assert_eq!(err.error_code(), -32602);
         assert_eq!(err.error_message(), "bad param");
     }
 
     #[test]
-    fn internal_code() {
+    fn internal() {
         let err = EthError::Internal("something broke".into());
         assert_eq!(err.error_code(), -32000);
         assert_eq!(err.error_message(), "something broke");
     }
 
     #[test]
-    fn resolve_hash_not_found_code() {
-        use crate::config::resolve::ResolveError;
-        let inner = ResolveError::HashNotFound(B256::ZERO);
-        assert_eq!(resolve_error_code(&inner), -32001);
-        assert!(resolve_error_message(&inner).contains("block hash not found"));
+    fn task_panic_constructor() {
+        let err = EthError::task_panic();
+        assert_eq!(err.error_code(), -32000);
+        assert!(err.error_message().contains("task panicked"));
     }
 }

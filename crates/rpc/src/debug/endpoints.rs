@@ -105,10 +105,7 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_traceTransaction` handler.
@@ -146,7 +143,7 @@ where
         let block_id = BlockId::Number(block_num.into());
         let sealed = ctx.resolve_header(block_id).map_err(|e| {
             tracing::warn!(error = %e, block_num, "header resolution failed");
-            DebugError::BlockNotFound(block_id)
+            DebugError::Resolve(e)
         })?;
         let header = sealed.ok_or(DebugError::BlockNotFound(block_id))?.into_inner();
 
@@ -199,8 +196,5 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }

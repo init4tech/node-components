@@ -41,7 +41,10 @@ where
         Ok(())
     };
 
-    await_handler!(hctx.spawn_with_ctx(task), SignetError::Timeout)
+    await_handler!(
+        hctx.spawn_with_ctx(task),
+        SignetError::Internal("task panicked or cancelled".into())
+    )
 }
 
 /// `signet_callBundle` handler.
@@ -63,7 +66,7 @@ where
         let EvmBlockContext { header, db, spec_id } =
             ctx.resolve_evm_block(block_id).map_err(|e| {
                 tracing::warn!(error = %e, ?block_id, "block resolution failed for bundle");
-                SignetError::Resolve(e.to_string())
+                SignetError::from(e)
             })?;
 
         let mut driver = SignetBundleDriver::from(&bundle);
@@ -92,5 +95,5 @@ where
         }
     };
 
-    await_handler!(hctx.spawn(task), SignetError::Timeout)
+    await_handler!(hctx.spawn(task), SignetError::Internal("task panicked or cancelled".into()))
 }
