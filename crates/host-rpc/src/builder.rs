@@ -10,6 +10,7 @@ use tracing::warn;
 /// let notifier = RpcHostNotifierBuilder::new(provider)
 ///     .with_buffer_capacity(128)
 ///     .with_backfill_batch_size(64)
+///     .with_max_rpc_concurrency(16)
 ///     .with_genesis_timestamp(1_606_824_023)
 ///     .build()
 ///     .await?;
@@ -19,6 +20,7 @@ pub struct RpcHostNotifierBuilder<P> {
     provider: P,
     buffer_capacity: usize,
     backfill_batch_size: u64,
+    max_rpc_concurrency: usize,
     slot_seconds: u64,
     genesis_timestamp: u64,
 }
@@ -33,20 +35,33 @@ where
             provider,
             buffer_capacity: crate::DEFAULT_BUFFER_CAPACITY,
             backfill_batch_size: crate::DEFAULT_BACKFILL_BATCH_SIZE,
+            max_rpc_concurrency: crate::DEFAULT_MAX_RPC_CONCURRENCY,
             slot_seconds: crate::notifier::DEFAULT_SLOT_SECONDS,
             genesis_timestamp: 0,
         }
     }
 
     /// Set the block buffer capacity (default: 64).
+    ///
+    /// Values below 1 are clamped to 1.
     pub const fn with_buffer_capacity(mut self, capacity: usize) -> Self {
-        self.buffer_capacity = capacity;
+        self.buffer_capacity = if capacity > 0 { capacity } else { 1 };
         self
     }
 
     /// Set the backfill batch size (default: 32).
+    ///
+    /// Values below 1 are clamped to 1.
     pub const fn with_backfill_batch_size(mut self, batch_size: u64) -> Self {
-        self.backfill_batch_size = batch_size;
+        self.backfill_batch_size = if batch_size > 0 { batch_size } else { 1 };
+        self
+    }
+
+    /// Set the maximum number of concurrent RPC block fetches (default: 8).
+    ///
+    /// Values below 1 are clamped to 1.
+    pub const fn with_max_rpc_concurrency(mut self, max_rpc_concurrency: usize) -> Self {
+        self.max_rpc_concurrency = if max_rpc_concurrency > 0 { max_rpc_concurrency } else { 1 };
         self
     }
 
@@ -75,6 +90,7 @@ where
             header_sub,
             self.buffer_capacity,
             self.backfill_batch_size,
+            self.max_rpc_concurrency,
             self.slot_seconds,
             self.genesis_timestamp,
         ))

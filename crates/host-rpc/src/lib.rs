@@ -15,6 +15,8 @@
 pub(crate) const DEFAULT_BUFFER_CAPACITY: usize = 64;
 /// Default backfill batch size.
 pub(crate) const DEFAULT_BACKFILL_BATCH_SIZE: u64 = 32;
+/// Default maximum number of concurrent RPC block fetches.
+pub(crate) const DEFAULT_MAX_RPC_CONCURRENCY: usize = 8;
 
 mod builder;
 pub use builder::RpcHostNotifierBuilder;
@@ -28,9 +30,10 @@ pub use error::RpcHostError;
 mod notifier;
 pub use notifier::RpcHostNotifier;
 
+mod latest;
+mod metrics;
 mod segment;
 pub use segment::{RpcBlock, RpcChainSegment};
-mod metrics;
 
 mod alias;
 pub use alias::RpcAliasOracle;

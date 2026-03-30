@@ -10,6 +10,7 @@ const BACKFILL_BATCHES: &str = "host_rpc.backfill_batches";
 const TAG_REFRESHES: &str = "host_rpc.tag_refreshes";
 const STALE_HINTS: &str = "host_rpc.stale_hints";
 const RPC_ERRORS: &str = "host_rpc.rpc_errors";
+const HEADERS_COALESCED: &str = "host_rpc.headers_coalesced";
 
 const WALK_CHAIN_DURATION: &str = "host_rpc.walk_chain.duration_ms";
 const FETCH_BLOCK_DURATION: &str = "host_rpc.fetch_block.duration_ms";
@@ -33,6 +34,7 @@ fn ensure_described() {
         describe_counter!(TAG_REFRESHES, "Epoch boundary tag refreshes");
         describe_counter!(STALE_HINTS, "Stale subscription hints that fell back to latest");
         describe_counter!(RPC_ERRORS, "RPC transport/provider errors");
+        describe_counter!(HEADERS_COALESCED, "Stale subscription headers coalesced");
         describe_histogram!(WALK_CHAIN_DURATION, "Time to walk the chain (ms)");
         describe_histogram!(FETCH_BLOCK_DURATION, "Single block+receipts fetch (ms)");
         describe_histogram!(BACKFILL_BATCH_DURATION, "Full backfill batch (ms)");
@@ -117,4 +119,10 @@ pub(crate) fn set_chain_view_len(len: usize) {
 pub(crate) fn set_tip(number: u64) {
     ensure_described();
     gauge!(TIP_NUMBER).set(number as f64);
+}
+
+/// Increment the headers-coalesced counter.
+pub(crate) fn inc_headers_coalesced(count: u64) {
+    ensure_described();
+    counter!(HEADERS_COALESCED).increment(count);
 }

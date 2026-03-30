@@ -1,4 +1,4 @@
-use crate::{RpcBlock, RpcChainSegment, RpcHostError};
+use crate::{RpcBlock, RpcChainSegment, RpcHostError, latest::Latest};
 use alloy::{
     consensus::{BlockHeader, transaction::Recovered},
     eips::{BlockId, BlockNumberOrTag},
@@ -8,7 +8,7 @@ use alloy::{
     pubsub::SubscriptionStream,
     rpc::types::Header as RpcHeader,
 };
-use futures_util::{StreamExt, stream::FuturesOrdered};
+use futures_util::{StreamExt, TryStreamExt, stream};
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
 use std::{collections::VecDeque, sync::Arc, time::Instant};
@@ -56,7 +56,8 @@ pub struct RpcHostNotifier<P> {
     provider: P,
 
     /// Subscription stream of new block headers (used as wake-up signal).
-    header_sub: SubscriptionStream<RpcHeader>,
+    /// Wrapped in [`Latest`] to coalesce stale buffered headers.
+    header_sub: Latest<SubscriptionStream<RpcHeader>>,
 
     /// Local chain view — lightweight ring buffer of (number, hash).
     chain_view: VecDeque<(u64, B256)>,
@@ -80,6 +81,9 @@ pub struct RpcHostNotifier<P> {
     /// Max blocks per backfill batch.
     backfill_batch_size: u64,
 
+    /// Maximum number of concurrent RPC block fetches.
+    max_rpc_concurrency: usize,
+
     /// Seconds per slot, used for epoch calculation.
     slot_seconds: u64,
 
@@ -92,6 +96,7 @@ impl<P> core::fmt::Debug for RpcHostNotifier<P> {
         f.debug_struct("RpcHostNotifier")
             .field("chain_view_len", &self.chain_view.len())
             .field("buffer_capacity", &self.buffer_capacity)
+            .field("max_rpc_concurrency", &self.max_rpc_concurrency)
             .field("backfill_from", &self.backfill_from)
             .finish_non_exhaustive()
     }
@@ -107,12 +112,13 @@ where
         header_sub: SubscriptionStream<RpcHeader>,
         buffer_capacity: usize,
         backfill_batch_size: u64,
+        max_rpc_concurrency: usize,
         slot_seconds: u64,
         genesis_timestamp: u64,
     ) -> Self {
         Self {
             provider,
-            header_sub,
+            header_sub: Latest::new(header_sub),
             chain_view: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             cached_safe: None,
@@ -120,6 +126,7 @@ where
             last_tag_epoch: None,
             backfill_from: None,
             backfill_batch_size,
+            max_rpc_concurrency,
             slot_seconds,
             genesis_timestamp,
         }
@@ -213,22 +220,17 @@ where
     /// Fetch full blocks+receipts for a list of hashes, concurrently.
     ///
     /// Hashes must be in ascending block-number order. Results preserve
-    /// that order.
+    /// that order. Concurrency is bounded by [`Self::max_rpc_concurrency`].
     #[tracing::instrument(level = "debug", skip_all, fields(count = hashes.len()))]
     async fn fetch_blocks_by_hash(
         &self,
         hashes: &[(u64, B256)],
     ) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
-        let mut futures = hashes
-            .iter()
-            .map(|&(_, hash)| self.fetch_block_by_hash(hash))
-            .collect::<FuturesOrdered<_>>();
-
-        let mut blocks = Vec::with_capacity(hashes.len());
-        while let Some(result) = futures.next().await {
-            blocks.push(Arc::new(result?));
-        }
-        Ok(blocks)
+        stream::iter(hashes.iter().copied().map(|(_, hash)| self.fetch_block_by_hash(hash)))
+            .buffered(self.max_rpc_concurrency)
+            .map_ok(Arc::new)
+            .try_collect()
+            .await
     }
 
     /// Fetch a single block with receipts by number (used for backfill only).
@@ -250,22 +252,19 @@ where
 
     /// Fetch a range of blocks by number concurrently (used for backfill only).
     ///
-    /// Returns an empty `Vec` if `from > to`.
+    /// Returns an empty `Vec` if `from > to`. Concurrency is bounded by
+    /// [`Self::max_rpc_concurrency`].
     #[tracing::instrument(level = "debug", skip_all, fields(from, to))]
     async fn fetch_range(&self, from: u64, to: u64) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
         if from > to {
             return Ok(Vec::new());
         }
 
-        let mut futures = (from..=to)
-            .map(|number| self.fetch_block_by_number(number))
-            .collect::<FuturesOrdered<_>>();
-
-        let mut blocks = Vec::with_capacity((to - from + 1) as usize);
-        while let Some(result) = futures.next().await {
-            blocks.push(Arc::new(result?));
-        }
-        Ok(blocks)
+        stream::iter((from..=to).map(|number| self.fetch_block_by_number(number)))
+            .buffered(self.max_rpc_concurrency)
+            .map_ok(Arc::new)
+            .try_collect()
+            .await
     }
 
     // ── Epoch / tag helpers ────────────────────────────────────────
