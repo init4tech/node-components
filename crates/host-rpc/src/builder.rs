@@ -10,6 +10,7 @@ use tracing::warn;
 /// let notifier = RpcHostNotifierBuilder::new(provider)
 ///     .with_buffer_capacity(128)
 ///     .with_backfill_batch_size(64)
+///     .with_max_rpc_concurrency(16)
 ///     .with_genesis_timestamp(1_606_824_023)
 ///     .build()
 ///     .await?;
@@ -41,14 +42,18 @@ where
     }
 
     /// Set the block buffer capacity (default: 64).
+    ///
+    /// Values below 1 are clamped to 1.
     pub const fn with_buffer_capacity(mut self, capacity: usize) -> Self {
-        self.buffer_capacity = capacity;
+        self.buffer_capacity = if capacity > 0 { capacity } else { 1 };
         self
     }
 
     /// Set the backfill batch size (default: 32).
+    ///
+    /// Values below 1 are clamped to 1.
     pub const fn with_backfill_batch_size(mut self, batch_size: u64) -> Self {
-        self.backfill_batch_size = batch_size;
+        self.backfill_batch_size = if batch_size > 0 { batch_size } else { 1 };
         self
     }
 
