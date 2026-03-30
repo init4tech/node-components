@@ -1,4 +1,7 @@
-use crate::{DEFAULT_BACKFILL_BATCH_SIZE, DEFAULT_BUFFER_CAPACITY, RpcHostNotifierBuilder};
+use crate::{
+    DEFAULT_BACKFILL_BATCH_SIZE, DEFAULT_BUFFER_CAPACITY, DEFAULT_MAX_RPC_CONCURRENCY,
+    RpcHostNotifierBuilder,
+};
 use alloy::providers::RootProvider;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv, provider::PubSubConfig};
 
@@ -9,6 +12,7 @@ use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv, provider::P
 /// - `SIGNET_HOST_URL` – WebSocket or IPC URL for the host EL client (required)
 /// - `SIGNET_HOST_BUFFER_CAPACITY` – Local chain view size (default: 64)
 /// - `SIGNET_HOST_BACKFILL_BATCH_SIZE` – Blocks per backfill batch (default: 32)
+/// - `SIGNET_HOST_MAX_RPC_CONCURRENCY` – Max concurrent RPC block fetches (default: 8)
 ///
 /// # Example
 ///
@@ -43,6 +47,13 @@ pub struct HostRpcConfig {
         optional
     )]
     backfill_batch_size: Option<u64>,
+    /// Maximum number of concurrent RPC block fetches.
+    #[from_env(
+        var = "SIGNET_HOST_MAX_RPC_CONCURRENCY",
+        desc = "Max concurrent RPC requests [default: 8]",
+        optional
+    )]
+    max_rpc_concurrency: Option<usize>,
 }
 
 impl HostRpcConfig {
@@ -59,6 +70,9 @@ impl HostRpcConfig {
             .with_buffer_capacity(self.buffer_capacity.unwrap_or(DEFAULT_BUFFER_CAPACITY))
             .with_backfill_batch_size(
                 self.backfill_batch_size.unwrap_or(DEFAULT_BACKFILL_BATCH_SIZE),
+            )
+            .with_max_rpc_concurrency(
+                self.max_rpc_concurrency.unwrap_or(DEFAULT_MAX_RPC_CONCURRENCY),
             )
             .with_genesis_timestamp(slot_calculator.start_timestamp()))
     }

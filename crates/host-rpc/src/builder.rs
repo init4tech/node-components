@@ -19,6 +19,7 @@ pub struct RpcHostNotifierBuilder<P> {
     provider: P,
     buffer_capacity: usize,
     backfill_batch_size: u64,
+    max_rpc_concurrency: usize,
     slot_seconds: u64,
     genesis_timestamp: u64,
 }
@@ -33,6 +34,7 @@ where
             provider,
             buffer_capacity: crate::DEFAULT_BUFFER_CAPACITY,
             backfill_batch_size: crate::DEFAULT_BACKFILL_BATCH_SIZE,
+            max_rpc_concurrency: crate::DEFAULT_MAX_RPC_CONCURRENCY,
             slot_seconds: crate::notifier::DEFAULT_SLOT_SECONDS,
             genesis_timestamp: 0,
         }
@@ -47,6 +49,14 @@ where
     /// Set the backfill batch size (default: 32).
     pub const fn with_backfill_batch_size(mut self, batch_size: u64) -> Self {
         self.backfill_batch_size = batch_size;
+        self
+    }
+
+    /// Set the maximum number of concurrent RPC block fetches (default: 8).
+    ///
+    /// Values below 1 are clamped to 1.
+    pub const fn with_max_rpc_concurrency(mut self, max_rpc_concurrency: usize) -> Self {
+        self.max_rpc_concurrency = if max_rpc_concurrency > 0 { max_rpc_concurrency } else { 1 };
         self
     }
 
@@ -75,6 +85,7 @@ where
             header_sub,
             self.buffer_capacity,
             self.backfill_batch_size,
+            self.max_rpc_concurrency,
             self.slot_seconds,
             self.genesis_timestamp,
         ))
