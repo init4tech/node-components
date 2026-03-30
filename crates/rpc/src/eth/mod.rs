@@ -10,7 +10,7 @@ use endpoints::{
     uncle_block, uncle_count, uninstall_filter, unsubscribe,
 };
 
-mod error;
+pub(crate) mod error;
 pub use error::EthError;
 
 pub(crate) mod helpers;

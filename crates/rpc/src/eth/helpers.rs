@@ -1,7 +1,10 @@
 //! Parameter types, macros, and utility helpers for ETH RPC endpoints.
 
-use super::types::{RpcReceipt, RpcTransaction};
-use crate::interest::InterestKind;
+use super::{
+    error::EthError,
+    types::{RpcReceipt, RpcTransaction},
+};
+use crate::{config::resolve::ResolveError, interest::InterestKind};
 use alloy::{
     consensus::{
         ReceiptEnvelope, ReceiptWithBloom, Transaction, TxReceipt, transaction::Recovered,
@@ -56,22 +59,25 @@ pub(crate) struct SubscribeArgs(
 );
 
 impl TryFrom<SubscribeArgs> for InterestKind {
-    type Error = String;
+    type Error = EthError;
 
     fn try_from(args: SubscribeArgs) -> Result<Self, Self::Error> {
         match args.0 {
-            SubscriptionKind::Logs => args
-                .1
-                .map(InterestKind::Log)
-                .ok_or_else(|| "missing filter for Logs subscription".to_string()),
+            SubscriptionKind::Logs => args.1.map(InterestKind::Log).ok_or_else(|| {
+                EthError::InvalidParams("missing filter for Logs subscription".into())
+            }),
             SubscriptionKind::NewHeads => {
                 if args.1.is_some() {
-                    Err("filter not supported for NewHeads subscription".to_string())
+                    Err(EthError::InvalidParams(
+                        "filter not supported for NewHeads subscription".into(),
+                    ))
                 } else {
                     Ok(InterestKind::Block)
                 }
             }
-            other => Err(format!("unsupported subscription kind: {other:?}")),
+            other => {
+                Err(EthError::InvalidParams(format!("unsupported subscription kind: {other:?}")))
+            }
         }
     }
 }
@@ -88,45 +94,17 @@ pub(crate) const fn normalize_gas_stateless(request: &mut TransactionRequest, ma
     }
 }
 
-/// Await a handler task, returning an error string on panic/cancel.
+/// Await a spawned handler task. Returns the error expression on
+/// panic, cancellation, or `None` result.
 macro_rules! await_handler {
-    ($h:expr) => {
-        match $h.await {
-            Ok(res) => res,
-            Err(_) => return Err("task panicked or cancelled".to_string()),
-        }
-    };
-
-    (@option $h:expr) => {
+    ($h:expr, $err:expr) => {
         match $h.await {
             Ok(Some(res)) => res,
-            _ => return Err("task panicked or cancelled".to_string()),
-        }
-    };
-
-    (@response_option $h:expr) => {
-        match $h.await {
-            Ok(Some(res)) => res,
-            _ => {
-                return ajj::ResponsePayload::internal_error_message(std::borrow::Cow::Borrowed(
-                    "task panicked or cancelled",
-                ))
-            }
+            _ => return Err($err),
         }
     };
 }
 pub(crate) use await_handler;
-
-/// Try-operator for `ResponsePayload`.
-macro_rules! response_tri {
-    ($h:expr) => {
-        match $h {
-            Ok(res) => res,
-            Err(err) => return ajj::ResponsePayload::internal_error_message(err.to_string().into()),
-        }
-    };
-}
-pub(crate) use response_tri;
 
 /// Resolve a block ID and open a hot storage reader at that height.
 ///
@@ -144,18 +122,18 @@ pub(crate) use response_tri;
 pub(crate) fn hot_reader_at_block<H>(
     ctx: &crate::config::StorageRpcCtx<H>,
     id: BlockId,
-) -> Result<(H::RoTx, u64), String>
+) -> Result<(H::RoTx, u64), EthError>
 where
     H: signet_hot::HotKv,
     <H::RoTx as signet_hot::model::HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
 {
-    let reader = ctx.hot_reader().map_err(|e| e.to_string())?;
+    let reader = ctx.hot_reader()?;
     let height = match id {
         BlockId::Number(tag) => ctx.resolve_block_tag(tag),
         BlockId::Hash(h) => reader
             .get_header_number(&h.block_hash)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("block hash not found: {}", h.block_hash))?,
+            .map_err(|e| ResolveError::Db(Box::new(e)))?
+            .ok_or(ResolveError::HashNotFound(h.block_hash))?,
     };
     Ok((reader, height))
 }
