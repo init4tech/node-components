@@ -3,8 +3,8 @@
 [![CI](https://github.com/init4tech/node-components/actions/workflows/rust.yml/badge.svg)](https://github.com/init4tech/node-components/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **Note:** The `main` branch is in maintenance and bug-fix mode. The
-> `develop` branch contains current work.
+> **Note:** The `legacy` branch is under long-term maintenance and may receive
+> active work. The `main` branch contains current work.
 
 A collection of components for building the Signet node. These components
 implement core node functionality, but are potentially independently useful.

@@ -2,8 +2,8 @@
 
 ## Branches
 
-The `main` branch is in maintenance and bug-fix mode. The `develop` branch
-contains current work.
+The `main` branch contains current work. The `legacy` branch is under
+long-term maintenance and may receive active work.
 
 ## Commands
 
