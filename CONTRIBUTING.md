@@ -24,8 +24,8 @@ these standards. It helps us get your PR in faster, and with less work from you.
 
 ### Branching
 
-PRs should target the `develop` branch. The `main` branch is reserved for
-stable releases and receives merges from `develop` at release boundaries.
+PRs should target the `main` branch by default. The `legacy` branch is under
+long-term maintenance and accepts maintenance and backport PRs.
 
 ## Development Basics
 
