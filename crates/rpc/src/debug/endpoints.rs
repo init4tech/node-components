@@ -79,7 +79,7 @@ where
 }
 
 /// `debug_traceBlockByNumber` and `debug_traceBlockByHash` handler.
-pub(super) async fn trace_block<T, H>(
+pub(crate) async fn trace_block<T, H>(
     hctx: HandlerCtx,
     TraceBlockParams(id, opts): TraceBlockParams<T>,
     ctx: StorageRpcCtx<H>,
@@ -89,7 +89,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let opts = opts.unwrap_or_default();
 
     // Acquire a tracing semaphore permit to limit concurrent debug
     // requests. The permit is held for the entire handler lifetime and
@@ -149,7 +149,7 @@ where
 }
 
 /// `debug_traceTransaction` handler.
-pub(super) async fn trace_transaction<H>(
+pub(crate) async fn trace_transaction<H>(
     hctx: HandlerCtx,
     TraceTransactionParams(tx_hash, opts): TraceTransactionParams,
     ctx: StorageRpcCtx<H>,
@@ -158,7 +158,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let opts = opts.unwrap_or_default();
 
     // Held for the handler duration; dropped when the async block completes.
     let _permit = ctx.acquire_tracing_permit().await;
@@ -240,7 +240,7 @@ where
 }
 
 /// `debug_traceBlock` — trace all transactions in a raw RLP-encoded block.
-pub(super) async fn trace_block_rlp<H>(
+pub(crate) async fn trace_block_rlp<H>(
     hctx: HandlerCtx,
     (rlp_bytes, opts): (Bytes, Option<GethDebugTracingOptions>),
     ctx: StorageRpcCtx<H>,
@@ -249,7 +249,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let opts = opts.unwrap_or_default();
     let _permit = ctx.acquire_tracing_permit().await;
 
     let span = tracing::debug_span!("traceBlock(RLP)", bytes_len = rlp_bytes.len());
@@ -288,10 +288,7 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_getRawBlock` handler.
@@ -299,7 +296,7 @@ where
 /// Resolves the given [`BlockId`], fetches header and transactions from cold
 /// storage, assembles them into an [`alloy::consensus::Block`], and returns
 /// the RLP-encoded bytes.
-pub(super) async fn get_raw_block<H>(
+pub(crate) async fn get_raw_block<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
@@ -346,17 +343,14 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_getRawReceipts` handler.
 ///
 /// Fetches all receipts for the given [`BlockId`] and returns a list of
 /// EIP-2718 encoded consensus receipt envelopes (one per transaction).
-pub(super) async fn get_raw_receipts<H>(
+pub(crate) async fn get_raw_receipts<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
@@ -407,16 +401,13 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_getRawHeader` handler.
 ///
 /// Resolves the given [`BlockId`] and returns the RLP-encoded block header.
-pub(super) async fn get_raw_header<H>(
+pub(crate) async fn get_raw_header<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
     ctx: StorageRpcCtx<H>,
@@ -447,10 +438,7 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_traceCall` — trace a call without submitting a transaction.
@@ -459,7 +447,7 @@ where
 /// from a [`alloy::rpc::types::TransactionRequest`], then routes through
 /// the tracer. State overrides are not supported in this initial
 /// implementation.
-pub(super) async fn debug_trace_call<H>(
+pub(crate) async fn debug_trace_call<H>(
     hctx: HandlerCtx,
     (request, block_id, opts): (
         alloy::rpc::types::TransactionRequest,
@@ -472,7 +460,7 @@ where
     H: HotKv + Send + Sync + 'static,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
-    let opts = opts.ok_or(DebugError::InvalidTracerConfig)?;
+    let opts = opts.unwrap_or_default();
     let _permit = ctx.acquire_tracing_permit().await;
 
     let id = block_id.unwrap_or(BlockId::latest());
@@ -484,7 +472,7 @@ where
         let EvmBlockContext { header, db, spec_id } =
             ctx.resolve_evm_block(id).map_err(|e| match e {
                 crate::eth::EthError::BlockNotFound(id) => DebugError::BlockNotFound(id),
-                other => DebugError::EvmHalt { reason: other.to_string() },
+                other => DebugError::Internal(other.to_string()),
             })?;
 
         let mut evm = signet_evm::signet_evm(db, ctx.constants().clone());
@@ -507,17 +495,14 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }
 
 /// `debug_getRawTransaction` handler.
 ///
 /// Fetches the transaction by hash from cold storage and returns the
 /// EIP-2718 encoded bytes.
-pub(super) async fn get_raw_transaction<H>(
+pub(crate) async fn get_raw_transaction<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
     ctx: StorageRpcCtx<H>,
@@ -544,8 +529,5 @@ where
     }
     .instrument(span);
 
-    await_handler!(
-        hctx.spawn(fut),
-        DebugError::EvmHalt { reason: "task panicked or cancelled".into() }
-    )
+    await_handler!(hctx.spawn(fut), DebugError::Internal("task panicked or cancelled".into()))
 }

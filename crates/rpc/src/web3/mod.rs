@@ -26,7 +26,8 @@ pub(crate) async fn sha3((data,): (Bytes,)) -> Result<B256, ()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{client_version, sha3};
+    use alloy::primitives::{Bytes, keccak256};
 
     #[tokio::test]
     async fn client_version_format() {
