@@ -22,6 +22,11 @@ We maintain code quality and style standards, and require commit signing. This
 option allows us to make small changes to your PR to bring it in line with
 these standards. It helps us get your PR in faster, and with less work from you.
 
+### Branching
+
+PRs should target the `main` branch by default. The `legacy` branch is under
+long-term maintenance and accepts maintenance and backport PRs.
+
 ## Development Basics
 
 Before submitting a PR we recommend you run the following commands to ensure
