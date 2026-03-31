@@ -61,6 +61,11 @@ pub struct StorageRpcConfig {
     /// Default: `25`.
     pub max_tracing_requests: usize,
 
+    /// Maximum block range for `trace_filter` queries.
+    ///
+    /// Default: `100`.
+    pub max_trace_filter_blocks: u64,
+
     /// Time-to-live for stale filters and subscriptions.
     ///
     /// Default: `5 minutes`.
@@ -136,6 +141,7 @@ impl Default for StorageRpcConfig {
             max_logs_per_response: 20_000,
             max_log_query_deadline: Duration::from_secs(10),
             max_tracing_requests: 25,
+            max_trace_filter_blocks: 100,
             stale_filter_ttl: Duration::from_secs(5 * 60),
             gas_oracle_block_count: 20,
             gas_oracle_percentile: 60.0,
@@ -185,6 +191,12 @@ impl StorageRpcConfigBuilder {
     /// Set the maximum concurrent tracing/debug requests.
     pub const fn max_tracing_requests(mut self, max: usize) -> Self {
         self.inner.max_tracing_requests = max;
+        self
+    }
+
+    /// Set the max block range for trace_filter.
+    pub const fn max_trace_filter_blocks(mut self, max: u64) -> Self {
+        self.inner.max_trace_filter_blocks = max;
         self
     }
 
@@ -298,6 +310,13 @@ pub struct StorageRpcConfigEnv {
         optional
     )]
     max_tracing_requests: Option<u64>,
+    /// Maximum block range for trace_filter queries.
+    #[from_env(
+        var = "SIGNET_RPC_MAX_TRACE_FILTER_BLOCKS",
+        desc = "Maximum block range for trace_filter queries [default: 100]",
+        optional
+    )]
+    max_trace_filter_blocks: Option<u64>,
     /// Filter TTL in seconds.
     #[from_env(
         var = "SIGNET_RPC_STALE_FILTER_TTL_SECS",
@@ -385,6 +404,9 @@ impl From<StorageRpcConfigEnv> for StorageRpcConfig {
             max_tracing_requests: env
                 .max_tracing_requests
                 .map_or(defaults.max_tracing_requests, |v| v as usize),
+            max_trace_filter_blocks: env
+                .max_trace_filter_blocks
+                .unwrap_or(defaults.max_trace_filter_blocks),
             stale_filter_ttl: env
                 .stale_filter_ttl_secs
                 .map_or(defaults.stale_filter_ttl, Duration::from_secs),
