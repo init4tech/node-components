@@ -1,7 +1,10 @@
 //! Debug namespace RPC router backed by storage.
 
 mod endpoints;
-use endpoints::{trace_block, trace_transaction};
+use endpoints::{
+    debug_trace_call, get_raw_block, get_raw_header, get_raw_receipts, get_raw_transaction,
+    trace_block, trace_block_rlp, trace_transaction,
+};
 mod error;
 pub use error::DebugError;
 pub(crate) mod tracer;
@@ -22,4 +25,10 @@ where
         .route("traceBlockByNumber", trace_block::<BlockNumberOrTag, H>)
         .route("traceBlockByHash", trace_block::<B256, H>)
         .route("traceTransaction", trace_transaction::<H>)
+        .route("traceBlock", trace_block_rlp::<H>)
+        .route("getRawBlock", get_raw_block::<H>)
+        .route("getRawHeader", get_raw_header::<H>)
+        .route("getRawReceipts", get_raw_receipts::<H>)
+        .route("getRawTransaction", get_raw_transaction::<H>)
+        .route("traceCall", debug_trace_call::<H>)
 }

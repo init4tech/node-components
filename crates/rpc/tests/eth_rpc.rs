@@ -598,12 +598,10 @@ async fn test_get_logs_empty() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_not_supported() {
+async fn test_protocol_version() {
     let h = TestHarness::new(0).await;
     let resp = rpc_call_raw(&h.app, "eth_protocolVersion", json!([])).await;
-    assert!(resp.get("error").is_some());
-    let msg = resp["error"]["message"].as_str().unwrap();
-    assert!(msg.contains("not found"), "unexpected error: {msg}");
+    assert_eq!(resp["result"].as_str().unwrap(), "0x44");
 }
 
 #[tokio::test]

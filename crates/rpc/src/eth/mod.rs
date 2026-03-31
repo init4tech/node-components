@@ -4,7 +4,7 @@ mod endpoints;
 use endpoints::{
     addr_tx_count, balance, block, block_number, block_receipts, block_tx_count, call, chain_id,
     code_at, create_access_list, estimate_gas, fee_history, gas_price, get_filter_changes,
-    get_logs, header_by, max_priority_fee_per_gas, new_block_filter, new_filter,
+    get_logs, header_by, max_priority_fee_per_gas, new_block_filter, new_filter, protocol_version,
     raw_transaction_by_block_and_index, raw_transaction_by_hash, send_raw_transaction, storage_at,
     subscribe, syncing, transaction_by_block_and_index, transaction_by_hash, transaction_receipt,
     uncle_block, uncle_count, uninstall_filter, unsubscribe,
@@ -79,8 +79,9 @@ where
         .route("getUncleCountByBlockNumber", uncle_count)
         .route("getUncleByBlockHashAndIndex", uncle_block)
         .route("getUncleByBlockNumberAndIndex", uncle_block)
+        .route("protocolVersion", protocol_version)
     // Unsupported methods (return method_not_found by default):
-    // - protocolVersion, coinbase, accounts, blobBaseFee
+    // - coinbase, accounts, blobBaseFee
     // - getWork, hashrate, mining, submitHashrate, submitWork
     // - sendTransaction, sign, signTransaction, signTypedData
     // - getProof, newPendingTransactionFilter
