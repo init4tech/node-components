@@ -36,6 +36,12 @@ pub enum DebugError {
     /// Internal server error.
     #[error("{0}")]
     Internal(String),
+    /// RLP decoding failed (malformed input).
+    #[error("RLP decode: {0}")]
+    RlpDecode(String),
+    /// Transaction sender recovery failed.
+    #[error("sender recovery failed")]
+    SenderRecovery,
 }
 
 impl ajj::IntoErrorPayload for DebugError {
@@ -45,9 +51,10 @@ impl ajj::IntoErrorPayload for DebugError {
         match self {
             Self::Cold(_) | Self::Hot(_) | Self::EvmHalt { .. } | Self::Internal(_) => -32000,
             Self::Resolve(r) => crate::eth::error::resolve_error_code(r),
-            Self::InvalidTracerConfig => -32602,
+            Self::InvalidTracerConfig | Self::RlpDecode(_) => -32602,
             Self::Unsupported(_) => -32601,
             Self::BlockNotFound(_) | Self::TransactionNotFound(_) => -32001,
+            Self::SenderRecovery => -32000,
         }
     }
 
@@ -61,6 +68,8 @@ impl ajj::IntoErrorPayload for DebugError {
             Self::EvmHalt { reason } => format!("execution halted: {reason}").into(),
             Self::BlockNotFound(id) => format!("block not found: {id}").into(),
             Self::TransactionNotFound(h) => format!("transaction not found: {h}").into(),
+            Self::RlpDecode(msg) => format!("RLP decode error: {msg}").into(),
+            Self::SenderRecovery => "sender recovery failed".into(),
         }
     }
 
@@ -129,5 +138,18 @@ mod tests {
         let err = DebugError::Internal("task panicked or cancelled".into());
         assert_eq!(err.error_code(), -32000);
         assert!(err.error_message().contains("task panicked"));
+    }
+
+    #[test]
+    fn rlp_decode_error_code() {
+        let err = DebugError::RlpDecode("invalid block RLP".into());
+        assert_eq!(err.error_code(), -32602);
+        assert!(err.error_message().contains("RLP"));
+    }
+
+    #[test]
+    fn sender_recovery_error_code() {
+        let err = DebugError::SenderRecovery;
+        assert_eq!(err.error_code(), -32000);
     }
 }

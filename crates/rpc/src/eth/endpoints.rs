@@ -79,6 +79,14 @@ pub(crate) async fn uncle_block() -> Result<Option<()>, ()> {
     Ok(None)
 }
 
+/// `eth_protocolVersion` — returns the Ethereum wire protocol version.
+///
+/// Signet does not implement devp2p. Returns a fixed value corresponding
+/// to eth/68.
+pub(crate) async fn protocol_version() -> Result<String, ()> {
+    Ok("0x44".to_owned())
+}
+
 // ---------------------------------------------------------------------------
 // Simple Queries
 // ---------------------------------------------------------------------------
