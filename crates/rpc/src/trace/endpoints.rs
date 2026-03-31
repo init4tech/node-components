@@ -21,6 +21,7 @@ use alloy::{
         LocalizedTransactionTrace, TraceResults, TraceResultsWithTransactionHash, TraceType,
     },
 };
+use itertools::Itertools;
 use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::{MagicSig, constants::SignetSystemConstants};
 use tracing::Instrument;
@@ -35,7 +36,6 @@ use trevm::revm::{
 ///
 /// Replays all transactions in a block (stopping at the first
 /// magic-signature tx) and returns localized Parity traces.
-#[allow(clippy::too_many_arguments)]
 fn trace_block_localized<Db>(
     ctx_chain_id: u64,
     constants: SignetSystemConstants,
@@ -50,8 +50,6 @@ where
     <Db as Database>::Error: DBErrorMarker,
     <Db as DatabaseRef>::Error: DBErrorMarker,
 {
-    use itertools::Itertools;
-
     let mut evm = signet_evm::signet_evm(db, constants);
     evm.set_spec_id(spec_id);
     let mut trevm = evm.fill_cfg(&CfgFiller(ctx_chain_id)).fill_block(header);
@@ -84,13 +82,11 @@ where
 ///
 /// Replays all transactions and returns per-tx `TraceResults` with
 /// the caller's `TraceType` selection.
-#[allow(clippy::too_many_arguments)]
 fn trace_block_replay<Db>(
     ctx_chain_id: u64,
     constants: SignetSystemConstants,
     spec_id: SpecId,
     header: &alloy::consensus::Header,
-    _block_hash: B256,
     txs: &[signet_storage_types::RecoveredTx],
     db: State<Db>,
     trace_types: &HashSet<TraceType>,
@@ -100,8 +96,6 @@ where
     <Db as Database>::Error: DBErrorMarker,
     <Db as DatabaseRef>::Error: std::fmt::Debug + DBErrorMarker,
 {
-    use itertools::Itertools;
-
     let mut evm = signet_evm::signet_evm(db, constants);
     evm.set_spec_id(spec_id);
     let mut trevm = evm.fill_cfg(&CfgFiller(ctx_chain_id)).fill_block(header);
@@ -227,7 +221,6 @@ where
         let mut trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         // Replay preceding txs without tracing.
-        use itertools::Itertools;
         let mut txns = txs.iter().enumerate().peekable();
         for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.tx_hash() != &tx_hash) {
             if MagicSig::try_from_signature(tx.signature()).is_some() {
@@ -293,7 +286,6 @@ where
             return Ok(None);
         };
 
-        let block_hash = sealed.hash();
         let header = sealed.into_inner();
 
         let txs = cold.get_transactions_in_block(block_num).await.map_err(TraceError::from)?;
@@ -307,7 +299,6 @@ where
             ctx.constants().clone(),
             spec_id,
             &header,
-            block_hash,
             &txs,
             db,
             &trace_types,
@@ -361,7 +352,6 @@ where
         let mut trevm = evm.fill_cfg(&CfgFiller(ctx.chain_id())).fill_block(&header);
 
         // Replay preceding txs.
-        use itertools::Itertools;
         let mut txns = txs.iter().enumerate().peekable();
         for (_idx, tx) in txns.by_ref().peeking_take_while(|(_, t)| t.tx_hash() != &tx_hash) {
             if MagicSig::try_from_signature(tx.signature()).is_some() {
@@ -573,17 +563,20 @@ where
         let start = filter.from_block.unwrap_or(0);
         let end = filter.to_block.unwrap_or(latest);
 
-        if start > latest || end > latest {
-            return Err(TraceError::BlockNotFound(BlockId::latest()));
+        if start > latest {
+            return Err(TraceError::BlockNotFound(BlockId::Number(start.into())));
+        }
+        if end > latest {
+            return Err(TraceError::BlockNotFound(BlockId::Number(end.into())));
         }
         if start > end {
-            return Err(TraceError::EvmHalt {
+            return Err(TraceError::InvalidBlockRange {
                 reason: "fromBlock cannot be greater than toBlock".into(),
             });
         }
 
         let max = ctx.config().max_trace_filter_blocks;
-        let distance = end.saturating_sub(start);
+        let distance = end.saturating_sub(start) + 1;
         if distance > max {
             return Err(TraceError::BlockRangeExceeded { requested: distance, max });
         }

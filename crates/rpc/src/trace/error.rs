@@ -33,6 +33,12 @@ pub enum TraceError {
     /// Transaction sender recovery failed.
     #[error("sender recovery failed")]
     SenderRecovery,
+    /// Invalid block range (e.g. fromBlock > toBlock).
+    #[error("invalid block range: {reason}")]
+    InvalidBlockRange {
+        /// Description of the invalid range.
+        reason: String,
+    },
     /// Block range too large for trace_filter.
     #[error("block range too large: {requested} blocks (max {max})")]
     BlockRangeExceeded {
@@ -51,7 +57,9 @@ impl ajj::IntoErrorPayload for TraceError {
             Self::Cold(_) | Self::Hot(_) | Self::EvmHalt { .. } | Self::SenderRecovery => -32000,
             Self::Resolve(r) => crate::eth::error::resolve_error_code(r),
             Self::BlockNotFound(_) | Self::TransactionNotFound(_) => -32001,
-            Self::RlpDecode(_) | Self::BlockRangeExceeded { .. } => -32602,
+            Self::RlpDecode(_)
+            | Self::InvalidBlockRange { .. }
+            | Self::BlockRangeExceeded { .. } => -32602,
         }
     }
 
@@ -63,6 +71,7 @@ impl ajj::IntoErrorPayload for TraceError {
             Self::BlockNotFound(id) => format!("block not found: {id}").into(),
             Self::TransactionNotFound(h) => format!("transaction not found: {h}").into(),
             Self::RlpDecode(msg) => format!("RLP decode error: {msg}").into(),
+            Self::InvalidBlockRange { reason } => format!("invalid block range: {reason}").into(),
             Self::SenderRecovery => "sender recovery failed".into(),
             Self::BlockRangeExceeded { requested, max } => {
                 format!("block range too large: {requested} blocks (max {max})").into()
@@ -104,6 +113,13 @@ mod tests {
     fn rlp_decode_code() {
         let err = TraceError::RlpDecode("bad".into());
         assert_eq!(err.error_code(), -32602);
+    }
+
+    #[test]
+    fn invalid_block_range_code() {
+        let err = TraceError::InvalidBlockRange { reason: "bad range".into() };
+        assert_eq!(err.error_code(), -32602);
+        assert!(err.error_message().contains("bad range"));
     }
 
     #[test]

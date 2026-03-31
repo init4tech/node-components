@@ -313,7 +313,7 @@ pub struct StorageRpcConfigEnv {
     /// Maximum block range for trace_filter queries.
     #[from_env(
         var = "SIGNET_RPC_MAX_TRACE_FILTER_BLOCKS",
-        desc = "Maximum block range for trace_filter queries",
+        desc = "Maximum block range for trace_filter queries [default: 100]",
         optional
     )]
     max_trace_filter_blocks: Option<u64>,
