@@ -56,7 +56,7 @@ signet-rpc = { version = "0.16.0", path = "crates/rpc" }
 init4-bin-base = { version = "0.19.0", features = ["alloy"] }
 
 # ajj
-ajj = { version = "0.3.4" }
+ajj = { version = "0.7.0" }
 
 # trevm
 trevm = { version = "0.34.0", features = ["full_env_cfg"] }
