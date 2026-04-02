@@ -1,5 +1,6 @@
 [package]
 name = "signet-node"
+description = "Core Signet rollup node: block processing, state management, and lifecycle orchestration"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
