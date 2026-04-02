@@ -14,7 +14,7 @@ To release:
 1. Run standard pre-push checks (clippy both feature sets + fmt).
 2. Create a new signed git tag (`git tag -s v0.16.x`).
 3. Push the tag to GitHub.
-4. Create a GitHub release from the tag.
+4. Create a GitHub release from the tag. Do NOT mark it as latest.
 
 ## Commands
 
