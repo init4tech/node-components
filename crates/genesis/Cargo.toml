@@ -1,5 +1,6 @@
 [package]
 name = "signet-genesis"
+description = "Genesis configuration and chain specification loading for Signet networks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,5 +1,6 @@
 [package]
 name = "signet-blobber"
+description = "Blob fetching, caching, and block extraction for the Signet node"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
