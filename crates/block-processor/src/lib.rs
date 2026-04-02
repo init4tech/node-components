@@ -14,7 +14,7 @@
 pub(crate) mod metrics;
 
 mod alias;
-pub use alias::{AliasOracle, AliasOracleFactory};
+pub use alias::{AliasError, AliasOracle, AliasOracleFactory};
 
 mod v1;
 pub use v1::SignetBlockProcessor as SignetBlockProcessorV1;

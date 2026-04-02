@@ -2,14 +2,33 @@ use alloy::primitives::{Address, map::HashSet};
 use core::future::{self, Future};
 use std::sync::{Arc, Mutex};
 
+/// Error type for [`AliasOracle`] and [`AliasOracleFactory`] operations.
+///
+/// Implementation-specific errors are wrapped in the [`Internal`] variant.
+///
+/// [`Internal`]: AliasError::Internal
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AliasError {
+    /// An implementation-specific error.
+    #[error("{0}")]
+    Internal(Box<dyn core::error::Error + Send + Sync>),
+}
+
 /// Simple trait to allow checking if an address should be aliased.
 pub trait AliasOracle {
     /// Returns true if the given address is an alias.
-    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send;
+    fn should_alias(
+        &self,
+        address: Address,
+    ) -> impl Future<Output = Result<bool, AliasError>> + Send;
 }
 
 impl AliasOracle for HashSet<Address> {
-    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+    fn should_alias(
+        &self,
+        address: Address,
+    ) -> impl Future<Output = Result<bool, AliasError>> + Send {
         future::ready(Ok(self.contains(&address)))
     }
 }
@@ -28,14 +47,14 @@ pub trait AliasOracleFactory: Send + Sync + 'static {
     type Oracle: AliasOracle;
 
     /// Create a new [`AliasOracle`].
-    fn create(&self) -> eyre::Result<Self::Oracle>;
+    fn create(&self) -> Result<Self::Oracle, AliasError>;
 }
 
 /// This implementation is primarily for testing purposes.
 impl AliasOracleFactory for HashSet<Address> {
     type Oracle = HashSet<Address>;
 
-    fn create(&self) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> Result<Self::Oracle, AliasError> {
         Ok(self.clone())
     }
 }
@@ -46,9 +65,8 @@ where
 {
     type Oracle = T::Oracle;
 
-    fn create(&self) -> eyre::Result<Self::Oracle> {
-        let guard =
-            self.lock().map_err(|_| eyre::eyre!("failed to lock AliasOracleFactory mutex"))?;
+    fn create(&self) -> Result<Self::Oracle, AliasError> {
+        let guard = self.lock().map_err(|e| AliasError::Internal(e.to_string().into()))?;
         guard.create()
     }
 }
@@ -59,7 +77,7 @@ where
 {
     type Oracle = T::Oracle;
 
-    fn create(&self) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> Result<Self::Oracle, AliasError> {
         self.as_ref().create()
     }
 }
