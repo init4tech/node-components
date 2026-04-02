@@ -211,7 +211,9 @@ impl SubscriptionTask {
     ) {
         let SubscriptionTask { id, filter, token, mut notifs } = self;
 
-        let Some(sender) = ajj_ctx.notifications() else { return };
+        if !ajj_ctx.notifications_enabled() {
+            return;
+        };
 
         // Buffer for notifications to be sent to the client
         let mut notif_buffer = filter.empty_sub_buffer();
@@ -230,7 +232,9 @@ impl SubscriptionTask {
                 if !notif_buffer.is_empty() {
                     // NB: we reserve half the capacity to avoid blocking other
                     // usage. This is a heuristic and can be adjusted as needed.
-                    sender.reserve_many(min(sender.max_capacity() / 2, notif_buffer.len())).await
+                    ajj_ctx
+                        .permit_many(min(ajj_ctx.notification_capacity() / 2, notif_buffer.len()))
+                        .await
                 } else {
                     // If the notification buffer is empty, just never return
                     pending().await
@@ -263,7 +267,7 @@ impl SubscriptionTask {
                 permits = permit_fut => {
                     let _guard = span.enter();
                     // channel closed
-                    let Ok(permits) = permits else {
+                    let Some(permits) = permits else {
                         trace!("channel to client closed");
                         break
                     };
@@ -291,7 +295,7 @@ impl SubscriptionTask {
                             trace!(?item, "failed to serialize notification");
                             continue
                         };
-                        permit.send(brv);
+                        let _ = permit.send(brv);
                     }
                 }
                 notif_res = notifs.recv() => {

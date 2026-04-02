@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.16.0-rc.10"
+version = "0.16.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,29 +34,29 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-bundle = "0.16.0-rc.8"
-signet-constants = "0.16.0-rc.8"
-signet-evm = "0.16.0-rc.8"
-signet-extract = "0.16.0-rc.8"
-signet-test-utils = "0.16.0-rc.8"
-signet-tx-cache = "0.16.0-rc.8"
-signet-types = "0.16.0-rc.8"
-signet-zenith = "0.16.0-rc.8"
-signet-journal = "0.16.0-rc.8"
-signet-blobber = { version = "0.16.0-rc.10", path = "crates/blobber" }
-signet-block-processor = { version = "0.16.0-rc.10", path = "crates/block-processor" }
-signet-db = { version = "0.16.0-rc.10", path = "crates/db" }
-signet-genesis = { version = "0.16.0-rc.10", path = "crates/genesis" }
-signet-node = { version = "0.16.0-rc.10", path = "crates/node" }
-signet-node-config = { version = "0.16.0-rc.10", path = "crates/node-config" }
-signet-node-tests = { version = "0.16.0-rc.10", path = "crates/node-tests" }
-signet-node-types = { version = "0.16.0-rc.10", path = "crates/node-types" }
-signet-rpc = { version = "0.16.0-rc.10", path = "crates/rpc" }
+signet-bundle = "0.16.0"
+signet-constants = "0.16.0"
+signet-evm = "0.16.0"
+signet-extract = "0.16.0"
+signet-test-utils = "0.16.0"
+signet-tx-cache = "0.16.0"
+signet-types = "0.16.0"
+signet-zenith = "0.16.0"
+signet-journal = "0.16.0"
+signet-blobber = { version = "0.16.0", path = "crates/blobber" }
+signet-block-processor = { version = "0.16.0", path = "crates/block-processor" }
+signet-db = { version = "0.16.0", path = "crates/db" }
+signet-genesis = { version = "0.16.0", path = "crates/genesis" }
+signet-node = { version = "0.16.0", path = "crates/node" }
+signet-node-config = { version = "0.16.0", path = "crates/node-config" }
+signet-node-tests = { version = "0.16.0", path = "crates/node-tests" }
+signet-node-types = { version = "0.16.0", path = "crates/node-types" }
+signet-rpc = { version = "0.16.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.18.0-rc.13", features = ["alloy"] }
+init4-bin-base = { version = "0.19.0", features = ["alloy"] }
 
 # ajj
-ajj = { version = "0.3.4" }
+ajj = { version = "0.7.0" }
 
 # trevm
 trevm = { version = "0.34.0", features = ["full_env_cfg"] }

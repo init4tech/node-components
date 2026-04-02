@@ -5,6 +5,17 @@
 The `main` branch contains current work. The `legacy` branch is under
 long-term maintenance and may receive active work.
 
+## Releases
+
+The `legacy` branch is tagged on the `0.16.x` line. These crates cannot be
+published to crates.io.
+
+To release:
+1. Run standard pre-push checks (clippy both feature sets + fmt).
+2. Create a new signed git tag (`git tag -s v0.16.x`).
+3. Push the tag to GitHub.
+4. Create a GitHub release from the tag. Do NOT mark it as latest.
+
 ## Commands
 
 - `cargo +nightly fmt` - format
