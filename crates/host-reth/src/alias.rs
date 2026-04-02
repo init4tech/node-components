@@ -3,9 +3,8 @@ use core::{
     fmt,
     future::{self, Future},
 };
-use eyre::OptionExt;
 use reth::providers::{StateProviderBox, StateProviderFactory};
-use signet_block_processor::{AliasOracle, AliasOracleFactory};
+use signet_block_processor::{AliasError, AliasOracle, AliasOracleFactory};
 
 /// An [`AliasOracle`] backed by a reth [`StateProviderBox`].
 ///
@@ -21,8 +20,12 @@ impl fmt::Debug for RethAliasOracle {
 
 impl RethAliasOracle {
     /// Synchronously check whether the given address should be aliased.
-    fn check_alias(&self, address: Address) -> eyre::Result<bool> {
-        let Some(acct) = self.0.basic_account(&address)? else { return Ok(false) };
+    fn check_alias(&self, address: Address) -> Result<bool, AliasError> {
+        let Some(acct) =
+            self.0.basic_account(&address).map_err(|e| AliasError::Internal(Box::new(e)))?
+        else {
+            return Ok(false);
+        };
         // Get the bytecode hash for this account.
         let bch = match acct.bytecode_hash {
             Some(hash) => hash,
@@ -36,8 +39,11 @@ impl RethAliasOracle {
         // Fetch the code associated with this bytecode hash.
         let code = self
             .0
-            .bytecode_by_hash(&bch)?
-            .ok_or_eyre("code not found. This indicates a corrupted database")?;
+            .bytecode_by_hash(&bch)
+            .map_err(|e| AliasError::Internal(Box::new(e)))?
+            .ok_or_else(|| {
+                AliasError::Internal("code not found. This indicates a corrupted database".into())
+            })?;
 
         // If not a 7702 delegation contract, alias it.
         Ok(!code.is_eip7702())
@@ -45,7 +51,10 @@ impl RethAliasOracle {
 }
 
 impl AliasOracle for RethAliasOracle {
-    fn should_alias(&self, address: Address) -> impl Future<Output = eyre::Result<bool>> + Send {
+    fn should_alias(
+        &self,
+        address: Address,
+    ) -> impl Future<Output = Result<bool, AliasError>> + Send {
         future::ready(self.check_alias(address))
     }
 }
@@ -72,7 +81,7 @@ impl RethAliasOracleFactory {
 impl AliasOracleFactory for RethAliasOracleFactory {
     type Oracle = RethAliasOracle;
 
-    fn create(&self) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> Result<Self::Oracle, AliasError> {
         // We use `Latest` rather than a pinned host height because pinning
         // would require every node to be an archive node, which is impractical.
         //
@@ -85,6 +94,6 @@ impl AliasOracleFactory for RethAliasOracleFactory {
         self.0
             .state_by_block_number_or_tag(alloy::eips::BlockNumberOrTag::Latest)
             .map(RethAliasOracle)
-            .map_err(Into::into)
+            .map_err(|e| AliasError::Internal(Box::new(e)))
     }
 }
