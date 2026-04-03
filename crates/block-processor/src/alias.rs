@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 #[non_exhaustive]
 pub enum AliasError {
     /// An implementation-specific error.
-    #[error("{0}")]
+    #[error(transparent)]
     Internal(Box<dyn core::error::Error + Send + Sync>),
 }
 
