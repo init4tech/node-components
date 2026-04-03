@@ -27,4 +27,5 @@ alloy.workspace = true
 
 eyre.workspace = true
 metrics.workspace = true
+thiserror.workspace = true
 tracing.workspace = true

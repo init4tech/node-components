@@ -24,7 +24,6 @@ reth-exex.workspace = true
 reth-node-api.workspace = true
 reth-stages-types.workspace = true
 
-eyre.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

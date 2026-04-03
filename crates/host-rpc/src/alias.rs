@@ -3,7 +3,7 @@ use alloy::{
     primitives::{Address, map::HashSet},
     providers::Provider,
 };
-use signet_block_processor::{AliasOracle, AliasOracleFactory};
+use signet_block_processor::{AliasError, AliasOracle, AliasOracleFactory};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, instrument};
 
@@ -60,7 +60,7 @@ fn should_alias_bytecode(code: &[u8]) -> bool {
 
 impl<P: Provider + Clone + 'static> AliasOracle for RpcAliasOracle<P> {
     #[instrument(skip(self), fields(%address))]
-    async fn should_alias(&self, address: Address) -> eyre::Result<bool> {
+    async fn should_alias(&self, address: Address) -> Result<bool, AliasError> {
         // NOTE: `std::sync::RwLock` is safe here because guards are always
         // dropped before the `.await` point. Do not hold a guard across the
         // `get_code_at` call — it will deadlock on single-threaded runtimes.
@@ -71,7 +71,11 @@ impl<P: Provider + Clone + 'static> AliasOracle for RpcAliasOracle<P> {
             return Ok(true);
         }
 
-        let code = self.provider.get_code_at(address).await?;
+        let code = self
+            .provider
+            .get_code_at(address)
+            .await
+            .map_err(|e| AliasError::Internal(Box::new(e)))?;
         let alias = should_alias_bytecode(&code);
         debug!(code_len = code.len(), alias, "resolved");
 
@@ -86,7 +90,7 @@ impl<P: Provider + Clone + 'static> AliasOracle for RpcAliasOracle<P> {
 impl<P: Provider + Clone + 'static> AliasOracleFactory for RpcAliasOracle<P> {
     type Oracle = Self;
 
-    fn create(&self) -> eyre::Result<Self::Oracle> {
+    fn create(&self) -> Result<Self::Oracle, AliasError> {
         Ok(self.clone())
     }
 }
