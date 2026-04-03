@@ -263,6 +263,18 @@ where
 
         let last_height = self.last_rollup_block()?;
 
+        // Detect gaps: if the first block to process is not contiguous with
+        // our last stored block, bail early so the notifier can re-backfill.
+        if let Some(first) = extracts.iter().find(|e| e.ru_height > last_height) {
+            let expected_next = last_height + 1;
+            eyre::ensure!(
+                first.ru_height == expected_next,
+                "notification gap: expected ru_height {expected_next}, got {}. \
+                 Last stored block is {last_height}.",
+                first.ru_height,
+            );
+        }
+
         let mut processed = false;
         for block_extracts in extracts.iter().filter(|e| e.ru_height > last_height) {
             // Constructed per-block: hardforks must be rechecked each block,

@@ -437,12 +437,22 @@ where
             }
             WalkResult::Exhausted => {
                 let finalized = self.cached_finalized.ok_or(RpcHostError::NoFinalizedBlock)?;
+
+                // Restart from the block after our last delivered block, or
+                // finalized — whichever is lower — so we never skip blocks
+                // between the old chain_view tip and finalized.
+                let resume_from = self
+                    .chain_view
+                    .back()
+                    .map(|(n, _)| n + 1)
+                    .map_or(finalized, |next| next.min(finalized));
+
                 warn!(
                     buffer_capacity = self.buffer_capacity,
-                    finalized, "walk exhausted buffer, resetting to backfill from finalized"
+                    finalized, resume_from, "walk exhausted buffer, resetting to backfill"
                 );
                 self.chain_view.clear();
-                self.backfill_from = Some(finalized);
+                self.backfill_from = Some(resume_from);
                 self.last_tag_epoch = None;
                 crate::metrics::record_handle_new_head_duration(start.elapsed());
                 return Ok(None);
