@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.17.0"
+version = "0.17.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,16 +34,16 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.17.0", path = "crates/blobber" }
-signet-block-processor = { version = "0.17.0", path = "crates/block-processor" }
-signet-genesis = { version = "0.17.0", path = "crates/genesis" }
-signet-host-reth = { version = "0.17.0", path = "crates/host-reth" }
-signet-host-rpc = { version = "0.17.0", path = "crates/host-rpc" }
-signet-node = { version = "0.17.0", path = "crates/node" }
-signet-node-config = { version = "0.17.0", path = "crates/node-config" }
-signet-node-tests = { version = "0.17.0", path = "crates/node-tests" }
-signet-node-types = { version = "0.17.0", path = "crates/node-types" }
-signet-rpc = { version = "0.17.0", path = "crates/rpc" }
+signet-blobber = { version = "0.17.1", path = "crates/blobber" }
+signet-block-processor = { version = "0.17.1", path = "crates/block-processor" }
+signet-genesis = { version = "0.17.1", path = "crates/genesis" }
+signet-host-reth = { version = "0.17.1", path = "crates/host-reth" }
+signet-host-rpc = { version = "0.17.1", path = "crates/host-rpc" }
+signet-node = { version = "0.17.1", path = "crates/node" }
+signet-node-config = { version = "0.17.1", path = "crates/node-config" }
+signet-node-tests = { version = "0.17.1", path = "crates/node-tests" }
+signet-node-types = { version = "0.17.1", path = "crates/node-types" }
+signet-rpc = { version = "0.17.1", path = "crates/rpc" }
 
 init4-bin-base = { version = "0.19.0", features = ["alloy"] }
 
@@ -56,12 +56,12 @@ signet-tx-cache = "0.16.0"
 signet-types = "0.16.0"
 signet-zenith = "0.16.0"
 signet-journal = "0.16.0"
-signet-storage = "0.6.5"
-signet-cold = "0.6.5"
-signet-hot = "0.6.5"
-signet-hot-mdbx = "0.6.5"
-signet-cold-mdbx = "0.6.5"
-signet-storage-types = "0.6.5"
+signet-storage = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
+signet-cold = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
+signet-hot = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
+signet-hot-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
+signet-cold-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
+signet-storage-types = { git = "https://github.com/init4tech/storage", branch = "prestwich/fix-cold-sql-pool-and-queries" }
 
 # ajj
 ajj = "0.7.0"
