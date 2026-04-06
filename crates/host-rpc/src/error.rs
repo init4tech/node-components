@@ -19,8 +19,9 @@ pub enum RpcHostError {
     #[error("missing block {0}")]
     MissingBlock(BlockNumberOrTag),
 
-    /// Walk exhaustion recovery requires a cached finalized block number,
-    /// but none has been fetched yet.
-    #[error("no cached finalized block number for exhaustion recovery")]
-    NoFinalizedBlock,
+    /// The first block of a backfill batch does not chain to the last
+    /// emitted block (parent-hash mismatch). A reorg occurred during the
+    /// gap between exhaustion and backfill.
+    #[error("backfill continuity break: parent hash mismatch after exhaustion recovery")]
+    BackfillContinuityBreak,
 }
