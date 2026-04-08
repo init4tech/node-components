@@ -242,7 +242,7 @@ where
     /// Fetch a single block with receipts by number (used for backfill only).
     ///
     /// The block and receipt fetches are concurrent.
-    #[tracing::instrument(level = "debug", skip_all, fields(number))]
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn fetch_block_by_number(&self, number: u64) -> Result<RpcBlock, RpcHostError> {
         let start = Instant::now();
         let tag = BlockNumberOrTag::Number(number);
@@ -260,7 +260,7 @@ where
     ///
     /// Returns an empty `Vec` if `from > to`. Concurrency is bounded by
     /// [`Self::max_rpc_concurrency`].
-    #[tracing::instrument(level = "debug", skip_all, fields(from, to))]
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn fetch_range(&self, from: u64, to: u64) -> Result<Vec<Arc<RpcBlock>>, RpcHostError> {
         if from > to {
             return Ok(Vec::new());
