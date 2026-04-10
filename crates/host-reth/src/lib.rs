@@ -20,6 +20,8 @@ pub use blob_source::RethBlobSource;
 mod error;
 pub use error::RethHostError;
 
+mod metrics;
+
 mod chain;
 pub use chain::RethChain;
 
