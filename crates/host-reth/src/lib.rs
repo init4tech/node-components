@@ -23,9 +23,10 @@ pub use error::RethHostError;
 mod metrics;
 
 mod backfill;
+pub use backfill::DbChainSegment;
 
 mod chain;
-pub use chain::RethChain;
+pub use chain::{HostChain, RethChain};
 
 mod config;
 pub use config::{rpc_config_from_args, serve_config_from_args};

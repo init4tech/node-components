@@ -29,7 +29,7 @@ pub(crate) struct DbBlock {
 /// Implements [`Extractable`] using the same `RecoveredBlockShim` transmute
 /// pattern as [`RethChain`](crate::RethChain).
 #[derive(Debug)]
-pub(crate) struct DbChainSegment(Vec<DbBlock>);
+pub struct DbChainSegment(Vec<DbBlock>);
 
 impl Extractable for DbChainSegment {
     type Block = RecoveredBlockShim;
