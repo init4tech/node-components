@@ -15,6 +15,12 @@ pub enum RethHostError {
     /// A required header was missing from the provider.
     #[error("missing header for block {0}")]
     MissingHeader(u64),
+    /// A required block was missing from the provider during DB backfill.
+    #[error("missing block at number {0}")]
+    MissingBlock(u64),
+    /// Receipts were missing for a block during DB backfill.
+    #[error("missing receipts for block {0}")]
+    MissingReceipts(u64),
 }
 
 impl RethHostError {
