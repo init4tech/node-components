@@ -1,5 +1,3 @@
-#![allow(dead_code)] // used in subsequent tasks (HostChain enum, RethHostNotifier rewrite)
-
 use crate::{RecoveredBlockShim, error::RethHostError, metrics};
 use alloy::consensus::{Block, BlockHeader};
 use reth::primitives::{Receipt, RecoveredBlock};
