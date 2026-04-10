@@ -22,7 +22,7 @@ pub(crate) struct DbBlock {
     receipts: Vec<Receipt>,
 }
 
-/// A contiguous segment of [`DbBlock`]s read from the reth DB.
+/// A contiguous segment of blocks read from the reth DB.
 ///
 /// Implements [`Extractable`] using the same `RecoveredBlockShim` transmute
 /// pattern as [`RethChain`](crate::RethChain).
