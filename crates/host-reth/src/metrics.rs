@@ -1,3 +1,5 @@
+#![allow(dead_code)] // used in subsequent tasks (DbBackfill)
+
 use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 use std::{sync::OnceLock, time::Duration};
 

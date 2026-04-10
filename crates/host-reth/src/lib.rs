@@ -22,6 +22,8 @@ pub use error::RethHostError;
 
 mod metrics;
 
+mod backfill;
+
 mod chain;
 pub use chain::RethChain;
 
