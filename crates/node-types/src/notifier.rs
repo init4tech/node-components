@@ -16,10 +16,11 @@ use signet_extract::Extractable;
 ///
 /// Implementations must uphold the following contract:
 ///
-/// 1. **`set_head`** — called once at startup before the first
-///    [`next_notification`]. The backend must resolve the block number to a
-///    hash (falling back to genesis if the number is not yet available) and
-///    begin delivering notifications from that point.
+/// 1. **`set_head`** — called exactly once at startup before the first
+///    [`next_notification`]. Subsequent calls are silently ignored. The
+///    backend must resolve the block number to a hash (falling back to
+///    genesis if the number is not yet available) and begin delivering
+///    notifications from that point.
 /// 2. **`next_notification`** — must yield notifications in host-chain order.
 ///    Returning `None` signals a clean shutdown.
 /// 3. **`set_backfill_thresholds`** — may be called at any time. Passing
@@ -44,6 +45,11 @@ pub trait HostNotifier: Send + Sync {
 
     /// Set the head position, requesting backfill from this block number.
     /// The backend resolves the block number to a block hash internally.
+    ///
+    /// This must be called exactly once before the first
+    /// [`next_notification`]. Subsequent calls are silently ignored.
+    ///
+    /// [`next_notification`]: HostNotifier::next_notification
     fn set_head(&mut self, block_number: u64);
 
     /// Configure backfill batch size limits. `None` means use the backend's
