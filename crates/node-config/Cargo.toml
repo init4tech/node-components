@@ -28,5 +28,5 @@ signet-genesis.workspace = true
 
 [features]
 test_utils = []
-postgres = ["signet-storage/postgres"]
-sqlite = ["signet-storage/sqlite"]
+postgres = ["signet-storage/postgres", "init4-bin-base/cold-sql"]
+sqlite = ["signet-storage/sqlite", "init4-bin-base/cold-sql"]

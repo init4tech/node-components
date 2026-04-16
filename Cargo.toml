@@ -45,7 +45,7 @@ signet-node-tests = { version = "0.17.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.17.0", path = "crates/node-types" }
 signet-rpc = { version = "0.17.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.19.0", features = ["alloy"] }
+init4-bin-base = { version = "0.19.1", features = ["alloy"] }
 
 signet-bundle = "0.16.0"
 signet-constants = "0.16.0"
@@ -116,5 +116,3 @@ url = "2.5.4"
 
 # Test Utils
 tempfile = "3.17.0"
-
-# init4-bin-base = { path = "../shared" }
