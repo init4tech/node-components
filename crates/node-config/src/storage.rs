@@ -9,15 +9,15 @@ use tokio_util::sync::CancellationToken;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 mod pool_defaults {
     /// Maximum number of connections in the SQL cold storage pool.
-    pub(super) const MAX_CONNECTIONS: u32 = 100;
+    pub(crate) const MAX_CONNECTIONS: u32 = 100;
     /// Minimum number of connections in the SQL cold storage pool.
-    pub(super) const MIN_CONNECTIONS: u32 = 5;
+    pub(crate) const MIN_CONNECTIONS: u32 = 5;
     /// Timeout (in seconds) for acquiring a connection from the pool.
-    pub(super) const ACQUIRE_TIMEOUT_SECS: u64 = 5;
+    pub(crate) const ACQUIRE_TIMEOUT_SECS: u64 = 5;
     /// Idle timeout (in seconds) before closing unused connections.
-    pub(super) const IDLE_TIMEOUT_SECS: u64 = 600;
+    pub(crate) const IDLE_TIMEOUT_SECS: u64 = 600;
     /// Maximum lifetime (in seconds) of individual connections.
-    pub(super) const MAX_LIFETIME_SECS: u64 = 1800;
+    pub(crate) const MAX_LIFETIME_SECS: u64 = 1800;
 }
 
 /// Configuration for signet unified storage.
