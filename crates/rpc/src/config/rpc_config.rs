@@ -13,9 +13,10 @@ use std::time::Duration;
 /// ```
 /// use signet_rpc::StorageRpcConfig;
 ///
-/// // Use defaults (matches reth defaults).
+/// // Use defaults.
 /// let config = StorageRpcConfig::default();
 /// assert_eq!(config.rpc_gas_cap, 30_000_000);
+/// assert_eq!(config.max_blocks_per_filter, 2_000);
 ///
 /// // Use the builder to customise individual fields.
 /// let config = StorageRpcConfig::builder()
@@ -36,7 +37,7 @@ pub struct StorageRpcConfig {
 
     /// Maximum block range per `eth_getLogs` query.
     ///
-    /// Default: `10_000`.
+    /// Default: `2_000`.
     pub max_blocks_per_filter: u64,
 
     /// Maximum number of logs returned per `eth_getLogs` response.
@@ -58,7 +59,7 @@ pub struct StorageRpcConfig {
     /// Controls the size of the semaphore that gates debug
     /// namespace calls.
     ///
-    /// Default: `25`.
+    /// Default: `10`.
     pub max_tracing_requests: usize,
 
     /// Maximum block range for `trace_filter` queries.
@@ -137,10 +138,10 @@ impl Default for StorageRpcConfig {
     fn default() -> Self {
         Self {
             rpc_gas_cap: 30_000_000,
-            max_blocks_per_filter: 10_000,
+            max_blocks_per_filter: 2_000,
             max_logs_per_response: 20_000,
             max_log_query_deadline: Duration::from_secs(10),
-            max_tracing_requests: 25,
+            max_tracing_requests: 10,
             max_trace_filter_blocks: 100,
             stale_filter_ttl: Duration::from_secs(5 * 60),
             gas_oracle_block_count: 20,
@@ -285,7 +286,7 @@ pub struct StorageRpcConfigEnv {
     /// Maximum block range per `eth_getLogs` query.
     #[from_env(
         var = "SIGNET_RPC_MAX_BLOCKS_PER_FILTER",
-        desc = "Max block range for getLogs [default: 10000]",
+        desc = "Max block range for getLogs [default: 2000]",
         optional
     )]
     max_blocks_per_filter: Option<u64>,
@@ -306,7 +307,7 @@ pub struct StorageRpcConfigEnv {
     /// Maximum concurrent tracing/debug requests.
     #[from_env(
         var = "SIGNET_RPC_MAX_TRACING_REQUESTS",
-        desc = "Concurrent tracing limit [default: 25]",
+        desc = "Concurrent tracing limit [default: 10]",
         optional
     )]
     max_tracing_requests: Option<u64>,
