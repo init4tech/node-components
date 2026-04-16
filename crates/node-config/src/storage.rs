@@ -5,6 +5,21 @@ use signet_storage::{DatabaseEnv, MdbxConnector, UnifiedStorage, builder::Storag
 use std::borrow::Cow;
 use tokio_util::sync::CancellationToken;
 
+// Pool-tuning defaults, only compiled when an SQL backend is available.
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+mod pool_defaults {
+    /// Maximum number of connections in the SQL cold storage pool.
+    pub(super) const MAX_CONNECTIONS: u32 = 100;
+    /// Minimum number of connections in the SQL cold storage pool.
+    pub(super) const MIN_CONNECTIONS: u32 = 5;
+    /// Timeout (in seconds) for acquiring a connection from the pool.
+    pub(super) const ACQUIRE_TIMEOUT_SECS: u64 = 5;
+    /// Idle timeout (in seconds) before closing unused connections.
+    pub(super) const IDLE_TIMEOUT_SECS: u64 = 600;
+    /// Maximum lifetime (in seconds) of individual connections.
+    pub(super) const MAX_LIFETIME_SECS: u64 = 1800;
+}
+
 /// Configuration for signet unified storage.
 ///
 /// Reads hot and cold storage configuration from environment variables.
@@ -18,6 +33,20 @@ use tokio_util::sync::CancellationToken;
 ///   `postgres` or `sqlite` feature).
 ///
 /// Exactly one of `SIGNET_COLD_PATH` or `SIGNET_COLD_SQL_URL` must be set.
+///
+/// ## SQL Connection Pool Tuning
+///
+/// When using SQL cold storage, the following optional variables control
+/// the connection pool:
+///
+/// - `SIGNET_COLD_SQL_MAX_CONNECTIONS` – Maximum pool size (default: 100).
+/// - `SIGNET_COLD_SQL_MIN_CONNECTIONS` – Minimum idle connections (default: 5).
+/// - `SIGNET_COLD_SQL_ACQUIRE_TIMEOUT_SECS` – Timeout for acquiring a
+///   connection (default: 5 s).
+/// - `SIGNET_COLD_SQL_IDLE_TIMEOUT_SECS` – Idle timeout before closing a
+///   connection (default: 600 s).
+/// - `SIGNET_COLD_SQL_MAX_LIFETIME_SECS` – Maximum lifetime of a connection
+///   before it is recycled (default: 1800 s).
 ///
 /// # Example
 ///
@@ -49,12 +78,71 @@ pub struct StorageConfig {
     )]
     #[serde(default)]
     cold_sql_url: Cow<'static, str>,
+
+    /// Maximum number of connections in the SQL pool.
+    #[from_env(
+        var = "SIGNET_COLD_SQL_MAX_CONNECTIONS",
+        desc = "Max SQL pool connections",
+        optional
+    )]
+    #[serde(default)]
+    #[cfg_attr(not(any(feature = "postgres", feature = "sqlite")), allow(dead_code))]
+    cold_sql_max_connections: Option<u32>,
+
+    /// Minimum number of idle connections to maintain.
+    #[from_env(
+        var = "SIGNET_COLD_SQL_MIN_CONNECTIONS",
+        desc = "Min SQL pool connections",
+        optional
+    )]
+    #[serde(default)]
+    #[cfg_attr(not(any(feature = "postgres", feature = "sqlite")), allow(dead_code))]
+    cold_sql_min_connections: Option<u32>,
+
+    /// Connection acquire timeout in seconds.
+    #[from_env(
+        var = "SIGNET_COLD_SQL_ACQUIRE_TIMEOUT_SECS",
+        desc = "SQL pool acquire timeout (seconds)",
+        optional
+    )]
+    #[serde(default)]
+    #[cfg_attr(not(any(feature = "postgres", feature = "sqlite")), allow(dead_code))]
+    cold_sql_acquire_timeout_secs: Option<u64>,
+
+    /// Idle connection timeout in seconds.
+    #[from_env(
+        var = "SIGNET_COLD_SQL_IDLE_TIMEOUT_SECS",
+        desc = "SQL pool idle timeout (seconds)",
+        optional
+    )]
+    #[serde(default)]
+    #[cfg_attr(not(any(feature = "postgres", feature = "sqlite")), allow(dead_code))]
+    cold_sql_idle_timeout_secs: Option<u64>,
+
+    /// Maximum lifetime of a connection in seconds.
+    #[from_env(
+        var = "SIGNET_COLD_SQL_MAX_LIFETIME_SECS",
+        desc = "SQL pool max connection lifetime (seconds)",
+        optional
+    )]
+    #[serde(default)]
+    #[cfg_attr(not(any(feature = "postgres", feature = "sqlite")), allow(dead_code))]
+    cold_sql_max_lifetime_secs: Option<u64>,
 }
 
 impl StorageConfig {
     /// Create a new storage configuration with MDBX cold backend.
     pub const fn new(hot_path: Cow<'static, str>, cold_path: Cow<'static, str>) -> Self {
-        Self { hot_path, cold_path, cold_sql_url: Cow::Borrowed("") }
+        Self {
+            hot_path,
+            cold_path,
+            cold_sql_url: Cow::Borrowed(""),
+            cold_sql_max_connections: None,
+            cold_sql_min_connections: None,
+            cold_sql_acquire_timeout_secs: None,
+            cold_sql_idle_timeout_secs: None,
+            cold_sql_max_lifetime_secs: None,
+        }
     }
 
     /// Get the hot storage path.
@@ -70,6 +158,26 @@ impl StorageConfig {
     /// Get the cold SQL connection URL.
     pub fn cold_sql_url(&self) -> &str {
         &self.cold_sql_url
+    }
+
+    /// Build a [`SqlConnector`] with pool settings from this configuration.
+    #[cfg(any(feature = "postgres", feature = "sqlite"))]
+    fn build_sql_connector(&self) -> SqlConnector {
+        use pool_defaults as d;
+        use std::time::Duration;
+
+        let max_conns = self.cold_sql_max_connections.unwrap_or(d::MAX_CONNECTIONS);
+        let min_conns = self.cold_sql_min_connections.unwrap_or(d::MIN_CONNECTIONS);
+        let acquire = self.cold_sql_acquire_timeout_secs.unwrap_or(d::ACQUIRE_TIMEOUT_SECS);
+        let idle = self.cold_sql_idle_timeout_secs.unwrap_or(d::IDLE_TIMEOUT_SECS);
+        let lifetime = self.cold_sql_max_lifetime_secs.unwrap_or(d::MAX_LIFETIME_SECS);
+
+        SqlConnector::new(self.cold_sql_url.as_ref())
+            .with_max_connections(max_conns)
+            .with_min_connections(min_conns)
+            .with_acquire_timeout(Duration::from_secs(acquire))
+            .with_idle_timeout(Some(Duration::from_secs(idle)))
+            .with_max_lifetime(Some(Duration::from_secs(lifetime)))
     }
 
     /// Build unified storage from this configuration.
@@ -96,7 +204,7 @@ impl StorageConfig {
             #[cfg(any(feature = "postgres", feature = "sqlite"))]
             (false, true) => Ok(StorageBuilder::new()
                 .hot(hot)
-                .cold(SqlConnector::new(self.cold_sql_url.as_ref()))
+                .cold(self.build_sql_connector())
                 .cancel_token(cancel)
                 .build()
                 .await?),
