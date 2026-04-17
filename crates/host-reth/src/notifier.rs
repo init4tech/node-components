@@ -17,7 +17,7 @@ use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, Re
 use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_types::primitives::TransactionSigned;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Reth ExEx implementation of [`HostNotifier`].
 ///
@@ -151,30 +151,20 @@ where
                 Ok(None) => {
                     // Backfill complete. The cursor points to the next block
                     // to read, so the last backfilled block is cursor - 1.
+                    // `DbBackfill` just read this block from the same
+                    // provider, so the header must be present — a missing
+                    // header here is a DB-level failure, not a startup race.
                     let backfill = self.backfill.take().expect("backfill was Some");
                     let last_backfilled = backfill.cursor().saturating_sub(1);
 
-                    let head = self
-                        .provider
-                        .sealed_header(last_backfilled)
-                        .inspect_err(|e| {
-                            error!(last_backfilled, %e, "failed to look up header after backfill");
-                        })
-                        .expect("failed to look up header after backfill")
-                        .map(|h| BlockNumHash { number: last_backfilled, hash: h.hash() })
-                        .unwrap_or_else(|| {
-                            debug!(
-                                last_backfilled,
-                                "header not found after backfill, falling back to genesis"
-                            );
-                            let genesis = self
-                                .provider
-                                .sealed_header(0)
-                                .inspect_err(|e| error!(%e, "failed to look up genesis header"))
-                                .expect("failed to look up genesis header")
-                                .expect("genesis header missing");
-                            BlockNumHash { number: 0, hash: genesis.hash() }
-                        });
+                    let header = match self.provider.sealed_header(last_backfilled) {
+                        Ok(Some(h)) => h,
+                        Ok(None) => {
+                            return Some(Err(RethHostError::MissingHeader(last_backfilled)));
+                        }
+                        Err(e) => return Some(Err(e.into())),
+                    };
+                    let head = BlockNumHash { number: last_backfilled, hash: header.hash() };
 
                     info!(
                         last_backfilled,
@@ -246,11 +236,18 @@ where
     }
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
-        if let Some(backfill) = &mut self.backfill
-            && let Some(max_blocks) = max_blocks
-        {
-            debug!(max_blocks, "configured DB backfill batch size");
-            backfill.set_batch_size(max_blocks);
+        let Some(backfill) = &mut self.backfill else {
+            return;
+        };
+        match max_blocks {
+            Some(max_blocks) => {
+                debug!(max_blocks, "configured DB backfill batch size");
+                backfill.set_batch_size(max_blocks);
+            }
+            None => {
+                debug!("reset DB backfill batch size to default");
+                backfill.reset_batch_size();
+            }
         }
     }
 

@@ -97,6 +97,11 @@ impl<P> DbBackfill<P> {
         self.batch_size = batch_size.max(1);
     }
 
+    /// Reset the batch size to the default.
+    pub(crate) const fn reset_batch_size(&mut self) {
+        self.batch_size = DEFAULT_BATCH_SIZE;
+    }
+
     /// Current cursor position (next block to fetch).
     pub(crate) const fn cursor(&self) -> u64 {
         self.cursor
