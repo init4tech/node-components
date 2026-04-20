@@ -1,5 +1,6 @@
 use crate::{
-    RethChain,
+    backfill::DbBackfill,
+    chain::HostChain,
     config::{rpc_config_from_args, serve_config_from_args},
     error::RethHostError,
 };
@@ -7,16 +8,16 @@ use alloy::{consensus::BlockHeader, eips::BlockNumHash};
 use futures_util::StreamExt;
 use reth::{
     chainspec::EthChainSpec,
-    primitives::EthPrimitives,
-    providers::{BlockIdReader, HeaderProvider},
+    primitives::{EthPrimitives, Receipt},
+    providers::{BlockIdReader, BlockReader, HeaderProvider, ReceiptProvider},
 };
 use reth_exex::{ExExContext, ExExEvent, ExExNotifications, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodeTypes};
-use reth_stages_types::ExecutionStageThresholds;
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
 use signet_rpc::{ServeConfig, StorageRpcConfig};
+use signet_types::primitives::TransactionSigned;
 use std::sync::Arc;
-use tracing::{debug, error};
+use tracing::{debug, info, warn};
 
 /// Reth ExEx implementation of [`HostNotifier`].
 ///
@@ -26,6 +27,8 @@ pub struct RethHostNotifier<Host: FullNodeComponents> {
     notifications: ExExNotifications<Host::Provider, Host::Evm>,
     provider: Host::Provider,
     events: tokio::sync::mpsc::UnboundedSender<ExExEvent>,
+    backfill: Option<DbBackfill<Host::Provider>>,
+    head_set: bool,
 }
 
 impl<Host: FullNodeComponents> core::fmt::Debug for RethHostNotifier<Host> {
@@ -92,8 +95,13 @@ where
     let pool = ctx.pool().clone();
     let provider = ctx.provider().clone();
 
-    let notifier =
-        RethHostNotifier { notifications: ctx.notifications, provider, events: ctx.events };
+    let notifier = RethHostNotifier {
+        notifications: ctx.notifications,
+        provider,
+        events: ctx.events,
+        backfill: None,
+        head_set: false,
+    };
 
     DecomposedContext { notifier, serve_config, rpc_config, pool, chain_name }
 }
@@ -102,20 +110,82 @@ impl<Host> HostNotifier for RethHostNotifier<Host>
 where
     Host: FullNodeComponents,
     Host::Types: NodeTypes<Primitives = EthPrimitives>,
+    Host::Provider: BlockReader<Block = alloy::consensus::Block<TransactionSigned>>
+        + ReceiptProvider<Receipt = Receipt>,
 {
-    type Chain = RethChain;
+    type Chain = HostChain;
     type Error = RethHostError;
 
     async fn next_notification(
         &mut self,
     ) -> Option<Result<HostNotification<Self::Chain>, Self::Error>> {
+        // Phase 1: DB backfill — drain batches until complete.
+        if let Some(backfill) = &mut self.backfill {
+            match backfill.next_batch().await {
+                Ok(Some(segment)) => {
+                    let safe_block_number = self
+                        .provider
+                        .safe_block_number()
+                        .inspect_err(|e| {
+                            debug!(%e, "failed to read safe block number from provider");
+                        })
+                        .ok()
+                        .flatten();
+                    let finalized_block_number = self
+                        .provider
+                        .finalized_block_number()
+                        .inspect_err(|e| {
+                            debug!(%e, "failed to read finalized block number from provider");
+                        })
+                        .ok()
+                        .flatten();
+
+                    return Some(Ok(HostNotification {
+                        kind: HostNotificationKind::ChainCommitted {
+                            new: Arc::new(HostChain::Backfill(segment)),
+                        },
+                        safe_block_number,
+                        finalized_block_number,
+                    }));
+                }
+                Ok(None) => {
+                    // Backfill complete. The cursor points to the next block
+                    // to read, so the last backfilled block is cursor - 1.
+                    // `DbBackfill` just read this block from the same
+                    // provider, so the header must be present — a missing
+                    // header here is a DB-level failure, not a startup race.
+                    let backfill = self.backfill.take().expect("backfill was Some");
+                    let last_backfilled = backfill.cursor().saturating_sub(1);
+
+                    let header = match self.provider.sealed_header(last_backfilled) {
+                        Ok(Some(h)) => h,
+                        Ok(None) => {
+                            return Some(Err(RethHostError::MissingHeader(last_backfilled)));
+                        }
+                        Err(e) => return Some(Err(e.into())),
+                    };
+                    let head = BlockNumHash { number: last_backfilled, hash: header.hash() };
+
+                    info!(
+                        last_backfilled,
+                        head_number = head.number,
+                        "DB backfill complete, switching to live ExEx notifications"
+                    );
+
+                    self.notifications.set_with_head(reth_exex::ExExHead { block: head });
+                    // Fall through to phase 2.
+                }
+                Err(e) => return Some(Err(e)),
+            }
+        }
+
+        // Phase 2: live ExEx notifications.
         let notification = self.notifications.next().await?;
         let notification = match notification {
             Ok(n) => n,
             Err(e) => return Some(Err(RethHostError::notification(e))),
         };
 
-        // Read safe/finalized from the provider at notification time.
         let safe_block_number = self
             .provider
             .safe_block_number()
@@ -135,7 +205,9 @@ where
 
         let kind = match notification {
             reth_exex::ExExNotification::ChainCommitted { new } => {
-                HostNotificationKind::ChainCommitted { new: Arc::new(RethChain::new(new)) }
+                HostNotificationKind::ChainCommitted {
+                    new: Arc::new(HostChain::Live(crate::RethChain::new(new))),
+                }
             }
             reth_exex::ExExNotification::ChainReverted { old } => {
                 let old = RevertRange::new(old.first().number(), old.tip().number());
@@ -143,7 +215,10 @@ where
             }
             reth_exex::ExExNotification::ChainReorged { old, new } => {
                 let old = RevertRange::new(old.first().number(), old.tip().number());
-                HostNotificationKind::ChainReorged { old, new: Arc::new(RethChain::new(new)) }
+                HostNotificationKind::ChainReorged {
+                    old,
+                    new: Arc::new(HostChain::Live(crate::RethChain::new(new))),
+                }
             }
         };
 
@@ -151,38 +226,29 @@ where
     }
 
     fn set_head(&mut self, block_number: u64) {
-        let head = self
-            .provider
-            .sealed_header(block_number)
-            .inspect_err(|e| error!(block_number, %e, "failed to look up header for set_head"))
-            .expect("failed to look up header for set_head")
-            .map(|h| BlockNumHash { number: block_number, hash: h.hash() })
-            .unwrap_or_else(|| {
-                debug!(block_number, "header not found for set_head, falling back to genesis");
-                let genesis = self
-                    .provider
-                    .sealed_header(0)
-                    .inspect_err(|e| error!(%e, "failed to look up genesis header"))
-                    .expect("failed to look up genesis header")
-                    .expect("genesis header missing");
-                BlockNumHash { number: 0, hash: genesis.hash() }
-            });
-
-        self.notifications.set_with_head(reth_exex::ExExHead { block: head });
+        if self.head_set {
+            warn!(block_number, "set_head called more than once, ignoring");
+            return;
+        }
+        self.head_set = true;
+        info!(block_number, "initiating DB backfill");
+        self.backfill = Some(DbBackfill::new(self.provider.clone(), block_number));
     }
 
     fn set_backfill_thresholds(&mut self, max_blocks: Option<u64>) {
-        let thresholds = match max_blocks {
+        let Some(backfill) = &mut self.backfill else {
+            return;
+        };
+        match max_blocks {
             Some(max_blocks) => {
-                debug!(max_blocks, "configured backfill thresholds");
-                ExecutionStageThresholds { max_blocks: Some(max_blocks), ..Default::default() }
+                debug!(max_blocks, "configured DB backfill batch size");
+                backfill.set_batch_size(max_blocks);
             }
             None => {
-                debug!("reset backfill thresholds to defaults");
-                ExecutionStageThresholds::default()
+                debug!("reset DB backfill batch size to default");
+                backfill.reset_batch_size();
             }
-        };
-        self.notifications.set_backfill_thresholds(thresholds);
+        }
     }
 
     fn send_finished_height(&self, block_number: u64) -> Result<(), Self::Error> {

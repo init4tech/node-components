@@ -93,6 +93,9 @@ pub struct RpcHostNotifier<P> {
 
     /// Genesis timestamp, used for epoch calculation.
     genesis_timestamp: u64,
+
+    /// Whether `set_head` has been called.
+    head_set: bool,
 }
 
 impl<P> core::fmt::Debug for RpcHostNotifier<P> {
@@ -103,6 +106,7 @@ impl<P> core::fmt::Debug for RpcHostNotifier<P> {
             .field("max_rpc_concurrency", &self.max_rpc_concurrency)
             .field("backfill_from", &self.backfill_from)
             .field("last_emitted", &self.last_emitted)
+            .field("head_set", &self.head_set)
             .finish_non_exhaustive()
     }
 }
@@ -135,6 +139,7 @@ where
             last_emitted: None,
             slot_seconds,
             genesis_timestamp,
+            head_set: false,
         }
     }
 
@@ -645,6 +650,11 @@ where
     }
 
     fn set_head(&mut self, block_number: u64) {
+        if self.head_set {
+            tracing::warn!(block_number, "set_head called more than once, ignoring");
+            return;
+        }
+        self.head_set = true;
         self.backfill_from = Some(block_number);
         self.last_emitted = None;
     }

@@ -84,3 +84,53 @@ impl Extractable for RethChain {
         self.inner.len()
     }
 }
+
+/// Unifies DB-backfill and live ExEx chain segments.
+///
+/// During startup, the notifier emits `Backfill` segments read directly
+/// from the reth DB. Once backfill is complete, it switches to `Live`
+/// segments from the ExEx notification stream. Both variants implement
+/// [`Extractable`] so the node processes them identically.
+#[derive(Debug)]
+pub enum HostChain {
+    /// A segment read from the reth DB during backfill.
+    Backfill(crate::backfill::DbChainSegment),
+    /// A segment from the live ExEx notification stream.
+    Live(RethChain),
+}
+
+impl Extractable for HostChain {
+    type Block = RecoveredBlockShim;
+    type Receipt = reth::primitives::Receipt;
+
+    fn blocks_and_receipts(
+        &self,
+    ) -> impl Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>> {
+        match self {
+            Self::Backfill(segment) => Box::new(segment.blocks_and_receipts())
+                as Box<dyn Iterator<Item = BlockAndReceipts<'_, Self::Block, Self::Receipt>>>,
+            Self::Live(chain) => Box::new(chain.blocks_and_receipts()),
+        }
+    }
+
+    fn first_number(&self) -> u64 {
+        match self {
+            Self::Backfill(segment) => segment.first_number(),
+            Self::Live(chain) => chain.first_number(),
+        }
+    }
+
+    fn tip_number(&self) -> u64 {
+        match self {
+            Self::Backfill(segment) => segment.tip_number(),
+            Self::Live(chain) => chain.tip_number(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Backfill(segment) => segment.len(),
+            Self::Live(chain) => chain.len(),
+        }
+    }
+}
