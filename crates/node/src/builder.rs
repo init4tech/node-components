@@ -38,7 +38,7 @@ pub struct NotAStorage;
 ///
 /// ```no_run
 /// # use signet_node::SignetNodeBuilder;
-/// # fn example<H: signet_storage::HotKv>(
+/// # fn example<H: signet_storage::HotKv, B: signet_cold::ColdStorageBackend>(
 /// #     config: signet_node_config::SignetNodeConfig,
 /// #     notifier: impl signet_node_types::HostNotifier,
 /// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H, B>>,
