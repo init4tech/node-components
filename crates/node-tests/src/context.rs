@@ -15,7 +15,7 @@ use alloy::{
     rpc::types::eth::{TransactionReceipt, TransactionRequest},
 };
 use signet_blobber::MemoryBlobSource;
-use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
+use signet_cold::{ColdStorage, mem::MemColdBackend};
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
@@ -103,7 +103,7 @@ pub struct SignetTestContext {
     pub node_status: watch::Receiver<NodeStatus>,
 
     /// Unified hot + cold storage for the rollup.
-    pub storage: Arc<UnifiedStorage<MemKv>>,
+    pub storage: Arc<UnifiedStorage<MemKv, MemColdBackend>>,
 
     /// An alloy provider connected to the Signet Node RPC.
     pub alloy_provider: CtxProvider,
@@ -288,7 +288,7 @@ impl SignetTestContext {
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorageReadHandle {
+    pub fn cold(&self) -> ColdStorage<MemColdBackend> {
         self.storage.cold_reader()
     }
 

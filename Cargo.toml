@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.17.2"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["init4"]
@@ -34,34 +34,34 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
-signet-blobber = { version = "0.17.2", path = "crates/blobber" }
-signet-block-processor = { version = "0.17.2", path = "crates/block-processor" }
-signet-genesis = { version = "0.17.2", path = "crates/genesis" }
-signet-host-reth = { version = "0.17.2", path = "crates/host-reth" }
-signet-host-rpc = { version = "0.17.2", path = "crates/host-rpc" }
-signet-node = { version = "0.17.2", path = "crates/node" }
-signet-node-config = { version = "0.17.2", path = "crates/node-config" }
-signet-node-tests = { version = "0.17.2", path = "crates/node-tests" }
-signet-node-types = { version = "0.17.2", path = "crates/node-types" }
-signet-rpc = { version = "0.17.2", path = "crates/rpc" }
+signet-blobber = { version = "0.18.0", path = "crates/blobber" }
+signet-block-processor = { version = "0.18.0", path = "crates/block-processor" }
+signet-genesis = { version = "0.18.0", path = "crates/genesis" }
+signet-host-reth = { version = "0.18.0", path = "crates/host-reth" }
+signet-host-rpc = { version = "0.18.0", path = "crates/host-rpc" }
+signet-node = { version = "0.18.0", path = "crates/node" }
+signet-node-config = { version = "0.18.0", path = "crates/node-config" }
+signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
+signet-node-types = { version = "0.18.0", path = "crates/node-types" }
+signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.19.1", features = ["alloy"] }
+init4-bin-base = { version = "0.20.0", features = ["alloy"] }
 
-signet-bundle = "0.16.0"
-signet-constants = "0.16.0"
-signet-evm = "0.16.0"
-signet-extract = "0.16.0"
-signet-test-utils = "0.16.0"
-signet-tx-cache = "0.16.0"
-signet-types = "0.16.0"
-signet-zenith = "0.16.0"
-signet-journal = "0.16.0"
-signet-storage = "0.7"
-signet-cold = "0.7"
-signet-hot = "0.7"
-signet-hot-mdbx = "0.7"
-signet-cold-mdbx = "0.7"
-signet-storage-types = "0.7"
+signet-bundle = "0.17"
+signet-constants = "0.17"
+signet-evm = "0.17"
+signet-extract = "0.17"
+signet-test-utils = "0.17"
+signet-tx-cache = "0.17"
+signet-types = "0.17"
+signet-zenith = "0.17"
+signet-journal = "0.17"
+signet-storage = "0.8"
+signet-cold = "0.8"
+signet-hot = "0.8"
+signet-hot-mdbx = "0.8"
+signet-cold-mdbx = "0.8"
+signet-storage-types = "0.8"
 
 # ajj
 ajj = "0.7.0"

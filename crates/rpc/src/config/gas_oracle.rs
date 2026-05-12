@@ -8,7 +8,7 @@
 
 use crate::config::{GasOracleCache, StorageRpcConfig};
 use alloy::{consensus::Transaction, primitives::U256};
-use signet_cold::{ColdStorageError, ColdStorageReadHandle, HeaderSpecifier};
+use signet_cold::{ColdStorageBackend, ColdStorageError, HeaderSpecifier};
 
 /// Suggest a tip cap based on recent transaction tips.
 ///
@@ -22,8 +22,8 @@ use signet_cold::{ColdStorageError, ColdStorageReadHandle, HeaderSpecifier};
 ///
 /// Uses the provided `cache` to avoid redundant cold storage reads
 /// when the tip has already been computed for the current block.
-pub(crate) async fn suggest_tip_cap(
-    cold: &ColdStorageReadHandle,
+pub(crate) async fn suggest_tip_cap<B: ColdStorageBackend>(
+    cold: &signet_cold::ColdStorage<B>,
     latest: u64,
     config: &StorageRpcConfig,
     cache: &GasOracleCache,

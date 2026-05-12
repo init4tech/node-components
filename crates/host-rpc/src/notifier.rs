@@ -3,14 +3,14 @@ use alloy::{
     consensus::{BlockHeader, transaction::Recovered},
     eips::{BlockId, BlockNumberOrTag},
     network::BlockResponse,
-    primitives::{B256, Sealed},
+    primitives::B256,
     providers::Provider,
     pubsub::SubscriptionStream,
     rpc::types::Header as RpcHeader,
 };
 use futures_util::{StreamExt, TryStreamExt, stream};
 use signet_node_types::{HostNotification, HostNotificationKind, HostNotifier, RevertRange};
-use signet_types::primitives::{RecoveredBlock, SealedBlock, TransactionSigned};
+use signet_types::primitives::{RecoveredBlock, SealedBlock, SignetHeaderV1, TransactionSigned};
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 use tracing::{debug, info, warn};
 
@@ -189,7 +189,6 @@ where
         rpc_block: alloy::rpc::types::Block,
         rpc_receipts: Option<Vec<alloy::rpc::types::TransactionReceipt>>,
     ) -> RpcBlock {
-        let hash = rpc_block.header.hash;
         let block = rpc_block
             .map_transactions(|tx| {
                 let recovered = tx.inner;
@@ -198,7 +197,9 @@ where
                 Recovered::new_unchecked(tx, signer)
             })
             .into_consensus();
-        let sealed_header = Sealed::new_unchecked(block.header, hash);
+        // SignetHeaderV1 reseals the header; the recomputed hash matches the
+        // RPC-supplied hash for any well-formed provider response.
+        let sealed_header = SignetHeaderV1::new_unchecked(block.header);
         let block: RecoveredBlock = SealedBlock::new(sealed_header, block.body.transactions);
         let receipts = rpc_receipts
             .unwrap_or_default()

@@ -11,6 +11,7 @@ repository.workspace = true
 
 [dependencies]
 signet-blobber.workspace = true
+signet-cold-mdbx.workspace = true
 signet-storage.workspace = true
 signet-types.workspace = true
 

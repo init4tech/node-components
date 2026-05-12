@@ -119,12 +119,13 @@ pub(crate) use await_handler;
 ///
 /// Used by account-state endpoints (`balance`, `storage_at`,
 /// `addr_tx_count`, `code_at`).
-pub(crate) fn hot_reader_at_block<H>(
-    ctx: &crate::config::StorageRpcCtx<H>,
+pub(crate) fn hot_reader_at_block<H, B>(
+    ctx: &crate::config::StorageRpcCtx<H, B>,
     id: BlockId,
 ) -> Result<(H::RoTx, u64), EthError>
 where
     H: signet_hot::HotKv,
+    B: signet_cold::ColdStorageBackend,
     <H::RoTx as signet_hot::model::HotKvRead>::Error: std::error::Error + Send + Sync + 'static,
 {
     let reader = ctx.hot_reader()?;

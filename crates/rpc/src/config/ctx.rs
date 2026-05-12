@@ -68,7 +68,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     genesis::ChainConfig,
 };
-use signet_cold::ColdStorageReadHandle;
+use signet_cold::{ColdStorage, ColdStorageBackend};
 use signet_evm::EthereumHardfork;
 use signet_hot::{
     HotKv,
@@ -123,19 +123,19 @@ pub(crate) struct EvmBlockContext<Db> {
 /// Call [`StorageRpcCtx::new`] with unified storage, system constants,
 /// a [`ChainNotifier`], an optional [`TxCache`], and [`StorageRpcConfig`].
 #[derive(Debug)]
-pub struct StorageRpcCtx<H: HotKv> {
-    inner: Arc<StorageRpcCtxInner<H>>,
+pub struct StorageRpcCtx<H: HotKv, B: ColdStorageBackend> {
+    inner: Arc<StorageRpcCtxInner<H, B>>,
 }
 
-impl<H: HotKv> Clone for StorageRpcCtx<H> {
+impl<H: HotKv, B: ColdStorageBackend> Clone for StorageRpcCtx<H, B> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
 #[derive(Debug)]
-struct StorageRpcCtxInner<H: HotKv> {
-    storage: Arc<UnifiedStorage<H>>,
+struct StorageRpcCtxInner<H: HotKv, B: ColdStorageBackend> {
+    storage: Arc<UnifiedStorage<H, B>>,
     constants: SignetSystemConstants,
     chain_config: ChainConfig,
     chain: ChainNotifier,
@@ -147,7 +147,7 @@ struct StorageRpcCtxInner<H: HotKv> {
     gas_cache: GasOracleCache,
 }
 
-impl<H: HotKv> StorageRpcCtx<H> {
+impl<H: HotKv, B: ColdStorageBackend> StorageRpcCtx<H, B> {
     /// Create a new storage-backed RPC context.
     ///
     /// The [`ChainNotifier`] provides block tag tracking and a broadcast
@@ -157,7 +157,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
     /// The `chain_config` is the rollup genesis chain configuration, used
     /// to determine the active EVM hardfork (spec ID) for each block.
     pub fn new(
-        storage: Arc<UnifiedStorage<H>>,
+        storage: Arc<UnifiedStorage<H, B>>,
         constants: SignetSystemConstants,
         chain_config: ChainConfig,
         chain: ChainNotifier,
@@ -186,12 +186,12 @@ impl<H: HotKv> StorageRpcCtx<H> {
     }
 
     /// Access the unified storage.
-    pub fn storage(&self) -> &UnifiedStorage<H> {
+    pub fn storage(&self) -> &UnifiedStorage<H, B> {
         &self.inner.storage
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorageReadHandle {
+    pub fn cold(&self) -> ColdStorage<B> {
         self.inner.storage.cold_reader()
     }
 

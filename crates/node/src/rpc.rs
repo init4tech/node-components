@@ -1,5 +1,6 @@
 use crate::SignetNode;
 use signet_block_processor::AliasOracleFactory;
+use signet_cold::ColdStorageBackend;
 use signet_node_types::HostNotifier;
 use signet_rpc::{RpcServerGuard, StorageRpcCtx};
 use signet_storage::HotKv;
@@ -7,10 +8,11 @@ use signet_tx_cache::TxCache;
 use std::sync::Arc;
 use tracing::info;
 
-impl<N, H, AliasOracle> SignetNode<N, H, AliasOracle>
+impl<N, H, B, AliasOracle> SignetNode<N, H, B, AliasOracle>
 where
     N: HostNotifier,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as signet_storage::HotKvRead>::Error: trevm::revm::database::DBErrorMarker,
     AliasOracle: AliasOracleFactory,
 {
@@ -34,7 +36,7 @@ where
             tx_cache,
             self.rpc_config,
         );
-        let router = signet_rpc::router::<H>().with_state(rpc_ctx);
+        let router = signet_rpc::router::<H, B>().with_state(rpc_ctx);
 
         self.serve_config.clone().serve(router).await.map_err(Into::into)
     }

@@ -18,7 +18,13 @@ pub use core::SignetNodeConfig;
 // responsibility of the host adapter crate (e.g. `signet-host-reth`).
 
 mod storage;
-pub use storage::StorageConfig;
+pub use storage::{NodeColdBackend, StorageConfig};
+
+// `signet-cold-mdbx` is referenced via `NodeColdBackend` only when the SQL
+// features are disabled. Keep the dependency satisfied for the SQL-enabled
+// build so callers can still type-name the backend uniformly.
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+use signet_cold_mdbx as _;
 
 /// Test configuration for Signet Nodes.
 #[cfg(feature = "test_utils")]

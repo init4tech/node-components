@@ -30,7 +30,7 @@ use alloy::{
 };
 use revm_inspectors::access_list::AccessListInspector;
 use serde::Serialize;
-use signet_cold::{HeaderSpecifier, ReceiptSpecifier};
+use signet_cold::{ColdStorageBackend, HeaderSpecifier, ReceiptSpecifier};
 use signet_hot::{HistoryRead, HotKv, db::HotDbRead, model::HotKvRead};
 use tracing::{Instrument, debug, trace, trace_span};
 use trevm::{
@@ -58,7 +58,9 @@ pub(crate) enum SyncingResponse {
 }
 
 /// `eth_syncing` — returns sync status or `false` when fully synced.
-pub(crate) async fn syncing<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<SyncingResponse, ()> {
+pub(crate) async fn syncing<H: HotKv, B: ColdStorageBackend>(
+    ctx: StorageRpcCtx<H, B>,
+) -> Result<SyncingResponse, ()> {
     match ctx.tags().sync_status() {
         Some(status) => Ok(SyncingResponse::Syncing {
             starting_block: U64::from(status.starting_block),
@@ -92,12 +94,16 @@ pub(crate) async fn protocol_version() -> Result<String, ()> {
 // ---------------------------------------------------------------------------
 
 /// `eth_blockNumber` — returns the latest block number from block tags.
-pub(crate) async fn block_number<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, EthError> {
+pub(crate) async fn block_number<H: HotKv, B: ColdStorageBackend>(
+    ctx: StorageRpcCtx<H, B>,
+) -> Result<U64, EthError> {
     Ok(U64::from(ctx.tags().latest()))
 }
 
 /// `eth_chainId` — returns the configured chain ID.
-pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()> {
+pub(crate) async fn chain_id<H: HotKv, B: ColdStorageBackend>(
+    ctx: StorageRpcCtx<H, B>,
+) -> Result<U64, ()> {
     Ok(U64::from(ctx.chain_id()))
 }
 
@@ -106,9 +112,13 @@ pub(crate) async fn chain_id<H: HotKv>(ctx: StorageRpcCtx<H>) -> Result<U64, ()>
 // ---------------------------------------------------------------------------
 
 /// `eth_gasPrice` — suggests gas price based on recent block tips + base fee.
-pub(crate) async fn gas_price<H>(hctx: HandlerCtx, ctx: StorageRpcCtx<H>) -> Result<U256, EthError>
+pub(crate) async fn gas_price<H, B>(
+    hctx: HandlerCtx,
+    ctx: StorageRpcCtx<H, B>,
+) -> Result<U256, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -130,12 +140,13 @@ where
 }
 
 /// `eth_maxPriorityFeePerGas` — suggests priority fee from recent block tips.
-pub(crate) async fn max_priority_fee_per_gas<H>(
+pub(crate) async fn max_priority_fee_per_gas<H, B>(
     hctx: HandlerCtx,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U256, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -147,13 +158,14 @@ where
 }
 
 /// `eth_feeHistory` — returns base fee and reward percentile data.
-pub(crate) async fn fee_history<H>(
+pub(crate) async fn fee_history<H, B>(
     hctx: HandlerCtx,
     FeeHistoryArgs(block_count, newest, reward_percentiles): FeeHistoryArgs,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<FeeHistory, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -315,14 +327,15 @@ fn calculate_reward_percentiles(
 
 /// `eth_getBlockByHash` / `eth_getBlockByNumber` — resolve block, fetch
 /// header + transactions from cold storage, assemble RPC block response.
-pub(crate) async fn block<T, H>(
+pub(crate) async fn block<T, H, B>(
     hctx: HandlerCtx,
     BlockParams(t, full): BlockParams<T>,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<RpcBlock>, EthError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -366,14 +379,15 @@ where
 }
 
 /// `eth_getBlockTransactionCount*` — transaction count in a block.
-pub(crate) async fn block_tx_count<T, H>(
+pub(crate) async fn block_tx_count<T, H, B>(
     hctx: HandlerCtx,
     (t,): (T,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<U64>, EthError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -389,13 +403,14 @@ where
 }
 
 /// `eth_getBlockReceipts` — all receipts in a block.
-pub(crate) async fn block_receipts<H>(
+pub(crate) async fn block_receipts<H, B>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<LazyReceipts>, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -421,14 +436,15 @@ where
 }
 
 /// `eth_getBlockHeaderByHash` / `eth_getBlockHeaderByNumber`.
-pub(crate) async fn header_by<T, H>(
+pub(crate) async fn header_by<T, H, B>(
     hctx: HandlerCtx,
     (t,): (T,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<RpcHeader>, EthError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -453,13 +469,14 @@ where
 // ---------------------------------------------------------------------------
 
 /// `eth_getTransactionByHash` — look up transaction by hash from cold storage.
-pub(crate) async fn transaction_by_hash<H>(
+pub(crate) async fn transaction_by_hash<H, B>(
     hctx: HandlerCtx,
     (hash,): (B256,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<RpcTransaction>, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -481,13 +498,14 @@ where
 }
 
 /// `eth_getRawTransactionByHash` — RLP-encoded transaction bytes.
-pub(crate) async fn raw_transaction_by_hash<H>(
+pub(crate) async fn raw_transaction_by_hash<H, B>(
     hctx: HandlerCtx,
     (hash,): (B256,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<alloy::primitives::Bytes>, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -498,14 +516,15 @@ where
 }
 
 /// `eth_getTransactionByBlock*AndIndex` — transaction by position in block.
-pub(crate) async fn transaction_by_block_and_index<T, H>(
+pub(crate) async fn transaction_by_block_and_index<T, H, B>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<RpcTransaction>, EthError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -530,14 +549,15 @@ where
 }
 
 /// `eth_getRawTransactionByBlock*AndIndex` — raw RLP bytes by position.
-pub(crate) async fn raw_transaction_by_block_and_index<T, H>(
+pub(crate) async fn raw_transaction_by_block_and_index<T, H, B>(
     hctx: HandlerCtx,
     (t, index): (T, U64),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<alloy::primitives::Bytes>, EthError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = t.into();
@@ -557,13 +577,14 @@ where
 
 /// `eth_getTransactionReceipt` — receipt by tx hash. Fetches the receipt,
 /// then the associated transaction and header for derived fields.
-pub(crate) async fn transaction_receipt<H>(
+pub(crate) async fn transaction_receipt<H, B>(
     hctx: HandlerCtx,
     (hash,): (B256,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Option<RpcReceipt>, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -592,13 +613,14 @@ where
 // ---------------------------------------------------------------------------
 
 /// `eth_getBalance` — account balance at a given block from hot storage.
-pub(crate) async fn balance<H>(
+pub(crate) async fn balance<H, B>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U256, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -616,13 +638,14 @@ where
 }
 
 /// `eth_getStorageAt` — contract storage slot at a given block.
-pub(crate) async fn storage_at<H>(
+pub(crate) async fn storage_at<H, B>(
     hctx: HandlerCtx,
     StorageAtArgs(address, key, block): StorageAtArgs,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<B256, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -640,13 +663,14 @@ where
 }
 
 /// `eth_getTransactionCount` — account nonce at a given block.
-pub(crate) async fn addr_tx_count<H>(
+pub(crate) async fn addr_tx_count<H, B>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U64, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -664,13 +688,14 @@ where
 }
 
 /// `eth_getCode` — contract bytecode at a given block.
-pub(crate) async fn code_at<H>(
+pub(crate) async fn code_at<H, B>(
     hctx: HandlerCtx,
     AddrWithBlock(address, block): AddrWithBlock,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<alloy::primitives::Bytes, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -706,13 +731,14 @@ where
 ///
 /// Resolves the block, builds a revm instance with the requested state
 /// and block overrides, then executes the transaction request.
-pub(crate) async fn run_call<H>(
+pub(crate) async fn run_call<H, B>(
     hctx: HandlerCtx,
     TxParams(request, block, state_overrides, block_overrides): TxParams,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<ExecutionResult, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let id = block.unwrap_or(BlockId::latest());
@@ -749,13 +775,14 @@ where
 ///
 /// Delegates to [`run_call`], then maps the execution result to raw
 /// output bytes, revert data, or halt reason.
-pub(crate) async fn call<H>(
+pub(crate) async fn call<H, B>(
     hctx: HandlerCtx,
     mut params: TxParams,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<alloy::primitives::Bytes, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let max_gas = ctx.config().rpc_gas_cap;
@@ -780,13 +807,14 @@ where
 }
 
 /// `eth_estimateGas` — estimate gas required for a transaction.
-pub(crate) async fn estimate_gas<H>(
+pub(crate) async fn estimate_gas<H, B>(
     hctx: HandlerCtx,
     TxParams(mut request, block, state_overrides, block_overrides): TxParams,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U64, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let max_gas = ctx.config().rpc_gas_cap;
@@ -827,13 +855,14 @@ where
 }
 
 /// `eth_createAccessList` — generate an access list for a transaction.
-pub(crate) async fn create_access_list<H>(
+pub(crate) async fn create_access_list<H, B>(
     hctx: HandlerCtx,
     TxParams(mut request, block, state_overrides, block_overrides): TxParams,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<AccessListResult, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let max_gas = ctx.config().rpc_gas_cap;
@@ -884,13 +913,14 @@ where
 ///
 /// The transaction is forwarded to the tx cache in a fire-and-forget
 /// task; the hash is returned immediately.
-pub(crate) async fn send_raw_transaction<H>(
+pub(crate) async fn send_raw_transaction<H, B>(
     hctx: HandlerCtx,
     (tx,): (alloy::primitives::Bytes,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<B256, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let Some(tx_cache) = ctx.tx_cache().cloned() else {
@@ -936,13 +966,14 @@ async fn collect_log_stream(stream: signet_cold::LogStream) -> signet_cold::Cold
 ///
 /// Uses `stream_logs` for deadline enforcement and dedicated concurrency
 /// control. The stream is collected into a `Vec` for the JSON-RPC response.
-pub(crate) async fn get_logs<H>(
+pub(crate) async fn get_logs<H, B>(
     hctx: HandlerCtx,
     (filter,): (Filter,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<Vec<Log>, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -996,13 +1027,14 @@ where
 // ---------------------------------------------------------------------------
 
 /// `eth_newFilter` — install a log filter for polling.
-pub(crate) async fn new_filter<H>(
+pub(crate) async fn new_filter<H, B>(
     hctx: HandlerCtx,
     (filter,): (Filter,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U64, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -1014,12 +1046,13 @@ where
 }
 
 /// `eth_newBlockFilter` — install a block hash filter for polling.
-pub(crate) async fn new_block_filter<H>(
+pub(crate) async fn new_block_filter<H, B>(
     hctx: HandlerCtx,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U64, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -1031,13 +1064,14 @@ where
 }
 
 /// `eth_uninstallFilter` — remove a filter.
-pub(crate) async fn uninstall_filter<H>(
+pub(crate) async fn uninstall_filter<H, B>(
     hctx: HandlerCtx,
     (id,): (U64,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<bool, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move { Ok(ctx.filter_manager().uninstall(id).is_some()) };
@@ -1046,13 +1080,14 @@ where
 
 /// `eth_getFilterChanges` / `eth_getFilterLogs` — poll a filter for new
 /// results since the last poll. Fetches matching data from cold storage.
-pub(crate) async fn get_filter_changes<H>(
+pub(crate) async fn get_filter_changes<H, B>(
     hctx: HandlerCtx,
     (id,): (U64,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<FilterOutput, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move {
@@ -1141,13 +1176,14 @@ where
 // ---------------------------------------------------------------------------
 
 /// `eth_subscribe` — register a push-based subscription (WebSocket/SSE).
-pub(crate) async fn subscribe<H>(
+pub(crate) async fn subscribe<H, B>(
     hctx: HandlerCtx,
     sub: SubscribeArgs,
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<U64, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let interest: InterestKind = sub.try_into()?;
@@ -1158,13 +1194,14 @@ where
 }
 
 /// `eth_unsubscribe` — cancel a push-based subscription.
-pub(crate) async fn unsubscribe<H>(
+pub(crate) async fn unsubscribe<H, B>(
     hctx: HandlerCtx,
     (id,): (U64,),
-    ctx: StorageRpcCtx<H>,
+    ctx: StorageRpcCtx<H, B>,
 ) -> Result<bool, EthError>
 where
     H: HotKv + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let task = async move { Ok(ctx.sub_manager().unsubscribe(id)) };

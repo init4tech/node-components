@@ -4,7 +4,7 @@ use crate::{NodeStatus, SignetNode};
 use eyre::OptionExt;
 use signet_blobber::CacheHandle;
 use signet_block_processor::AliasOracleFactory;
-use signet_cold::BlockData;
+use signet_cold::{BlockData, ColdStorageBackend};
 use signet_hot::db::{HotDbRead, UnsafeDbWrite};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::HostNotifier;
@@ -26,7 +26,7 @@ pub struct NotAStorage;
 ///
 /// The builder requires the following components to be set before building:
 /// - A [`HostNotifier`], via [`Self::with_notifier`].
-/// - An [`Arc<UnifiedStorage<H>>`], via [`Self::with_storage`].
+/// - An [`Arc<UnifiedStorage<H, B>>`], via [`Self::with_storage`].
 /// - An [`AliasOracleFactory`], via [`Self::with_alias_oracle`].
 /// - A [`CacheHandle`], via [`Self::with_blob_cacher`].
 /// - A [`ServeConfig`], via [`Self::with_serve_config`].
@@ -41,7 +41,7 @@ pub struct NotAStorage;
 /// # fn example<H: signet_storage::HotKv>(
 /// #     config: signet_node_config::SignetNodeConfig,
 /// #     notifier: impl signet_node_types::HostNotifier,
-/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H>>,
+/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H, B>>,
 /// #     alias_oracle: impl signet_block_processor::AliasOracleFactory,
 /// #     blob_cacher: signet_blobber::CacheHandle,
 /// #     serve_config: signet_rpc::ServeConfig,
@@ -91,10 +91,10 @@ impl SignetNodeBuilder {
 
 impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     /// Set the [`UnifiedStorage`] backend for the signet node.
-    pub fn with_storage<H: HotKv>(
+    pub fn with_storage<H: HotKv, B: ColdStorageBackend>(
         self,
-        storage: Arc<UnifiedStorage<H>>,
-    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H>>, Aof> {
+        storage: Arc<UnifiedStorage<H, B>>,
+    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H, B>>, Aof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
@@ -163,10 +163,11 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     }
 }
 
-impl<N, H, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H>>, Aof>
+impl<N, H, B, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H, B>>, Aof>
 where
     N: HostNotifier,
     H: HotKv + Clone + Send + Sync + 'static,
+    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     Aof: AliasOracleFactory,
 {
@@ -214,7 +215,7 @@ where
     /// - Inits storage from genesis if needed.
     pub async fn build(
         mut self,
-    ) -> eyre::Result<(SignetNode<N, H, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
+    ) -> eyre::Result<(SignetNode<N, H, B, Aof>, tokio::sync::watch::Receiver<NodeStatus>)> {
         self.prebuild().await?;
         // NB: Notifier, Storage, and Aof are enforced by typestate generics.
         // The remaining fields are set via `Option` and checked at runtime.

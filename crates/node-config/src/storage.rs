@@ -1,11 +1,23 @@
 use init4_bin_base::utils::from_env::FromEnv;
+use signet_storage::{DatabaseEnv, Either, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
-use signet_storage::SqlConnector;
-use signet_storage::{DatabaseEnv, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
+use signet_storage::{SqlConnector, either::EitherCold};
 use std::borrow::Cow;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+/// Cold storage backend used by the unified node storage.
+///
+/// When SQL features are enabled, this is the [`EitherCold`] enum that can
+/// hold either an MDBX or SQL cold backend (selected at runtime). When SQL
+/// features are disabled, it falls back to MDBX only.
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+pub type NodeColdBackend = EitherCold;
+
+/// Cold storage backend used by the unified node storage (no SQL feature).
+#[cfg(not(any(feature = "postgres", feature = "sqlite")))]
+pub type NodeColdBackend = signet_cold_mdbx::MdbxColdBackend;
 
 /// Configuration for signet unified storage.
 ///
@@ -22,11 +34,9 @@ use tokio_util::sync::CancellationToken;
 /// Exactly one of `SIGNET_COLD_PATH` or `SIGNET_COLD_SQL_URL` must be set.
 ///
 /// When using SQL cold storage, connection pool tuning is configured via
-/// [`SqlConnector`]'s own environment variables (e.g.
+/// the `SqlConnector`'s own environment variables (e.g.
 /// `SIGNET_COLD_SQL_MAX_CONNECTIONS`). See the `cold-sql` feature of
 /// `init4-bin-base` for the full list.
-///
-/// [`SqlConnector`]: signet_storage::SqlConnector
 ///
 /// # Example
 ///
@@ -163,7 +173,7 @@ impl StorageConfig {
     pub async fn build_storage(
         &self,
         cancel: CancellationToken,
-    ) -> eyre::Result<UnifiedStorage<DatabaseEnv>> {
+    ) -> eyre::Result<UnifiedStorage<DatabaseEnv, NodeColdBackend>> {
         let hot = MdbxConnector::new(self.hot_path.as_ref());
         let has_mdbx = !self.cold_path.is_empty();
 
@@ -172,10 +182,20 @@ impl StorageConfig {
         #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
         let has_sql = std::env::var("SIGNET_COLD_SQL_URL").is_ok_and(|v| !v.is_empty());
 
+        // Helper to label the right-hand variant of `Either` for the
+        // current feature set, so both match arms produce the same
+        // `Either<MdbxConnector, _>` type.
+        #[cfg(any(feature = "postgres", feature = "sqlite"))]
+        type RightCold = SqlConnector;
+        #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
+        type RightCold = ();
+
         match (has_mdbx, has_sql) {
             (true, false) => Ok(StorageBuilder::new()
                 .hot(hot)
-                .cold(MdbxConnector::new(self.cold_path.as_ref()))
+                .cold(Either::<MdbxConnector, RightCold>::left(MdbxConnector::new(
+                    self.cold_path.as_ref(),
+                )))
                 .cancel_token(cancel)
                 .build()
                 .await?),
@@ -185,7 +205,7 @@ impl StorageConfig {
                     self.cold_sql.clone().expect("cold_sql must be Some when has_sql is true");
                 Ok(StorageBuilder::new()
                     .hot(hot)
-                    .cold(connector)
+                    .cold(Either::<MdbxConnector, RightCold>::right(connector))
                     .cancel_token(cancel)
                     .build()
                     .await?)

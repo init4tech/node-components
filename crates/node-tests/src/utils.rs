@@ -5,7 +5,7 @@ use alloy::{
     signers::{SignerSync, local::PrivateKeySigner},
     uint,
 };
-use signet_types::primitives::{RecoveredBlock, Transaction, TransactionSigned};
+use signet_types::primitives::{RecoveredBlock, SignetHeaderV1, Transaction, TransactionSigned};
 use signet_zenith::Zenith;
 use std::{panic, sync::Once};
 use tracing_subscriber::EnvFilter;
@@ -21,7 +21,7 @@ pub fn fake_block(number: u64) -> RecoveredBlock {
         excess_blob_gas: Some(0),
         ..Default::default()
     };
-    RecoveredBlock::blank_with_header(header)
+    RecoveredBlock::blank_with_header(SignetHeaderV1::new_unchecked(header))
 }
 
 /// Sign a transaction with a wallet.

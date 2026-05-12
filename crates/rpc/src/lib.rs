@@ -39,9 +39,10 @@ pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
 /// Instantiate a combined router with `eth`, `debug`, `trace`, `signet`,
 /// `web3`, and `net` namespaces.
-pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>
+pub fn router<H, B>() -> ajj::Router<StorageRpcCtx<H, B>>
 where
     H: signet_hot::HotKv + Send + Sync + 'static,
+    B: signet_cold::ColdStorageBackend,
     <H::RoTx as signet_hot::model::HotKvRead>::Error: trevm::revm::database::DBErrorMarker,
 {
     ajj::Router::new()
