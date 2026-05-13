@@ -22,7 +22,6 @@ use alloy::{
     },
 };
 use itertools::Itertools;
-use signet_cold::ColdStorageBackend;
 use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::{MagicSig, constants::SignetSystemConstants};
 use tracing::Instrument;
@@ -122,14 +121,13 @@ where
 }
 
 /// `trace_block` — return Parity traces for all transactions in a block.
-pub(super) async fn trace_block<H, B>(
+pub(super) async fn trace_block<H>(
     hctx: HandlerCtx,
     TraceBlockParams(id): TraceBlockParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Option<Vec<LocalizedTransactionTrace>>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -182,14 +180,13 @@ where
 }
 
 /// `trace_transaction` — return Parity traces for a single transaction.
-pub(super) async fn trace_transaction<H, B>(
+pub(super) async fn trace_transaction<H>(
     hctx: HandlerCtx,
     TraceTransactionParams(tx_hash): TraceTransactionParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Option<Vec<LocalizedTransactionTrace>>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -262,14 +259,13 @@ where
 }
 
 /// `trace_replayBlockTransactions` — replay all block txs with trace type selection.
-pub(super) async fn replay_block_transactions<H, B>(
+pub(super) async fn replay_block_transactions<H>(
     hctx: HandlerCtx,
     ReplayBlockParams(id, trace_types): ReplayBlockParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Option<Vec<TraceResultsWithTransactionHash>>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -319,14 +315,13 @@ where
 }
 
 /// `trace_replayTransaction` — replay a single tx with trace type selection.
-pub(super) async fn replay_transaction<H, B>(
+pub(super) async fn replay_transaction<H>(
     hctx: HandlerCtx,
     ReplayTransactionParams(tx_hash, trace_types): ReplayTransactionParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<TraceResults, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -385,14 +380,13 @@ where
 }
 
 /// `trace_call` — trace a call with Parity output and state overrides.
-pub(super) async fn trace_call<H, B>(
+pub(super) async fn trace_call<H>(
     hctx: HandlerCtx,
     TraceCallParams(request, trace_types, block_id, state_overrides, block_overrides): TraceCallParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<TraceResults, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -434,14 +428,13 @@ where
 ///
 /// Each call sees state changes from prior calls. Per-call trace
 /// types. Defaults to `BlockId::pending()` (matching reth).
-pub(super) async fn trace_call_many<H, B>(
+pub(super) async fn trace_call_many<H>(
     hctx: HandlerCtx,
     TraceCallManyParams(calls, block_id): TraceCallManyParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Vec<TraceResults>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -481,14 +474,13 @@ where
 }
 
 /// `trace_rawTransaction` — trace a transaction from raw RLP bytes.
-pub(super) async fn trace_raw_transaction<H, B>(
+pub(super) async fn trace_raw_transaction<H>(
     hctx: HandlerCtx,
     TraceRawTransactionParams(rlp_bytes, trace_types, block_id): TraceRawTransactionParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<TraceResults, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;
@@ -532,14 +524,13 @@ where
 ///
 /// Returns `None` if `indices.len() != 1` (Erigon compatibility,
 /// matching reth).
-pub(super) async fn trace_get<H, B>(
+pub(super) async fn trace_get<H>(
     hctx: HandlerCtx,
     TraceGetParams(tx_hash, indices): TraceGetParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Option<LocalizedTransactionTrace>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     if indices.len() != 1 {
@@ -555,14 +546,13 @@ where
 ///
 /// Brute-force replay with configurable block range limit (default
 /// 100 blocks). Matches reth's approach.
-pub(super) async fn trace_filter<H, B>(
+pub(super) async fn trace_filter<H>(
     hctx: HandlerCtx,
     TraceFilterParams(filter): TraceFilterParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Vec<LocalizedTransactionTrace>, TraceError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let _permit = ctx.acquire_tracing_permit().await;

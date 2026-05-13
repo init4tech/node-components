@@ -19,7 +19,6 @@ use alloy::{
     rpc::types::trace::geth::{GethDebugTracingOptions, GethTrace, TraceResult},
 };
 use itertools::Itertools;
-use signet_cold::ColdStorageBackend;
 use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::{MagicSig, constants::SignetSystemConstants};
 use tracing::Instrument;
@@ -80,15 +79,14 @@ where
 }
 
 /// `debug_traceBlockByNumber` and `debug_traceBlockByHash` handler.
-pub(crate) async fn trace_block<T, H, B>(
+pub(crate) async fn trace_block<T, H>(
     hctx: HandlerCtx,
     TraceBlockParams(id, opts): TraceBlockParams<T>,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Vec<TraceResult>, DebugError>
 where
     T: Into<BlockId>,
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let opts = opts.unwrap_or_default();
@@ -151,14 +149,13 @@ where
 }
 
 /// `debug_traceTransaction` handler.
-pub(crate) async fn trace_transaction<H, B>(
+pub(crate) async fn trace_transaction<H>(
     hctx: HandlerCtx,
     TraceTransactionParams(tx_hash, opts): TraceTransactionParams,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<GethTrace, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let opts = opts.unwrap_or_default();
@@ -243,14 +240,13 @@ where
 }
 
 /// `debug_traceBlock` — trace all transactions in a raw RLP-encoded block.
-pub(crate) async fn trace_block_rlp<H, B>(
+pub(crate) async fn trace_block_rlp<H>(
     hctx: HandlerCtx,
     (rlp_bytes, opts): (Bytes, Option<GethDebugTracingOptions>),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Vec<TraceResult>, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let opts = opts.unwrap_or_default();
@@ -300,14 +296,13 @@ where
 /// Resolves the given [`BlockId`], fetches header and transactions from cold
 /// storage, assembles them into an [`alloy::consensus::Block`], and returns
 /// the RLP-encoded bytes.
-pub(crate) async fn get_raw_block<H, B>(
+pub(crate) async fn get_raw_block<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Bytes, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let span = tracing::debug_span!("getRawBlock", ?id);
@@ -355,14 +350,13 @@ where
 ///
 /// Fetches all receipts for the given [`BlockId`] and returns a list of
 /// EIP-2718 encoded consensus receipt envelopes (one per transaction).
-pub(crate) async fn get_raw_receipts<H, B>(
+pub(crate) async fn get_raw_receipts<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Vec<Bytes>, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let span = tracing::debug_span!("getRawReceipts", ?id);
@@ -413,14 +407,13 @@ where
 /// `debug_getRawHeader` handler.
 ///
 /// Resolves the given [`BlockId`] and returns the RLP-encoded block header.
-pub(crate) async fn get_raw_header<H, B>(
+pub(crate) async fn get_raw_header<H>(
     hctx: HandlerCtx,
     (id,): (BlockId,),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Bytes, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let span = tracing::debug_span!("getRawHeader", ?id);
@@ -454,18 +447,17 @@ where
 /// from a [`alloy::rpc::types::TransactionRequest`], then routes through
 /// the tracer. State overrides are not supported in this initial
 /// implementation.
-pub(crate) async fn debug_trace_call<H, B>(
+pub(crate) async fn debug_trace_call<H>(
     hctx: HandlerCtx,
     (request, block_id, opts): (
         alloy::rpc::types::TransactionRequest,
         Option<BlockId>,
         Option<GethDebugTracingOptions>,
     ),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<GethTrace, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let opts = opts.unwrap_or_default();
@@ -510,14 +502,13 @@ where
 ///
 /// Fetches the transaction by hash from cold storage and returns the
 /// EIP-2718 encoded bytes.
-pub(crate) async fn get_raw_transaction<H, B>(
+pub(crate) async fn get_raw_transaction<H>(
     hctx: HandlerCtx,
     (hash,): (B256,),
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<Bytes, DebugError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let span = tracing::debug_span!("getRawTransaction", %hash);

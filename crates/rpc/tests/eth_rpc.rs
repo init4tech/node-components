@@ -36,7 +36,7 @@ struct TestHarness {
     hot: MemKv,
     chain: ChainNotifier,
     #[allow(dead_code)]
-    ctx: StorageRpcCtx<MemKv, MemColdBackend>,
+    ctx: StorageRpcCtx<MemKv>,
     _cancel: CancellationToken,
 }
 
@@ -58,8 +58,7 @@ impl TestHarness {
             None,
             StorageRpcConfig::default(),
         );
-        let app =
-            signet_rpc::router::<MemKv, MemColdBackend>().into_axum("/").with_state(ctx.clone());
+        let app = signet_rpc::router::<MemKv>().into_axum("/").with_state(ctx.clone());
 
         Self { app, cold, hot, chain, ctx, _cancel: cancel }
     }

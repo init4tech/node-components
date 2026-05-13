@@ -57,6 +57,7 @@
 //! low. See ENG-1901 for the full trade-off analysis.
 
 use crate::{
+    NodeColdBackend,
     config::{
         ChainNotifier, GasOracleCache, StorageRpcConfig,
         resolve::{BlockTags, ResolveError},
@@ -68,7 +69,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     genesis::ChainConfig,
 };
-use signet_cold::{ColdStorage, ColdStorageBackend};
+use signet_cold::ColdStorage;
 use signet_evm::EthereumHardfork;
 use signet_hot::{
     HotKv,
@@ -123,19 +124,19 @@ pub(crate) struct EvmBlockContext<Db> {
 /// Call [`StorageRpcCtx::new`] with unified storage, system constants,
 /// a [`ChainNotifier`], an optional [`TxCache`], and [`StorageRpcConfig`].
 #[derive(Debug)]
-pub struct StorageRpcCtx<H: HotKv, B: ColdStorageBackend> {
-    inner: Arc<StorageRpcCtxInner<H, B>>,
+pub struct StorageRpcCtx<H: HotKv> {
+    inner: Arc<StorageRpcCtxInner<H>>,
 }
 
-impl<H: HotKv, B: ColdStorageBackend> Clone for StorageRpcCtx<H, B> {
+impl<H: HotKv> Clone for StorageRpcCtx<H> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
 #[derive(Debug)]
-struct StorageRpcCtxInner<H: HotKv, B: ColdStorageBackend> {
-    storage: Arc<UnifiedStorage<H, B>>,
+struct StorageRpcCtxInner<H: HotKv> {
+    storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
     constants: SignetSystemConstants,
     chain_config: ChainConfig,
     chain: ChainNotifier,
@@ -147,7 +148,7 @@ struct StorageRpcCtxInner<H: HotKv, B: ColdStorageBackend> {
     gas_cache: GasOracleCache,
 }
 
-impl<H: HotKv, B: ColdStorageBackend> StorageRpcCtx<H, B> {
+impl<H: HotKv> StorageRpcCtx<H> {
     /// Create a new storage-backed RPC context.
     ///
     /// The [`ChainNotifier`] provides block tag tracking and a broadcast
@@ -157,7 +158,7 @@ impl<H: HotKv, B: ColdStorageBackend> StorageRpcCtx<H, B> {
     /// The `chain_config` is the rollup genesis chain configuration, used
     /// to determine the active EVM hardfork (spec ID) for each block.
     pub fn new(
-        storage: Arc<UnifiedStorage<H, B>>,
+        storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
         constants: SignetSystemConstants,
         chain_config: ChainConfig,
         chain: ChainNotifier,
@@ -186,12 +187,12 @@ impl<H: HotKv, B: ColdStorageBackend> StorageRpcCtx<H, B> {
     }
 
     /// Access the unified storage.
-    pub fn storage(&self) -> &UnifiedStorage<H, B> {
+    pub fn storage(&self) -> &UnifiedStorage<H, NodeColdBackend> {
         &self.inner.storage
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorage<B> {
+    pub fn cold(&self) -> ColdStorage<NodeColdBackend> {
         self.inner.storage.cold_reader()
     }
 

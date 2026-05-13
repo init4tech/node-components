@@ -8,7 +8,6 @@ use crate::{
 use ajj::HandlerCtx;
 use alloy::eips::BlockId;
 use signet_bundle::{SignetBundleDriver, SignetCallBundle, SignetCallBundleResponse};
-use signet_cold::ColdStorageBackend;
 use signet_hot::{HotKv, model::HotKvRead};
 use signet_types::SignedOrder;
 use std::time::Duration;
@@ -20,14 +19,13 @@ use trevm::revm::database::DBErrorMarker;
 /// Forwards the order to the transaction cache asynchronously. The
 /// response is returned immediately — forwarding errors are logged
 /// but not propagated to the caller (fire-and-forget).
-pub(super) async fn send_order<H, B>(
+pub(super) async fn send_order<H>(
     hctx: HandlerCtx,
     order: SignedOrder,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<(), SignetError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let Some(tx_cache) = ctx.tx_cache().cloned() else {
@@ -50,14 +48,13 @@ where
 }
 
 /// `signet_callBundle` handler.
-pub(super) async fn call_bundle<H, B>(
+pub(super) async fn call_bundle<H>(
     hctx: HandlerCtx,
     bundle: SignetCallBundle,
-    ctx: StorageRpcCtx<H, B>,
+    ctx: StorageRpcCtx<H>,
 ) -> Result<SignetCallBundleResponse, SignetError>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     let timeout = bundle.bundle.timeout.unwrap_or(ctx.config().default_bundle_timeout_ms);

@@ -12,6 +12,7 @@ description = "Ethereum JSON-RPC server backed by signet-storage"
 [dependencies]
 signet-storage.workspace = true
 signet-cold.workspace = true
+signet-cold-mdbx.workspace = true
 signet-hot.workspace = true
 signet-storage-types.workspace = true
 signet-evm.workspace = true
@@ -35,6 +36,13 @@ axum = "0.8.1"
 tower-http = { version = "0.6.2", features = ["cors"] }
 interprocess = { version = "2.2.2", features = ["tokio"] }
 
+[features]
+# Swap [`NodeColdBackend`] to the in-memory cold backend for tests. Must not
+# be enabled in production builds.
+test-utils = ["signet-cold/test-utils"]
+postgres = ["signet-storage/postgres"]
+sqlite = ["signet-storage/sqlite"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-util.workspace = true
@@ -49,3 +57,7 @@ axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
 http = "1"
 trevm.workspace = true
+
+[[test]]
+name = "eth_rpc"
+required-features = ["test-utils"]

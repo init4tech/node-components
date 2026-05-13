@@ -3,14 +3,13 @@ use alloy::consensus::BlockHeader;
 use eyre::{Context, OptionExt};
 use signet_blobber::CacheHandle;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
-use signet_cold::ColdStorageBackend;
 use signet_evm::EthereumHardfork;
 use signet_extract::{Extractable, Extractor};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::{HostNotification, HostNotifier, RevertRange};
 use signet_rpc::{
-    ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
-    ServeConfig, StorageRpcConfig,
+    ChainNotifier, NewBlockNotification, NodeColdBackend, RemovedBlock, ReorgNotification,
+    RpcServerGuard, ServeConfig, StorageRpcConfig,
 };
 use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
@@ -20,11 +19,10 @@ use tracing::{debug, info, instrument};
 use trevm::revm::database::DBErrorMarker;
 
 /// Signet context and configuration.
-pub struct SignetNode<N, H, B, AliasOracle>
+pub struct SignetNode<N, H, AliasOracle>
 where
     N: HostNotifier,
     H: HotKv,
-    B: ColdStorageBackend,
 {
     /// The host notifier, which yields chain notifications.
     pub(crate) notifier: N,
@@ -33,7 +31,7 @@ where
     pub(crate) config: Arc<SignetNodeConfig>,
 
     /// Unified hot + cold storage backend.
-    pub(crate) storage: Arc<UnifiedStorage<H, B>>,
+    pub(crate) storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
 
     /// Shared chain state (block tags + notification sender).
     /// Cloned to the RPC context on startup.
@@ -65,22 +63,20 @@ where
     pub(crate) rpc_config: StorageRpcConfig,
 }
 
-impl<N, H, B, AliasOracle> fmt::Debug for SignetNode<N, H, B, AliasOracle>
+impl<N, H, AliasOracle> fmt::Debug for SignetNode<N, H, AliasOracle>
 where
     N: HostNotifier,
     H: HotKv,
-    B: ColdStorageBackend,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SignetNode").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<N, H, B, AliasOracle> SignetNode<N, H, B, AliasOracle>
+impl<N, H, AliasOracle> SignetNode<N, H, AliasOracle>
 where
     N: HostNotifier,
     H: HotKv + Clone + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
     AliasOracle: AliasOracleFactory,
 {
@@ -101,7 +97,7 @@ where
     pub fn new_unsafe(
         notifier: N,
         config: SignetNodeConfig,
-        storage: Arc<UnifiedStorage<H, B>>,
+        storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
         alias_oracle: AliasOracle,
         client: reqwest::Client,
         blob_cacher: CacheHandle,

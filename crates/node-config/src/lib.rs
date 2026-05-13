@@ -11,6 +11,11 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+// Some uses of `signet_storage` are cfg-gated to non-test feature paths;
+// silence `unused_crate_dependencies` on builds (e.g. test_utils) where the
+// direct uses are excluded.
+use signet_storage as _;
+
 mod core;
 pub use core::SignetNodeConfig;
 
@@ -18,13 +23,7 @@ pub use core::SignetNodeConfig;
 // responsibility of the host adapter crate (e.g. `signet-host-reth`).
 
 mod storage;
-pub use storage::{NodeColdBackend, StorageConfig};
-
-// `signet-cold-mdbx` is referenced via `NodeColdBackend` only when the SQL
-// features are disabled. Keep the dependency satisfied for the SQL-enabled
-// build so callers can still type-name the backend uniformly.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
-use signet_cold_mdbx as _;
+pub use storage::StorageConfig;
 
 /// Test configuration for Signet Nodes.
 #[cfg(feature = "test_utils")]

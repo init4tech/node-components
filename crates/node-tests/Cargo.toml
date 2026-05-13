@@ -15,7 +15,7 @@ signet-blobber = { workspace = true, features = ["test-utils"] }
 signet-node.workspace = true
 signet-node-config = { workspace = true, features = ["test_utils"] }
 signet-node-types.workspace = true
-signet-rpc.workspace = true
+signet-rpc = { workspace = true, features = ["test-utils"] }
 
 signet-cold = { workspace = true, features = ["in-memory"] }
 signet-constants.workspace = true

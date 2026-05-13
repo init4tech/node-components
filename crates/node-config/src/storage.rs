@@ -1,23 +1,24 @@
 use init4_bin_base::utils::from_env::FromEnv;
-use signet_storage::{DatabaseEnv, Either, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
+#[cfg(not(feature = "test_utils"))]
+use signet_rpc::NodeColdBackend;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
-use signet_storage::{SqlConnector, either::EitherCold};
+use signet_storage::SqlConnector;
+#[cfg(not(feature = "test_utils"))]
+use signet_storage::{DatabaseEnv, Either, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
 use std::borrow::Cow;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use std::time::Duration;
+#[cfg(not(feature = "test_utils"))]
 use tokio_util::sync::CancellationToken;
 
-/// Cold storage backend used by the unified node storage.
-///
-/// When SQL features are enabled, this is the [`EitherCold`] enum that can
-/// hold either an MDBX or SQL cold backend (selected at runtime). When SQL
-/// features are disabled, it falls back to MDBX only.
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
-pub type NodeColdBackend = EitherCold;
-
-/// Cold storage backend used by the unified node storage (no SQL feature).
-#[cfg(not(any(feature = "postgres", feature = "sqlite")))]
-pub type NodeColdBackend = signet_cold_mdbx::MdbxColdBackend;
+// `tokio_util` is still referenced via `signet-rpc` re-exports in test_utils
+// builds; the explicit suppression keeps `unused_crate_dependencies` quiet.
+#[cfg(feature = "test_utils")]
+use eyre as _;
+#[cfg(feature = "test_utils")]
+use signet_rpc as _;
+#[cfg(feature = "test_utils")]
+use tokio_util as _;
 
 /// Configuration for signet unified storage.
 ///
@@ -170,6 +171,10 @@ impl StorageConfig {
     /// background task, and returns a [`UnifiedStorage`] ready for use.
     ///
     /// Exactly one of `cold_path` or `cold_sql` must be configured.
+    ///
+    /// Not available when the `test_utils` feature is enabled — tests
+    /// construct an in-memory `UnifiedStorage` directly instead.
+    #[cfg(not(feature = "test_utils"))]
     pub async fn build_storage(
         &self,
         cancel: CancellationToken,

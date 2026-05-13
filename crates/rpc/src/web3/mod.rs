@@ -2,15 +2,13 @@
 
 use crate::config::StorageRpcCtx;
 use alloy::primitives::{B256, Bytes, keccak256};
-use signet_cold::ColdStorageBackend;
 use signet_hot::{HotKv, model::HotKvRead};
 use trevm::revm::database::DBErrorMarker;
 
 /// Instantiate the `web3` API router.
-pub(crate) fn web3<H, B>() -> ajj::Router<StorageRpcCtx<H, B>>
+pub(crate) fn web3<H>() -> ajj::Router<StorageRpcCtx<H>>
 where
     H: HotKv + Send + Sync + 'static,
-    B: ColdStorageBackend,
     <H::RoTx as HotKvRead>::Error: DBErrorMarker,
 {
     ajj::Router::new().route("clientVersion", client_version).route("sha3", sha3)

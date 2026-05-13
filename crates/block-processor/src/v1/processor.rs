@@ -255,6 +255,9 @@ where
 
         let zenith_header = block_extracts.ru_header().map(DbZenithHeader::from);
 
+        // The storage API is signet-agnostic and stores headers as a plain
+        // `Sealed<Header>`; unseal the `SignetHeaderV1` wrapper before
+        // handing it off.
         ExecutedBlockBuilder::new()
             .header(header.into_inner())
             .bundle(bundle)
