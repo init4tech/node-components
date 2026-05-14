@@ -45,23 +45,23 @@ signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.18.0", path = "crates/node-types" }
 signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.20.0", features = ["alloy"] }
+init4-bin-base = { version = "0.21.0", features = ["alloy"] }
 
-signet-bundle = "0.17"
-signet-constants = "0.17"
-signet-evm = "0.17"
-signet-extract = "0.17"
-signet-test-utils = "0.17"
-signet-tx-cache = "0.17"
-signet-types = "0.17"
-signet-zenith = "0.17"
-signet-journal = "0.17"
-signet-storage = "0.8"
-signet-cold = "0.8"
-signet-hot = "0.8"
-signet-hot-mdbx = "0.8"
-signet-cold-mdbx = "0.8"
-signet-storage-types = "0.8"
+signet-bundle = "0.18"
+signet-constants = "0.18"
+signet-evm = "0.18"
+signet-extract = "0.18"
+signet-test-utils = "0.18"
+signet-tx-cache = "0.18"
+signet-types = "0.18"
+signet-zenith = "0.18"
+signet-journal = "0.18"
+signet-storage = "0.9"
+signet-cold = "0.9"
+signet-hot = "0.9"
+signet-hot-mdbx = "0.9"
+signet-cold-mdbx = "0.9"
+signet-storage-types = "0.9"
 
 # ajj
 ajj = "0.7.0"
@@ -117,15 +117,3 @@ url = "2.5.4"
 # Test Utils
 tempfile = "3.17.0"
 
-# Pin the signet-storage family to the `prestwich/cold-dyn-backend` branch
-# while the object-safe `DynColdStorageBackend` trait and erased
-# defaults bake. Drop this once the changes ship in a crates.io
-# release.
-[patch.crates-io]
-signet-storage = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-cold = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-hot = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-hot-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-cold-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-cold-sql = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
-signet-storage-types = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
