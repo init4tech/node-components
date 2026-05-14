@@ -151,7 +151,7 @@ where
                     unwind_to = target,
                     "storage layers inconsistent, reconciling"
                 );
-                self.storage.unwind_above(target)?;
+                self.storage.unwind_above(target).await?;
             }
         }
 
@@ -282,7 +282,7 @@ where
             );
             let executed = processor.process_block(block_extracts).await?;
             self.notify_new_block(&executed);
-            self.storage.append_blocks(vec![executed])?;
+            self.storage.append_blocks(vec![executed]).await?;
             processed = true;
         }
         Ok(processed)

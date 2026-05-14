@@ -28,7 +28,8 @@ async fn test_genesis() {
         writer.commit().unwrap();
     }
 
-    let storage = Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
+    let storage =
+        Arc::new(UnifiedStorage::spawn_erased(hot, MemColdBackend::new(), cancel_token.clone()));
 
     // Create a dummy notifier (not used, we only check genesis loading)
     let (_sender, receiver) = mpsc::unbounded_channel();

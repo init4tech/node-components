@@ -68,7 +68,7 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     genesis::ChainConfig,
 };
-use signet_cold::ColdStorageReadHandle;
+use signet_cold::ColdStorage;
 use signet_evm::EthereumHardfork;
 use signet_hot::{
     HotKv,
@@ -191,7 +191,7 @@ impl<H: HotKv> StorageRpcCtx<H> {
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorageReadHandle {
+    pub fn cold(&self) -> ColdStorage {
         self.inner.storage.cold_reader()
     }
 

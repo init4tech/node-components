@@ -15,7 +15,7 @@ use alloy::{
     rpc::types::eth::{TransactionReceipt, TransactionRequest},
 };
 use signet_blobber::MemoryBlobSource;
-use signet_cold::{ColdStorageReadHandle, mem::MemColdBackend};
+use signet_cold::{ColdStorage, mem::MemColdBackend};
 use signet_hot::{
     db::{HotDbRead, UnsafeDbWrite},
     mem::MemKv,
@@ -186,8 +186,11 @@ impl SignetTestContext {
         }
 
         // Create UnifiedStorage
-        let storage =
-            Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
+        let storage = Arc::new(UnifiedStorage::spawn_erased(
+            hot,
+            MemColdBackend::new(),
+            cancel_token.clone(),
+        ));
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
@@ -288,7 +291,7 @@ impl SignetTestContext {
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorageReadHandle {
+    pub fn cold(&self) -> ColdStorage {
         self.storage.cold_reader()
     }
 

@@ -26,7 +26,7 @@ pub struct NotAStorage;
 ///
 /// The builder requires the following components to be set before building:
 /// - A [`HostNotifier`], via [`Self::with_notifier`].
-/// - An [`Arc<UnifiedStorage<H>>`], via [`Self::with_storage`].
+/// - An `Arc<UnifiedStorage<H>>`, via [`Self::with_storage`].
 /// - An [`AliasOracleFactory`], via [`Self::with_alias_oracle`].
 /// - A [`CacheHandle`], via [`Self::with_blob_cacher`].
 /// - A [`ServeConfig`], via [`Self::with_serve_config`].

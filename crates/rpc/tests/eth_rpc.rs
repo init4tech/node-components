@@ -14,7 +14,7 @@ use alloy::{
 use axum::body::Body;
 use http::Request;
 use serde_json::{Value, json};
-use signet_cold::{BlockData, ColdStorageHandle, ColdStorageTask, mem::MemColdBackend};
+use signet_cold::{BlockData, ColdStorage, mem::MemColdBackend};
 use signet_constants::SignetSystemConstants;
 use signet_hot::{HotKv, db::UnsafeDbWrite, mem::MemKv};
 use signet_rpc::{ChainNotifier, StorageRpcConfig, StorageRpcCtx};
@@ -32,7 +32,7 @@ use trevm::revm::bytecode::Bytecode;
 /// Everything needed to make RPC calls against the storage-backed router.
 struct TestHarness {
     app: axum::Router,
-    cold: ColdStorageHandle,
+    cold: ColdStorage,
     hot: MemKv,
     chain: ChainNotifier,
     #[allow(dead_code)]
@@ -45,7 +45,7 @@ impl TestHarness {
     async fn new(latest: u64) -> Self {
         let cancel = CancellationToken::new();
         let hot = MemKv::new();
-        let cold = ColdStorageTask::spawn(MemColdBackend::new(), cancel.clone());
+        let cold = ColdStorage::new_erased(MemColdBackend::new(), cancel.clone());
         let storage = UnifiedStorage::new(hot.clone(), cold.clone());
         let constants = SignetSystemConstants::test();
         let chain = ChainNotifier::new(16);

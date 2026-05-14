@@ -11,6 +11,9 @@ repository.workspace = true
 
 [dependencies]
 signet-blobber.workspace = true
+signet-cold.workspace = true
+signet-hot.workspace = true
+signet-rpc.workspace = true
 signet-storage.workspace = true
 signet-types.workspace = true
 
@@ -27,6 +30,6 @@ signet-genesis.workspace = true
 
 
 [features]
-test_utils = []
-postgres = ["signet-storage/postgres", "init4-bin-base/cold-sql"]
-sqlite = ["signet-storage/sqlite", "init4-bin-base/cold-sql"]
+test_utils = ["signet-rpc/test-utils"]
+postgres = ["signet-storage/postgres", "signet-rpc/postgres", "init4-bin-base/cold-sql"]
+sqlite = ["signet-storage/sqlite", "signet-rpc/sqlite", "init4-bin-base/cold-sql"]

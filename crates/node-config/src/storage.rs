@@ -1,11 +1,25 @@
 use init4_bin_base::utils::from_env::FromEnv;
+#[cfg(not(feature = "test_utils"))]
+use signet_cold::ColdConnect;
+#[cfg(not(feature = "test_utils"))]
+use signet_hot::HotConnect;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use signet_storage::SqlConnector;
-use signet_storage::{DatabaseEnv, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
+#[cfg(not(feature = "test_utils"))]
+use signet_storage::{DatabaseEnv, MdbxConnector, UnifiedStorage};
 use std::borrow::Cow;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use std::time::Duration;
+#[cfg(not(feature = "test_utils"))]
 use tokio_util::sync::CancellationToken;
+
+// `signet-rpc` is no longer referenced from this crate. Keep the dep
+// satisfied so `unused_crate_dependencies` does not fire.
+#[cfg(feature = "test_utils")]
+use eyre as _;
+use signet_rpc as _;
+#[cfg(feature = "test_utils")]
+use tokio_util as _;
 
 /// Configuration for signet unified storage.
 ///
@@ -22,23 +36,9 @@ use tokio_util::sync::CancellationToken;
 /// Exactly one of `SIGNET_COLD_PATH` or `SIGNET_COLD_SQL_URL` must be set.
 ///
 /// When using SQL cold storage, connection pool tuning is configured via
-/// [`SqlConnector`]'s own environment variables (e.g.
+/// the `SqlConnector`'s own environment variables (e.g.
 /// `SIGNET_COLD_SQL_MAX_CONNECTIONS`). See the `cold-sql` feature of
 /// `init4-bin-base` for the full list.
-///
-/// [`SqlConnector`]: signet_storage::SqlConnector
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use signet_node_config::StorageConfig;
-/// # use tokio_util::sync::CancellationToken;
-/// # async fn example(cfg: &StorageConfig) -> eyre::Result<()> {
-/// let cancel = CancellationToken::new();
-/// let storage = cfg.build_storage(cancel).await?;
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Debug, Clone, FromEnv)]
 pub struct StorageConfig {
     /// Path to the hot MDBX database.
@@ -160,11 +160,27 @@ impl StorageConfig {
     /// background task, and returns a [`UnifiedStorage`] ready for use.
     ///
     /// Exactly one of `cold_path` or `cold_sql` must be configured.
+    ///
+    /// Not available when the `test_utils` feature is enabled — tests
+    /// construct an in-memory `UnifiedStorage` directly instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use signet_node_config::StorageConfig;
+    /// # use tokio_util::sync::CancellationToken;
+    /// # async fn example(cfg: &StorageConfig) -> eyre::Result<()> {
+    /// let cancel = CancellationToken::new();
+    /// let storage = cfg.build_storage(cancel).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(feature = "test_utils"))]
     pub async fn build_storage(
         &self,
         cancel: CancellationToken,
     ) -> eyre::Result<UnifiedStorage<DatabaseEnv>> {
-        let hot = MdbxConnector::new(self.hot_path.as_ref());
+        let hot = HotConnect::connect(&MdbxConnector::new(self.hot_path.as_ref()))?;
         let has_mdbx = !self.cold_path.is_empty();
 
         #[cfg(any(feature = "postgres", feature = "sqlite"))]
@@ -173,22 +189,17 @@ impl StorageConfig {
         let has_sql = std::env::var("SIGNET_COLD_SQL_URL").is_ok_and(|v| !v.is_empty());
 
         match (has_mdbx, has_sql) {
-            (true, false) => Ok(StorageBuilder::new()
-                .hot(hot)
-                .cold(MdbxConnector::new(self.cold_path.as_ref()))
-                .cancel_token(cancel)
-                .build()
-                .await?),
+            (true, false) => {
+                let cold =
+                    ColdConnect::connect(&MdbxConnector::new(self.cold_path.as_ref())).await?;
+                Ok(UnifiedStorage::spawn_erased(hot, cold, cancel))
+            }
             #[cfg(any(feature = "postgres", feature = "sqlite"))]
             (false, true) => {
                 let connector =
                     self.cold_sql.clone().expect("cold_sql must be Some when has_sql is true");
-                Ok(StorageBuilder::new()
-                    .hot(hot)
-                    .cold(connector)
-                    .cancel_token(cancel)
-                    .build()
-                    .await?)
+                let cold = connector.connect().await?;
+                Ok(UnifiedStorage::spawn_erased(hot, cold, cancel))
             }
             #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
             (false, true) => {
