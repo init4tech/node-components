@@ -11,9 +11,12 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-// Some uses of `signet_storage` are cfg-gated to non-test feature paths;
-// silence `unused_crate_dependencies` on builds (e.g. test_utils) where the
-// direct uses are excluded.
+// `signet_storage`, `signet_cold`, and `signet_hot` are only referenced
+// from `build_storage`, which is gated to non-test_utils. Silence
+// `unused_crate_dependencies` on test_utils builds where those paths are
+// excluded.
+use signet_cold as _;
+use signet_hot as _;
 use signet_storage as _;
 
 mod core;

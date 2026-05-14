@@ -8,7 +8,7 @@ use signet_cold::BlockData;
 use signet_hot::db::{HotDbRead, UnsafeDbWrite};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::HostNotifier;
-use signet_rpc::{NodeColdBackend, ServeConfig, StorageRpcConfig};
+use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
 use std::sync::Arc;
 use tracing::info;
@@ -26,7 +26,7 @@ pub struct NotAStorage;
 ///
 /// The builder requires the following components to be set before building:
 /// - A [`HostNotifier`], via [`Self::with_notifier`].
-/// - An `Arc<UnifiedStorage<H, NodeColdBackend>>`, via [`Self::with_storage`].
+/// - An `Arc<UnifiedStorage<H>>`, via [`Self::with_storage`].
 /// - An [`AliasOracleFactory`], via [`Self::with_alias_oracle`].
 /// - A [`CacheHandle`], via [`Self::with_blob_cacher`].
 /// - A [`ServeConfig`], via [`Self::with_serve_config`].
@@ -41,7 +41,7 @@ pub struct NotAStorage;
 /// # fn example<H: signet_storage::HotKv>(
 /// #     config: signet_node_config::SignetNodeConfig,
 /// #     notifier: impl signet_node_types::HostNotifier,
-/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H, signet_rpc::NodeColdBackend>>,
+/// #     storage: std::sync::Arc<signet_storage::UnifiedStorage<H>>,
 /// #     alias_oracle: impl signet_block_processor::AliasOracleFactory,
 /// #     blob_cacher: signet_blobber::CacheHandle,
 /// #     serve_config: signet_rpc::ServeConfig,
@@ -93,8 +93,8 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     /// Set the [`UnifiedStorage`] backend for the signet node.
     pub fn with_storage<H: HotKv>(
         self,
-        storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
-    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H, NodeColdBackend>>, Aof> {
+        storage: Arc<UnifiedStorage<H>>,
+    ) -> SignetNodeBuilder<Notifier, Arc<UnifiedStorage<H>>, Aof> {
         SignetNodeBuilder {
             config: self.config,
             alias_oracle: self.alias_oracle,
@@ -163,7 +163,7 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     }
 }
 
-impl<N, H, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H, NodeColdBackend>>, Aof>
+impl<N, H, Aof> SignetNodeBuilder<N, Arc<UnifiedStorage<H>>, Aof>
 where
     N: HostNotifier,
     H: HotKv + Clone + Send + Sync + 'static,

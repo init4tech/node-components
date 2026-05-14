@@ -8,8 +8,8 @@ use signet_extract::{Extractable, Extractor};
 use signet_node_config::SignetNodeConfig;
 use signet_node_types::{HostNotification, HostNotifier, RevertRange};
 use signet_rpc::{
-    ChainNotifier, NewBlockNotification, NodeColdBackend, RemovedBlock, ReorgNotification,
-    RpcServerGuard, ServeConfig, StorageRpcConfig,
+    ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
+    ServeConfig, StorageRpcConfig,
 };
 use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
@@ -31,7 +31,7 @@ where
     pub(crate) config: Arc<SignetNodeConfig>,
 
     /// Unified hot + cold storage backend.
-    pub(crate) storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
+    pub(crate) storage: Arc<UnifiedStorage<H>>,
 
     /// Shared chain state (block tags + notification sender).
     /// Cloned to the RPC context on startup.
@@ -97,7 +97,7 @@ where
     pub fn new_unsafe(
         notifier: N,
         config: SignetNodeConfig,
-        storage: Arc<UnifiedStorage<H, NodeColdBackend>>,
+        storage: Arc<UnifiedStorage<H>>,
         alias_oracle: AliasOracle,
         client: reqwest::Client,
         blob_cacher: CacheHandle,

@@ -37,31 +37,6 @@ mod web3;
 pub mod serve;
 pub use serve::{RpcServerGuard, ServeConfig, ServeConfigEnv, ServeError};
 
-// Concrete cold backend chosen at compile time. The node and RPC layer use
-// this alias instead of propagating a `B: ColdStorageBackend` generic.
-// Selected at compile time:
-//   - `test-utils` → in-memory backend for unit/integration tests
-//   - `postgres` or `sqlite` → runtime-selectable MDBX-or-SQL via `EitherCold`
-//   - default → MDBX cold backend
-/// Concrete cold storage backend used by the node.
-#[cfg(feature = "test-utils")]
-pub type NodeColdBackend = signet_cold::mem::MemColdBackend;
-
-/// Concrete cold storage backend used by the node.
-#[cfg(all(not(feature = "test-utils"), any(feature = "postgres", feature = "sqlite")))]
-pub type NodeColdBackend = signet_storage::either::EitherCold;
-
-/// Concrete cold storage backend used by the node.
-#[cfg(all(not(feature = "test-utils"), not(any(feature = "postgres", feature = "sqlite"))))]
-pub type NodeColdBackend = signet_cold_mdbx::MdbxColdBackend;
-
-// `signet-cold-mdbx` is referenced via `NodeColdBackend` only on the default
-// (non-test, non-SQL) path. Keep the dep satisfied on the other paths so
-// `unused_crate_dependencies` does not fire — `MdbxColdBackend` is still
-// reachable transitively through `EitherCold`.
-#[cfg(any(feature = "test-utils", any(feature = "postgres", feature = "sqlite")))]
-use signet_cold_mdbx as _;
-
 /// Instantiate a combined router with `eth`, `debug`, `trace`, `signet`,
 /// `web3`, and `net` namespaces.
 pub fn router<H>() -> ajj::Router<StorageRpcCtx<H>>

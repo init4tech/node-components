@@ -1,21 +1,22 @@
 use init4_bin_base::utils::from_env::FromEnv;
 #[cfg(not(feature = "test_utils"))]
-use signet_rpc::NodeColdBackend;
+use signet_cold::ColdConnect;
+#[cfg(not(feature = "test_utils"))]
+use signet_hot::HotConnect;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use signet_storage::SqlConnector;
 #[cfg(not(feature = "test_utils"))]
-use signet_storage::{DatabaseEnv, Either, MdbxConnector, UnifiedStorage, builder::StorageBuilder};
+use signet_storage::{DatabaseEnv, MdbxConnector, UnifiedStorage};
 use std::borrow::Cow;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use std::time::Duration;
 #[cfg(not(feature = "test_utils"))]
 use tokio_util::sync::CancellationToken;
 
-// `tokio_util` is still referenced via `signet-rpc` re-exports in test_utils
-// builds; the explicit suppression keeps `unused_crate_dependencies` quiet.
+// `signet-rpc` is no longer referenced from this crate. Keep the dep
+// satisfied so `unused_crate_dependencies` does not fire.
 #[cfg(feature = "test_utils")]
 use eyre as _;
-#[cfg(feature = "test_utils")]
 use signet_rpc as _;
 #[cfg(feature = "test_utils")]
 use tokio_util as _;
@@ -178,8 +179,8 @@ impl StorageConfig {
     pub async fn build_storage(
         &self,
         cancel: CancellationToken,
-    ) -> eyre::Result<UnifiedStorage<DatabaseEnv, NodeColdBackend>> {
-        let hot = MdbxConnector::new(self.hot_path.as_ref());
+    ) -> eyre::Result<UnifiedStorage<DatabaseEnv>> {
+        let hot = MdbxConnector::new(self.hot_path.as_ref()).connect()?;
         let has_mdbx = !self.cold_path.is_empty();
 
         #[cfg(any(feature = "postgres", feature = "sqlite"))]
@@ -187,33 +188,17 @@ impl StorageConfig {
         #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
         let has_sql = std::env::var("SIGNET_COLD_SQL_URL").is_ok_and(|v| !v.is_empty());
 
-        // Helper to label the right-hand variant of `Either` for the
-        // current feature set, so both match arms produce the same
-        // `Either<MdbxConnector, _>` type.
-        #[cfg(any(feature = "postgres", feature = "sqlite"))]
-        type RightCold = SqlConnector;
-        #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
-        type RightCold = ();
-
         match (has_mdbx, has_sql) {
-            (true, false) => Ok(StorageBuilder::new()
-                .hot(hot)
-                .cold(Either::<MdbxConnector, RightCold>::left(MdbxConnector::new(
-                    self.cold_path.as_ref(),
-                )))
-                .cancel_token(cancel)
-                .build()
-                .await?),
+            (true, false) => {
+                let cold = MdbxConnector::new(self.cold_path.as_ref()).connect().await?;
+                Ok(UnifiedStorage::spawn_erased(hot, cold, cancel))
+            }
             #[cfg(any(feature = "postgres", feature = "sqlite"))]
             (false, true) => {
                 let connector =
                     self.cold_sql.clone().expect("cold_sql must be Some when has_sql is true");
-                Ok(StorageBuilder::new()
-                    .hot(hot)
-                    .cold(Either::<MdbxConnector, RightCold>::right(connector))
-                    .cancel_token(cancel)
-                    .build()
-                    .await?)
+                let cold = connector.connect().await?;
+                Ok(UnifiedStorage::spawn_erased(hot, cold, cancel))
             }
             #[cfg(not(any(feature = "postgres", feature = "sqlite")))]
             (false, true) => {

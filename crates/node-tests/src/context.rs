@@ -103,7 +103,7 @@ pub struct SignetTestContext {
     pub node_status: watch::Receiver<NodeStatus>,
 
     /// Unified hot + cold storage for the rollup.
-    pub storage: Arc<UnifiedStorage<MemKv, MemColdBackend>>,
+    pub storage: Arc<UnifiedStorage<MemKv>>,
 
     /// An alloy provider connected to the Signet Node RPC.
     pub alloy_provider: CtxProvider,
@@ -186,8 +186,11 @@ impl SignetTestContext {
         }
 
         // Create UnifiedStorage
-        let storage =
-            Arc::new(UnifiedStorage::spawn(hot, MemColdBackend::new(), cancel_token.clone()));
+        let storage = Arc::new(UnifiedStorage::spawn_erased(
+            hot,
+            MemColdBackend::new(),
+            cancel_token.clone(),
+        ));
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
@@ -288,7 +291,7 @@ impl SignetTestContext {
     }
 
     /// Get a cold storage read handle.
-    pub fn cold(&self) -> ColdStorage<MemColdBackend> {
+    pub fn cold(&self) -> ColdStorage {
         self.storage.cold_reader()
     }
 

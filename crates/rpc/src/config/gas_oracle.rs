@@ -23,7 +23,7 @@ use signet_cold::{ColdStorageError, HeaderSpecifier};
 /// Uses the provided `cache` to avoid redundant cold storage reads
 /// when the tip has already been computed for the current block.
 pub(crate) async fn suggest_tip_cap(
-    cold: &signet_cold::ColdStorage<crate::NodeColdBackend>,
+    cold: &signet_cold::ColdStorage,
     latest: u64,
     config: &StorageRpcConfig,
     cache: &GasOracleCache,

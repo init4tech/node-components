@@ -116,3 +116,16 @@ url = "2.5.4"
 
 # Test Utils
 tempfile = "3.17.0"
+
+# Pin the signet-storage family to the `prestwich/cold-dyn-backend` branch
+# while the object-safe `DynColdStorageBackend` trait and erased
+# defaults bake. Drop this once the changes ship in a crates.io
+# release.
+[patch.crates-io]
+signet-storage = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-cold = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-hot = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-hot-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-cold-mdbx = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-cold-sql = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
+signet-storage-types = { git = "https://github.com/init4tech/storage", branch = "prestwich/cold-dyn-backend" }
