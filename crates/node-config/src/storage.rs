@@ -39,18 +39,6 @@ use tokio_util as _;
 /// the `SqlConnector`'s own environment variables (e.g.
 /// `SIGNET_COLD_SQL_MAX_CONNECTIONS`). See the `cold-sql` feature of
 /// `init4-bin-base` for the full list.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use signet_node_config::StorageConfig;
-/// # use tokio_util::sync::CancellationToken;
-/// # async fn example(cfg: &StorageConfig) -> eyre::Result<()> {
-/// let cancel = CancellationToken::new();
-/// let storage = cfg.build_storage(cancel).await?;
-/// # Ok(())
-/// # }
-/// ```
 #[derive(Debug, Clone, FromEnv)]
 pub struct StorageConfig {
     /// Path to the hot MDBX database.
@@ -175,12 +163,24 @@ impl StorageConfig {
     ///
     /// Not available when the `test_utils` feature is enabled — tests
     /// construct an in-memory `UnifiedStorage` directly instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use signet_node_config::StorageConfig;
+    /// # use tokio_util::sync::CancellationToken;
+    /// # async fn example(cfg: &StorageConfig) -> eyre::Result<()> {
+    /// let cancel = CancellationToken::new();
+    /// let storage = cfg.build_storage(cancel).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[cfg(not(feature = "test_utils"))]
     pub async fn build_storage(
         &self,
         cancel: CancellationToken,
     ) -> eyre::Result<UnifiedStorage<DatabaseEnv>> {
-        let hot = MdbxConnector::new(self.hot_path.as_ref()).connect()?;
+        let hot = HotConnect::connect(&MdbxConnector::new(self.hot_path.as_ref()))?;
         let has_mdbx = !self.cold_path.is_empty();
 
         #[cfg(any(feature = "postgres", feature = "sqlite"))]
@@ -190,7 +190,8 @@ impl StorageConfig {
 
         match (has_mdbx, has_sql) {
             (true, false) => {
-                let cold = MdbxConnector::new(self.cold_path.as_ref()).connect().await?;
+                let cold =
+                    ColdConnect::connect(&MdbxConnector::new(self.cold_path.as_ref())).await?;
                 Ok(UnifiedStorage::spawn_erased(hot, cold, cancel))
             }
             #[cfg(any(feature = "postgres", feature = "sqlite"))]
