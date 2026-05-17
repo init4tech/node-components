@@ -45,23 +45,23 @@ signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.18.0", path = "crates/node-types" }
 signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { version = "0.21.0", features = ["alloy"] }
+init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "72eb719abc33fdc169fd287658878eba5520953c", features = ["alloy"] }
 
-signet-bundle = "0.18"
-signet-constants = "0.18"
-signet-evm = "0.18"
-signet-extract = "0.18"
-signet-test-utils = "0.18"
-signet-tx-cache = "0.18"
-signet-types = "0.18"
-signet-zenith = "0.18"
-signet-journal = "0.18"
-signet-storage = "0.9"
-signet-cold = "0.9"
-signet-hot = "0.9"
-signet-hot-mdbx = "0.9"
-signet-cold-mdbx = "0.9"
-signet-storage-types = "0.9"
+signet-bundle    = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-constants = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-evm       = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-extract   = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-test-utils = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-tx-cache  = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-types     = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-zenith    = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-journal   = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
+signet-storage      = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-cold         = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-hot          = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-hot-mdbx     = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-cold-mdbx    = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-storage-types = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
 
 # ajj
 ajj = "0.7.0"
