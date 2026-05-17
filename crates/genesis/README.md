@@ -11,6 +11,7 @@ This library contains the following:
   configurations.
 - `PARMIGIANA_GENESIS` / `PARMIGIANA_HOST_GENESIS` - The Parmigiana genesis
   data.
+- `GOUDA_GENESIS` - The Gouda rollup genesis. Host side reuses `PARMIGIANA_HOST_GENESIS`.
 - `PECORINO_GENESIS` / `PECORINO_HOST_GENESIS` - The Pecorino genesis data.
 - `TEST_GENESIS` / `TEST_HOST_GENESIS` - Local test genesis for testing
   purposes.
