@@ -45,23 +45,23 @@ signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.18.0", path = "crates/node-types" }
 signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "68a60bbc613d4eded415ad51cc45f5f056d9be83", features = ["alloy"] }
+init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "eb1ea72f67eff0f08c3233b216e1bfc3c0d6ff2b", features = ["alloy"] }
 
-signet-bundle    = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-constants = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-evm       = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-extract   = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-test-utils = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-tx-cache  = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-types     = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-zenith    = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-journal   = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
-signet-storage      = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
-signet-cold         = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
-signet-hot          = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
-signet-hot-mdbx     = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
-signet-cold-mdbx    = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
-signet-storage-types = { git = "https://github.com/init4tech/storage", rev = "7841fabdd71dd5b58a7bd21ccd9b7d25d11ddc55" }
+signet-bundle    = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-constants = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-evm       = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-extract   = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-test-utils = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-tx-cache  = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-types     = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-zenith    = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-journal   = { git = "https://github.com/init4tech/signet-sdk", rev = "3489c6b" }
+signet-storage      = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
+signet-cold         = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
+signet-hot          = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
+signet-hot-mdbx     = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
+signet-cold-mdbx    = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
+signet-storage-types = { git = "https://github.com/init4tech/storage", rev = "5ab8f75e2e89628b60128204132a8186afff1a4f" }
 
 # ajj
 ajj = "0.7.0"
