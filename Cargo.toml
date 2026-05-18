@@ -45,7 +45,7 @@ signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.18.0", path = "crates/node-types" }
 signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "72eb719abc33fdc169fd287658878eba5520953c", features = ["alloy"] }
+init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "68a60bbc613d4eded415ad51cc45f5f056d9be83", features = ["alloy"] }
 
 signet-bundle    = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
 signet-constants = { git = "https://github.com/init4tech/signet-sdk", rev = "8a85a4636bccf971226a9c80c311832ce33e998c" }
