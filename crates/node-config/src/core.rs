@@ -1,4 +1,4 @@
-use crate::StorageConfig;
+use crate::{JournalConfig, StorageConfig};
 use alloy::genesis::Genesis;
 use init4_bin_base::utils::{calc::SlotCalculator, from_env::FromEnv};
 use signet_blobber::BlobFetcherConfig;
@@ -27,6 +27,11 @@ pub struct SignetNodeConfig {
         optional
     )]
     forward_url: Option<Cow<'static, str>>,
+
+    /// Configuration settings for the embedded journal chain.
+    #[from_env(infallible)]
+    #[serde(default)]
+    journal: JournalConfig,
 
     /// Configuration loaded from genesis file, or known genesis.
     genesis: GenesisSpec,
@@ -57,6 +62,7 @@ impl SignetNodeConfig {
         block_extractor: BlobFetcherConfig,
         storage: StorageConfig,
         forward_url: Option<Cow<'static, str>>,
+        journal: JournalConfig,
         genesis: GenesisSpec,
         slot_calculator: SlotCalculator,
     ) -> Self {
@@ -64,6 +70,7 @@ impl SignetNodeConfig {
             block_extractor,
             storage,
             forward_url,
+            journal,
             genesis,
             slot_calculator,
             backfill_max_blocks: None,
@@ -127,6 +134,11 @@ impl SignetNodeConfig {
         // Default to 10,000 if not explicitly configured
         Some(self.backfill_max_blocks.unwrap_or(10_000))
     }
+
+    /// Get the journal chain configuration.
+    pub const fn journal(&self) -> &JournalConfig {
+        &self.journal
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +152,7 @@ mod defaults {
                 block_extractor: BlobFetcherConfig::new(Cow::Borrowed("")),
                 storage: StorageConfig::new(Cow::Borrowed(""), Cow::Borrowed("")),
                 forward_url: None,
+                journal: JournalConfig::default(),
                 genesis: GenesisSpec::Known(KnownChains::Test),
                 slot_calculator: SlotCalculator::new(0, 0, 12),
                 backfill_max_blocks: None,

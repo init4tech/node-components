@@ -1,52 +1,56 @@
 # signet-rpc
 
-Ethereum JSON-RPC server backed by `signet-storage`'s unified storage backend.
+HTTP, WebSocket, and IPC serving layer for a Signet node. Mounts the JSON-RPC
+namespaces backed by `signet-storage` plus the journal streaming endpoint.
 
-This crate provides a standalone RPC implementation that uses hot storage
-for state queries and cold storage for block, transaction, and receipt data.
+## Transports
 
-## Namespaces
+`ServeConfig` binds three optional transports:
 
-### `eth`
+- **HTTP** — JSON-RPC at `/`, plus the `/journal` WebSocket and
+  `/healthcheck` when a `signet_journal_chain::JournalChainHandle` is passed
+  to `serve`.
+- **WebSocket** — JSON-RPC at `/rpc` (used by `eth_subscribe`), plus the
+  `/journal` WebSocket and `/healthcheck` when a `JournalChainHandle` is
+  passed to `serve`.
+- **IPC** — JSON-RPC over local socket.
 
-Standard Ethereum JSON-RPC methods:
+CORS, bind addresses, and the IPC socket path are all configured via
+`ServeConfig` / `ServeConfigEnv`.
 
-- Block queries: `blockNumber`, `getBlockByHash`, `getBlockByNumber`,
-  `getBlockTransactionCount*`, `getBlockReceipts`, `getBlockHeader*`
-- Transaction queries: `getTransactionByHash`, `getTransactionReceipt`,
-  `getTransactionByBlock*AndIndex`, `getRawTransaction*`
-- Account state: `getBalance`, `getStorageAt`, `getCode`, `getTransactionCount`
-- EVM execution: `call`, `estimateGas`, `createAccessList`
-- Gas/fees: `gasPrice`, `maxPriorityFeePerGas`, `feeHistory`
-- Logs & filters: `getLogs`, `newFilter`, `newBlockFilter`,
-  `getFilterChanges`, `getFilterLogs`, `uninstallFilter`
-- Subscriptions: `subscribe`, `unsubscribe`
-- Transaction submission: `sendRawTransaction` (optional, via `TxCache`)
-- Uncle queries: `getUncleCountByBlock*`, `getUncleByBlock*AndIndex`
-  (always return 0 / null — Signet has no uncle blocks)
-- Misc: `chainId`, `syncing`
+## JSON-RPC Namespaces
 
-### `debug`
+- **`eth`** — block / transaction / receipt / state queries, `call`,
+  `estimateGas`, `createAccessList`, fee history, logs, filters,
+  `subscribe`/`unsubscribe`, `sendRawTransaction` (optional, via `TxCache`),
+  `chainId`, `syncing`. Uncle methods return 0 / null.
+- **`debug`** — `traceBlockByNumber`, `traceBlockByHash`,
+  `traceTransaction`.
+- **`trace`** — parity-style block and transaction traces.
+- **`signet`** — `sendOrder`, `callBundle`.
+- **`web3`**, **`net`** — `clientVersion`, `sha3`, `version`, `listening`,
+  `peerCount`.
 
-- `traceBlockByNumber`, `traceBlockByHash` — trace all transactions in a block
-- `traceTransaction` — trace a single transaction by hash
+## Streaming
 
-### `signet`
+- `GET /journal?from_height=N` — binary WebSocket. Streams encoded journals
+  from the given height (catch-up via ring buffer) then live.
+- `GET /healthcheck` — `200` once the journal chain has a tip, `503`
+  otherwise.
 
-- `sendOrder` — forward a signed order to the transaction cache
-- `callBundle` — simulate a bundle against a specific block
+Both routes are only mounted when a `JournalChainHandle` is supplied, and
+are exposed on every enabled HTTP-shaped transport (HTTP and WS) so an
+operator running only one of the two still gets the journal endpoints.
 
-## Unsupported Methods
+## Unsupported `eth` Methods
 
-The following `eth` methods are **not supported** and return
-`method_not_found`:
+Return `method_not_found`:
 
-- **Mining**: `getWork`, `hashrate`, `mining`, `submitHashrate`, `submitWork`
-  — Signet does not use proof-of-work.
+- **Mining**: `getWork`, `hashrate`, `mining`, `submitHashrate`,
+  `submitWork` — no PoW.
 - **Account management**: `accounts`, `sign`, `signTransaction`,
-  `signTypedData`, `sendTransaction` — the RPC server does not hold keys.
-  Use `sendRawTransaction` with a pre-signed transaction instead.
-- **Blob transactions**: `blobBaseFee` — Signet does not support EIP-4844
-  blob transactions.
+  `signTypedData`, `sendTransaction` — the server holds no keys; use
+  `sendRawTransaction`.
+- **Blob**: `blobBaseFee` — no EIP-4844.
 - **Other**: `protocolVersion`, `getProof`, `newPendingTransactionFilter`,
   `coinbase`.

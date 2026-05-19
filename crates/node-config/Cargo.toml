@@ -13,6 +13,7 @@ repository.workspace = true
 signet-blobber.workspace = true
 signet-cold.workspace = true
 signet-hot.workspace = true
+signet-journal-chain.workspace = true
 signet-rpc.workspace = true
 signet-storage.workspace = true
 signet-types.workspace = true

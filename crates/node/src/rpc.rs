@@ -36,6 +36,10 @@ where
         );
         let router = signet_rpc::router::<H>().with_state(rpc_ctx);
 
-        self.serve_config.clone().serve(router).await.map_err(Into::into)
+        self.serve_config
+            .clone()
+            .serve(router, Some(self.journal_chain_handle.clone()))
+            .await
+            .map_err(Into::into)
     }
 }

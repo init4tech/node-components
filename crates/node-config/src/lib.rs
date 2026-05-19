@@ -25,6 +25,12 @@ pub use core::SignetNodeConfig;
 // NB: RPC config merging (previously `merge_rpc_configs`) is now the
 // responsibility of the host adapter crate (e.g. `signet-host-reth`).
 
+mod journal;
+pub use journal::{
+    DEFAULT_MAX_SUBSCRIBER_LAG, DEFAULT_RING_BUFFER_MAX_BYTES, DEFAULT_RING_BUFFER_MAX_COUNT,
+    JournalConfig,
+};
+
 mod storage;
 pub use storage::StorageConfig;
 

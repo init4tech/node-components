@@ -17,6 +17,8 @@ signet-evm.workspace = true
 signet-extract.workspace = true
 signet-genesis.workspace = true
 signet-hot.workspace = true
+signet-journal.workspace = true
+signet-journal-chain = { workspace = true, features = ["serve", "signet-extract"] }
 signet-node-config.workspace = true
 signet-node-types.workspace = true
 signet-rpc.workspace = true
@@ -27,6 +29,7 @@ signet-types.workspace = true
 alloy.workspace = true
 trevm.workspace = true
 
+bytes.workspace = true
 eyre.workspace = true
 metrics.workspace = true
 reqwest.workspace = true
