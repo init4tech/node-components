@@ -45,23 +45,23 @@ signet-node-tests = { version = "0.18.0", path = "crates/node-tests" }
 signet-node-types = { version = "0.18.0", path = "crates/node-types" }
 signet-rpc = { version = "0.18.0", path = "crates/rpc" }
 
-init4-bin-base = { git = "https://github.com/init4tech/bin-base", rev = "b2f92e4", features = ["alloy"] }
+init4-bin-base = { version = "0.23.1", features = ["alloy"] }
 
-signet-bundle    = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-constants = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-evm       = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-extract   = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-test-utils = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-tx-cache  = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-types     = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-zenith    = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-journal   = { git = "https://github.com/init4tech/signet-sdk", rev = "ecce6a48a6af81c5f668c142b3a63452de02a146" }
-signet-storage      = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
-signet-cold         = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
-signet-hot          = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
-signet-hot-mdbx     = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
-signet-cold-mdbx    = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
-signet-storage-types = { git = "https://github.com/init4tech/storage", rev = "d5bf6fa" }
+signet-bundle = "0.19"
+signet-constants = "0.19"
+signet-evm = "0.19"
+signet-extract = "0.19"
+signet-test-utils = "0.19"
+signet-tx-cache = "0.19"
+signet-types = "0.19"
+signet-zenith = "0.19"
+signet-journal = "0.19"
+signet-storage = "0.10"
+signet-cold = "0.10"
+signet-hot = "0.10"
+signet-hot-mdbx = "0.10"
+signet-cold-mdbx = "0.10"
+signet-storage-types = "0.10"
 
 # ajj
 ajj = "0.7.0"
