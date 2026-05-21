@@ -5,8 +5,8 @@ Genesis configuration and utilities for the Signet Node.
 This library contains the following:
 
 - `GenesisSpec` - An enum representing different genesis specifications
-  (Mainnet, Parmigiana, Pecorino, Test, or custom file paths), which can be
-  used to load genesis data.
+  (Mainnet, Parmigiana, Gouda, Pecorino, Test, or custom file paths), which
+  can be used to load genesis data.
 - `NetworkGenesis` - A struct containing both rollup and host genesis
   configurations.
 - `PARMIGIANA_GENESIS` / `PARMIGIANA_HOST_GENESIS` - The Parmigiana genesis
