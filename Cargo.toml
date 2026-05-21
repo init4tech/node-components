@@ -80,7 +80,15 @@ alloy = { version = "1.4.0", features = [
 ] }
 
 # Reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0", default-features = false, features = [
+    "jemalloc",
+    "otlp",
+    "otlp-logs",
+    "js-tracer",
+    "keccak-cache-global",
+    "asm-keccak",
+    "min-debug-logs",
+] }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
@@ -116,4 +124,3 @@ url = "2.5.4"
 
 # Test Utils
 tempfile = "3.17.0"
-
