@@ -2,7 +2,7 @@ use crate::{BlobFetcher, BlobSpec, BlobberError, BlobberResult, Blobs, FetchResu
 use alloy::consensus::{SidecarCoder, SimpleCoder, Transaction as _};
 use alloy::eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA;
 use alloy::eips::merge::EPOCH_SLOTS;
-use alloy::primitives::{B256, Bytes, keccak256};
+use alloy::primitives::{B256, Bytes, U256, keccak256};
 use core::fmt;
 use schnellru::{ByLength, LruMap};
 use signet_extract::ExtractedEvent;
@@ -124,7 +124,7 @@ impl<Coder> CacheHandle<Coder> {
     where
         Coder: SidecarCoder + Default,
     {
-        let header = extract.ru_header(host_block_number);
+        let header = extract.to_header(U256::from(host_block_number));
         let block_data = match self.fetch_and_decode(slot, extract).await {
             Ok(buf) => buf,
             Err(BlobberError::Decode(_)) => {

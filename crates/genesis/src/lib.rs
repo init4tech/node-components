@@ -205,6 +205,7 @@ impl GenesisSpec {
             #[allow(deprecated)]
             Self::Known(KnownChains::Pecorino) => *PECORINO_GENESIS_HARDFORKS,
             Self::Known(KnownChains::Test) => *TEST_GENESIS_HARDFORKS,
+            Self::Known(KnownChains::Gouda) => *GOUDA_GENESIS_HARDFORKS,
             Self::Custom { .. } => {
                 let network = self.load_genesis().expect("failed to load custom genesis");
                 genesis_hardforks(&network.rollup)
@@ -229,6 +230,10 @@ impl GenesisSpec {
             GenesisSpec::Known(KnownChains::Pecorino) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(PECORINO_GENESIS_JSON),
                 host: Cow::Borrowed(PECORINO_HOST_GENESIS_JSON),
+            }),
+            GenesisSpec::Known(KnownChains::Gouda) => Ok(RawNetworkGenesis {
+                rollup: Cow::Borrowed(include_str!("./gouda.genesis.json")),
+                host: Cow::Borrowed(include_str!("./gouda.host.genesis.json")),
             }),
             GenesisSpec::Known(KnownChains::Test) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(TEST_GENESIS_JSON),
@@ -258,6 +263,10 @@ impl GenesisSpec {
             GenesisSpec::Known(KnownChains::Pecorino) => Ok(NetworkGenesis {
                 rollup: Cow::Borrowed(&*PECORINO_GENESIS),
                 host: Cow::Borrowed(&*PECORINO_HOST_GENESIS),
+            }),
+            GenesisSpec::Known(KnownChains::Gouda) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*GOUDA_GENESIS),
+                host: Cow::Borrowed(&*GOUDA_HOST_GENESIS),
             }),
             GenesisSpec::Known(KnownChains::Test) => Ok(NetworkGenesis {
                 rollup: Cow::Borrowed(&*TEST_GENESIS),
