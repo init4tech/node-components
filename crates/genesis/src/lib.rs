@@ -59,6 +59,14 @@ pub static PARMIGIANA_HOST_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
         .expect("Failed to parse parmigiana host genesis")
 });
 
+/// Gouda rollup genesis file.
+pub const GOUDA_GENESIS_JSON: &str = include_str!("./gouda.genesis.json");
+
+/// Genesis for the Gouda rollup (host = parmigiana).
+pub static GOUDA_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
+    serde_json::from_str(GOUDA_GENESIS_JSON).expect("Failed to parse gouda genesis")
+});
+
 /// Genesis for the Pecorino testnet.
 pub static PECORINO_GENESIS: LazyLock<Genesis> = LazyLock::new(|| {
     serde_json::from_str(PECORINO_GENESIS_JSON).expect("Failed to parse pecorino genesis")
@@ -126,6 +134,10 @@ pub static MAINNET_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
 /// Parmigiana testnet genesis hardforks.
 pub static PARMIGIANA_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
     LazyLock::new(|| genesis_hardforks(&PARMIGIANA_GENESIS));
+
+/// Gouda rollup genesis hardforks.
+pub static GOUDA_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
+    LazyLock::new(|| genesis_hardforks(&GOUDA_GENESIS));
 
 /// Pecorino testnet genesis hardforks.
 pub static PECORINO_GENESIS_HARDFORKS: LazyLock<EthereumHardfork> =
@@ -202,6 +214,7 @@ impl GenesisSpec {
         match self {
             Self::Known(KnownChains::Mainnet) => *MAINNET_GENESIS_HARDFORKS,
             Self::Known(KnownChains::Parmigiana) => *PARMIGIANA_GENESIS_HARDFORKS,
+            Self::Known(KnownChains::Gouda) => *GOUDA_GENESIS_HARDFORKS,
             #[allow(deprecated)]
             Self::Known(KnownChains::Pecorino) => *PECORINO_GENESIS_HARDFORKS,
             Self::Known(KnownChains::Test) => *TEST_GENESIS_HARDFORKS,
@@ -223,6 +236,10 @@ impl GenesisSpec {
             }),
             GenesisSpec::Known(KnownChains::Parmigiana) => Ok(RawNetworkGenesis {
                 rollup: Cow::Borrowed(include_str!("./parmigiana.genesis.json")),
+                host: Cow::Borrowed(include_str!("./parmigiana.host.genesis.json")),
+            }),
+            GenesisSpec::Known(KnownChains::Gouda) => Ok(RawNetworkGenesis {
+                rollup: Cow::Borrowed(GOUDA_GENESIS_JSON),
                 host: Cow::Borrowed(include_str!("./parmigiana.host.genesis.json")),
             }),
             #[allow(deprecated)]
@@ -252,6 +269,10 @@ impl GenesisSpec {
             }),
             GenesisSpec::Known(KnownChains::Parmigiana) => Ok(NetworkGenesis {
                 rollup: Cow::Borrowed(&*PARMIGIANA_GENESIS),
+                host: Cow::Borrowed(&*PARMIGIANA_HOST_GENESIS),
+            }),
+            GenesisSpec::Known(KnownChains::Gouda) => Ok(NetworkGenesis {
+                rollup: Cow::Borrowed(&*GOUDA_GENESIS),
                 host: Cow::Borrowed(&*PARMIGIANA_HOST_GENESIS),
             }),
             #[allow(deprecated)]
@@ -349,6 +370,7 @@ mod tests {
         for key in [
             KnownChains::Mainnet,
             KnownChains::Parmigiana,
+            KnownChains::Gouda,
             #[allow(deprecated)]
             KnownChains::Pecorino,
             KnownChains::Test,
