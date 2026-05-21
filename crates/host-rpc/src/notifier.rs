@@ -534,14 +534,23 @@ where
             }
         };
 
-        let backfill_ceiling = tip.saturating_sub(self.buffer_capacity as u64 / 2);
-        if from > backfill_ceiling {
+        // Nothing to ingest — already at or past tip.
+        if from > tip {
             self.backfill_from = None;
             info!("backfill complete, switching to frontfill");
             return None;
         }
 
-        let to = backfill_ceiling.min(from + self.backfill_batch_size - 1);
+        // Normally cap each batch to `(tip - buffer_capacity / 2)` so the
+        // hash-walk frontfill has headroom on new tips. But if `from` is
+        // already inside that headroom (e.g., after restart with persisted
+        // head close to tip), we must still ingest up to `tip` — otherwise
+        // the processor receives a one-block frontfill segment whose parent
+        // is not yet in the DB.
+        let backfill_ceiling = tip.saturating_sub(self.buffer_capacity as u64 / 2);
+        let effective_ceiling = if from > backfill_ceiling { tip } else { backfill_ceiling };
+
+        let to = effective_ceiling.min(from + self.backfill_batch_size - 1);
         span.record("to", to);
 
         let blocks = match self.fetch_range(from, to).await {
@@ -577,7 +586,7 @@ where
             self.last_emitted = Some((n, h));
         }
 
-        let backfill_done = to >= backfill_ceiling;
+        let backfill_done = to >= effective_ceiling;
         if backfill_done {
             self.backfill_from = None;
         } else {
