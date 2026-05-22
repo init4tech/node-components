@@ -126,3 +126,12 @@ url = "2.5.4"
 
 # Test Utils
 tempfile = "3.17.0"
+
+[patch.crates-io]
+signet-storage = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-cold = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-cold-sql = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-hot = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-hot-mdbx = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-cold-mdbx = { git = "https://github.com/init4tech/storage.git", branch = "main" }
+signet-storage-types = { git = "https://github.com/init4tech/storage.git", branch = "main" }

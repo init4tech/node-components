@@ -39,3 +39,4 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 serial_test = "3.2.0"
+signet-journal.workspace = true

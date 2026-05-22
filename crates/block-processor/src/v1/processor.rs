@@ -259,12 +259,12 @@ where
         // `Sealed<Header>`; unseal the `SignetHeaderV1` wrapper before
         // handing it off.
         ExecutedBlockBuilder::new()
-            .header(header.into_inner())
-            .bundle(bundle)
-            .transactions(transactions)
-            .receipts(receipts)
-            .signet_events(signet_events)
-            .zenith_header(zenith_header)
+            .with_header(header.into_inner())
+            .with_bundle(bundle)
+            .with_transactions(transactions)
+            .with_receipts(receipts)
+            .with_signet_events(signet_events)
+            .with_zenith_header(zenith_header)
             .build()
             .wrap_err("failed to build ExecutedBlock")
     }
