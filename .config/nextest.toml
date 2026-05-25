@@ -1,0 +1,6 @@
+# Per-test timeout. Any test that runs longer than `period * terminate-after`
+# (= 5 minutes) is killed, instead of being allowed to consume the full
+# GitHub Actions job timeout (6 hours). See node-components#134 for the
+# incident that motivated this guard.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 5 }

@@ -160,6 +160,12 @@ impl FilterManagerInner {
     }
 
     /// Get a filter by ID.
+    ///
+    /// The returned [`RefMut`] holds a `parking_lot` write lock on a
+    /// [`DashMap`] shard. Do not hold it across `.await`: on a
+    /// current_thread runtime a colliding `get_mut` from another task
+    /// will park the OS thread and deadlock the runtime. (Same family
+    /// as the [`DashMap::retain`] hazard documented on [`FilterManager`].)
     pub(crate) fn get_mut(&self, id: FilterId) -> Option<RefMut<'_, U64, ActiveFilter>> {
         self.filters.get_mut(&id)
     }
