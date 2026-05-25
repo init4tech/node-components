@@ -1091,7 +1091,7 @@ where
         // Early returns: implicit reorg (latest moved backward past our
         // window) or no new blocks since last poll. Either way, just
         // update the poll timestamp and return.
-        if latest + 1 < start || start > latest {
+        if start > latest {
             if latest + 1 < start {
                 trace!(latest, start, "implicit reorg detected, resetting filter");
             }
