@@ -380,4 +380,35 @@ mod tests {
             SignetSystemConstants::try_from_genesis(&genesis).unwrap();
         }
     }
+
+    /// Guards against drift between the hardcoded `SignetSystemConstants`
+    /// statics in `signet-constants` and the bundled genesis JSON files in
+    /// this crate. The two are parallel definitions of the same config; if
+    /// they diverge silently, downstream consumers can see different values
+    /// depending on whether they go through `::mainnet()` or
+    /// `try_from_genesis`. This test catches the mismatch at CI time.
+    #[test]
+    fn static_matches_genesis() {
+        let cases: &[(KnownChains, SignetSystemConstants)] = &[
+            (KnownChains::Mainnet, SignetSystemConstants::mainnet()),
+            (KnownChains::Parmigiana, SignetSystemConstants::parmigiana()),
+            (KnownChains::Gouda, SignetSystemConstants::gouda()),
+            #[allow(deprecated)]
+            (KnownChains::Pecorino, SignetSystemConstants::pecorino()),
+            (KnownChains::Test, SignetSystemConstants::test()),
+        ];
+
+        for (chain, from_static) in cases {
+            let genesis = GenesisSpec::from(*chain)
+                .load_genesis()
+                .expect("load genesis")
+                .rollup;
+            let from_genesis = SignetSystemConstants::try_from_genesis(&genesis)
+                .expect("deserialize signetConstants");
+            assert_eq!(
+                from_static, &from_genesis,
+                "{chain:?}: hardcoded static disagrees with bundled genesis JSON",
+            );
+        }
+    }
 }
