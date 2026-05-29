@@ -11,7 +11,7 @@ use signet_node_config::test_utils::test_config;
 use signet_node_tests::{HostBlockSpec, TestHostNotifier, run_test};
 use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{CancellationToken, HistoryRead, HistoryWrite, HotKv, UnifiedStorage};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicU64};
 use tokio::sync::mpsc;
 
 #[serial]
@@ -35,7 +35,7 @@ async fn test_genesis() {
 
     // Create a dummy notifier (not used, we only check genesis loading)
     let (_sender, receiver) = mpsc::unbounded_channel();
-    let notifier = TestHostNotifier::new(receiver);
+    let notifier = TestHostNotifier::new(receiver, Arc::new(AtomicU64::new(0)));
 
     // Build a dummy blob cacher
     let blob_cacher = signet_blobber::BlobFetcher::builder()
@@ -58,6 +58,7 @@ async fn test_genesis() {
             ipc: None,
         })
         .with_rpc_config(StorageRpcConfig::default())
+        .with_cancellation_token(cancel_token.clone())
         .build()
         .await
         .unwrap();

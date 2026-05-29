@@ -37,6 +37,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
 serde_json.workspace = true
 serial_test = "3.2.0"
+signet-journal-chain = { workspace = true, features = ["test-utils", "signet-extract"] }
 signet-journal.workspace = true
+tokio-util.workspace = true
+trevm.workspace = true

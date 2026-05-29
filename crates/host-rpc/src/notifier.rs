@@ -711,4 +711,8 @@ where
         // No-op: no ExEx to notify for an RPC follower.
         Ok(())
     }
+
+    async fn host_tip(&self) -> Result<u64, Self::Error> {
+        Ok(self.provider.get_block_number().await?)
+    }
 }
