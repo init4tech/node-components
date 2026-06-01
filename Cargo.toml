@@ -56,6 +56,7 @@ signet-tx-cache = "0.19"
 signet-types = "0.19"
 signet-zenith = "0.19"
 signet-journal = "0.19"
+signet-journal-chain = "0.1"
 signet-storage = "0.10"
 signet-cold = "0.10"
 signet-hot = "0.10"
@@ -105,6 +106,7 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 
 # Misc
+bytes = "1.11"
 eyre = "0.6.12"
 futures-util = "0.3.31"
 hex = { package = "const-hex", version = "1.10", default-features = false, features = [

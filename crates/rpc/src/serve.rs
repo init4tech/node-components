@@ -10,16 +10,24 @@ use ajj::{
     pubsub::{Connect, ServerShutdown},
 };
 use axum::http::HeaderValue;
+use core::time::Duration;
 use init4_bin_base::utils::from_env::FromEnv;
 use interprocess::local_socket as ls;
+use signet_journal_chain::{JournalChainHandle, journal_router};
 use std::{
     borrow::Cow,
     future::IntoFuture,
     net::{AddrParseError, SocketAddr},
 };
 use tokio::{runtime::Handle, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
-use tracing::error;
+use tracing::{error, warn};
+
+/// How long to allow each TCP listener (HTTP / WS) to drain in-flight
+/// connections - including journal subscribers reacting to the cancellation
+/// token - before the task is force-aborted.
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 /// Errors that can occur when starting the RPC server.
 #[derive(Debug, thiserror::Error)]
@@ -50,11 +58,16 @@ pub enum CorsDomainError {
 }
 
 /// Guard that shuts down the RPC servers on drop.
-#[derive(Default)]
+///
+/// When journal mode is active, dropping the guard cancels the shared
+/// shutdown token and lets axum's `with_graceful_shutdown` drain in-flight
+/// connections on both the HTTP and WS transports; a background watchdog
+/// force-aborts each listener if drain stalls.
 pub struct RpcServerGuard {
     http: Option<JoinHandle<()>>,
     ws: Option<JoinHandle<()>>,
     ipc: Option<ServerShutdown>,
+    journal_shutdown: Option<CancellationToken>,
 }
 
 impl core::fmt::Debug for RpcServerGuard {
@@ -63,20 +76,62 @@ impl core::fmt::Debug for RpcServerGuard {
             .field("http", &self.http.is_some())
             .field("ws", &self.ws.is_some())
             .field("ipc", &self.ipc.is_some())
+            .field("journal", &self.journal_shutdown.is_some())
             .finish()
     }
 }
 
 impl Drop for RpcServerGuard {
     fn drop(&mut self) {
-        if let Some(http) = self.http.take() {
-            http.abort();
-        }
-        if let Some(ws) = self.ws.take() {
-            ws.abort();
-        }
         // IPC is handled by its own drop guard.
+        let http = self.http.take();
+        let ws = self.ws.take();
+
+        let Some(token) = self.journal_shutdown.take() else {
+            // No journal mode - abort each listener immediately.
+            abort_if_some(http);
+            abort_if_some(ws);
+            return;
+        };
+
+        // Without a tokio runtime we can't drive graceful shutdown - fall back
+        // to immediate abort.
+        let Ok(runtime_handle) = Handle::try_current() else {
+            abort_if_some(http);
+            abort_if_some(ws);
+            return;
+        };
+        // Cancellation signals subscribers to close and triggers axum's
+        // graceful shutdown on each transport; the watchdog force-aborts
+        // any listener that fails to drain in time.
+        token.cancel();
+        spawn_shutdown_watchdog(&runtime_handle, http, "HTTP");
+        spawn_shutdown_watchdog(&runtime_handle, ws, "WS");
     }
+}
+
+fn abort_if_some(handle: Option<JoinHandle<()>>) {
+    if let Some(handle) = handle {
+        handle.abort();
+    }
+}
+
+fn spawn_shutdown_watchdog(
+    runtime: &Handle,
+    handle: Option<JoinHandle<()>>,
+    transport: &'static str,
+) {
+    let Some(mut handle) = handle else { return };
+    runtime.spawn(async move {
+        if tokio::time::timeout(SHUTDOWN_GRACE_PERIOD, &mut handle).await.is_err() {
+            warn!(
+                transport,
+                grace = ?SHUTDOWN_GRACE_PERIOD,
+                "transport did not drain within grace period; aborting"
+            );
+            handle.abort();
+        }
+    });
 }
 
 /// Configuration for the RPC transport layer.
@@ -97,18 +152,40 @@ pub struct ServeConfig {
 impl ServeConfig {
     /// Serve the router on all configured transports.
     ///
+    /// When `journal` is `Some`, the `/journal` WebSocket and
+    /// `/healthcheck` routes are mounted alongside the JSON-RPC routes on
+    /// both the HTTP and WS transports (wherever each is enabled), and
+    /// both servers use axum's graceful shutdown driven by the same
+    /// cancellation token that signals subscribers. IPC does not host the
+    /// journal endpoints because it speaks the ajj binary protocol rather
+    /// than HTTP.
+    ///
     /// Returns an [`RpcServerGuard`] that aborts the HTTP and WS
     /// servers on drop and signals the IPC server to shut down.
-    pub async fn serve(&self, router: Router<()>) -> Result<RpcServerGuard, ServeError> {
+    pub async fn serve(
+        &self,
+        router: Router<()>,
+        journal: Option<JournalChainHandle>,
+    ) -> Result<RpcServerGuard, ServeError> {
         let handle = Handle::current();
 
+        let journal_shutdown = journal.as_ref().map(|_| CancellationToken::new());
+        let journal_routes = journal
+            .zip(journal_shutdown.clone())
+            .map(|(journal_chain_handle, token)| journal_router(journal_chain_handle, token));
+
         let (http, ws, ipc) = tokio::try_join!(
-            self.serve_http(&handle, router.clone()),
-            self.serve_ws(&handle, router.clone()),
+            self.serve_http(
+                &handle,
+                router.clone(),
+                journal_routes.clone(),
+                journal_shutdown.clone(),
+            ),
+            self.serve_ws(&handle, router.clone(), journal_routes, journal_shutdown.clone()),
             self.serve_ipc(&handle, &router),
         )?;
 
-        Ok(RpcServerGuard { http, ws, ipc })
+        Ok(RpcServerGuard { http, ws, ipc, journal_shutdown })
     }
 
     /// Start the HTTP transport (if configured).
@@ -116,11 +193,15 @@ impl ServeConfig {
         &self,
         handle: &Handle,
         router: Router<()>,
+        journal: Option<axum::Router>,
+        shutdown: Option<CancellationToken>,
     ) -> Result<Option<JoinHandle<()>>, ServeError> {
         if self.http.is_empty() {
             return Ok(None);
         }
-        serve_axum(handle, router, &self.http, self.http_cors.as_deref()).await.map(Some)
+        serve_axum(handle, router, journal, shutdown, &self.http, self.http_cors.as_deref())
+            .await
+            .map(Some)
     }
 
     /// Start the WebSocket transport (if configured).
@@ -128,11 +209,15 @@ impl ServeConfig {
         &self,
         handle: &Handle,
         router: Router<()>,
+        journal: Option<axum::Router>,
+        shutdown: Option<CancellationToken>,
     ) -> Result<Option<JoinHandle<()>>, ServeError> {
         if self.ws.is_empty() {
             return Ok(None);
         }
-        serve_ws_transport(handle, router, &self.ws, self.ws_cors.as_deref()).await.map(Some)
+        serve_ws_transport(handle, router, journal, shutdown, &self.ws, self.ws_cors.as_deref())
+            .await
+            .map(Some)
     }
 
     /// Start the IPC transport (if configured).
@@ -284,42 +369,67 @@ fn make_cors(cors: Option<&str>) -> Result<CorsLayer, CorsDomainError> {
         .allow_headers(Any))
 }
 
-/// Bind a TCP listener and serve the axum service.
+/// Bind a TCP listener and serve the axum service. When `shutdown` is
+/// `Some`, cancellation drives axum's `with_graceful_shutdown`: the
+/// listener stops accepting new connections and the serve task exits once
+/// active handlers return. WS handlers must themselves react to the same
+/// cancellation token to close cleanly.
 async fn bind_and_serve(
     addrs: &[SocketAddr],
     service: axum::Router,
+    shutdown: Option<CancellationToken>,
 ) -> Result<JoinHandle<()>, ServeError> {
     let listener = tokio::net::TcpListener::bind(addrs).await?;
 
     Ok(tokio::spawn(async move {
-        if let Err(err) = axum::serve(listener, service).into_future().await {
-            error!(%err, "error serving RPC via axum");
+        let server = axum::serve(listener, service);
+        let result = match shutdown {
+            Some(token) => {
+                server.with_graceful_shutdown(token.cancelled_owned()).into_future().await
+            }
+            None => server.into_future().await,
+        };
+        if let Err(error) = result {
+            error!(%error, "error serving RPC via axum");
         }
     }))
 }
 
-/// Serve the router via HTTP with optional CORS.
+/// Serve the router via HTTP with optional CORS, optionally merging in extra
+/// routes (currently the `/journal` WebSocket and `/healthcheck` endpoints).
 async fn serve_axum(
     handle: &Handle,
     router: Router<()>,
+    journal: Option<axum::Router>,
+    shutdown: Option<CancellationToken>,
     addrs: &[SocketAddr],
     cors: Option<&str>,
 ) -> Result<JoinHandle<()>, ServeError> {
     let cors = make_cors(cors)?;
-    let service = router.into_axum_with_handle("/", handle.clone()).layer(cors);
-    bind_and_serve(addrs, service).await
+    let mut service = router.into_axum_with_handle("/", handle.clone());
+    if let Some(journal) = journal {
+        service = service.merge(journal);
+    }
+    bind_and_serve(addrs, service.layer(cors), shutdown).await
 }
 
-/// Serve the router via WebSocket with optional CORS.
+/// Serve the router via WebSocket with optional CORS, optionally merging in
+/// the journal `/journal` and `/healthcheck` routes alongside the JSON-RPC
+/// endpoints.
 async fn serve_ws_transport(
     handle: &Handle,
     router: Router<()>,
+    journal: Option<axum::Router>,
+    shutdown: Option<CancellationToken>,
     addrs: &[SocketAddr],
     cors: Option<&str>,
 ) -> Result<JoinHandle<()>, ServeError> {
     let cors = make_cors(cors)?;
-    let service = router.into_axum_with_ws_and_handle("/rpc", "/", handle.clone()).layer(cors);
-    bind_and_serve(addrs, service).await
+    let mut service = router.into_axum_with_ws_and_handle("/rpc", "/", handle.clone());
+    if let Some(journal) = journal {
+        service = service.merge(journal);
+    }
+    bind_and_serve(addrs, service.layer(cors), shutdown).await
 }
 
 fn to_name(path: &std::ffi::OsStr) -> std::io::Result<ls::Name<'_>> {

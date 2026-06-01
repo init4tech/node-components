@@ -7,12 +7,13 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Ethereum JSON-RPC server backed by signet-storage"
+description = "HTTP, WebSocket, and IPC serving layer for a Signet node (JSON-RPC plus journal streaming)"
 
 [dependencies]
 signet-storage.workspace = true
 signet-cold.workspace = true
 signet-hot.workspace = true
+signet-journal-chain = { workspace = true, features = ["serve"] }
 signet-storage-types.workspace = true
 signet-evm.workspace = true
 trevm = { workspace = true, features = ["call", "estimate_gas"] }

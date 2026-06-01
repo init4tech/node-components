@@ -1,22 +1,41 @@
 use crate::{NodeStatus, metrics};
-use alloy::consensus::BlockHeader;
-use eyre::{Context, OptionExt};
+use alloy::{
+    consensus::BlockHeader,
+    primitives::{B256, keccak256},
+};
+use bytes::Bytes;
+use eyre::{Context, OptionExt, Report, eyre};
 use signet_blobber::CacheHandle;
 use signet_block_processor::{AliasOracleFactory, SignetBlockProcessorV1};
 use signet_evm::EthereumHardfork;
 use signet_extract::{Extractable, Extractor};
-use signet_node_config::SignetNodeConfig;
+use signet_journal::{GENESIS_JOURNAL_HASH, HostJournal, Journal, JournalMeta};
+use signet_journal_chain::{
+    JournalChainBuilder, JournalChainConfig, JournalChainError, JournalChainHandle,
+    JournalChainParts, RingBufferConfig, extract_signet_metadata,
+};
+use signet_node_config::{JournalConfig, SignetNodeConfig};
 use signet_node_types::{HostNotification, HostNotifier, RevertRange};
 use signet_rpc::{
     ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
     ServeConfig, StorageRpcConfig,
 };
-use signet_storage::{DrainedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
+use signet_storage::{DrainedBlock, ExecutedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
 use signet_types::{PairedHeights, constants::SignetSystemConstants};
-use std::{fmt, sync::Arc};
-use tokio::sync::watch;
-use tracing::{debug, info, instrument};
-use trevm::revm::database::DBErrorMarker;
+use std::{
+    borrow::Cow,
+    fmt,
+    sync::{Arc, Mutex},
+};
+use tokio::{
+    sync::{mpsc, watch},
+    task::{JoinError, JoinHandle},
+};
+use tracing::{debug, error, info, instrument};
+use trevm::{
+    journal::{BundleStateIndex, JournalEncode},
+    revm::database::DBErrorMarker,
+};
 
 /// Signet context and configuration.
 pub struct SignetNode<N, H, AliasOracle>
@@ -61,6 +80,30 @@ where
 
     /// RPC behaviour configuration.
     pub(crate) rpc_config: StorageRpcConfig,
+
+    /// Handle to the journal chain, used by the RPC layer to mount the
+    /// `/journal` WebSocket endpoint.
+    pub(crate) journal_chain_handle: JournalChainHandle,
+
+    /// Sender into the journal chain's bounded input channel. The block
+    /// processing loop pushes serialized journal bytes here after each block
+    /// is committed. It's dropped during shutdown; that closes the channel
+    /// and lets the journal chain's ingestion task drain and exit cleanly.
+    journal_sender: mpsc::Sender<Bytes>,
+
+    /// Hash of the previously emitted journal. Used as the `previous_hash`
+    /// field in the next block's `JournalMeta`. Seeded with
+    /// [`GENESIS_JOURNAL_HASH`] at startup.
+    // TODO(ENG-2017): persist this alongside the block in storage so it
+    // survives restarts, can be rewound on host revert, and is recoverable
+    // after mid-block failures between `encode_journal` and
+    // `emit_journal` / `append_blocks`. Until then the rolling hash is
+    // in-memory only and the chain will reject the first journal after
+    // any restart or revert with `PreviousHashMismatch`.
+    journal_previous_hash: Mutex<B256>,
+
+    /// Join handle for the journal chain's ingestion task.
+    journal_task: Option<JoinHandle<Result<(), JournalChainError>>>,
 }
 
 impl<N, H, AliasOracle> fmt::Debug for SignetNode<N, H, AliasOracle>
@@ -110,6 +153,13 @@ where
         let (status, receiver) = watch::channel(NodeStatus::Booting);
         let chain = ChainNotifier::new(128);
 
+        let JournalChainParts {
+            chain: journal_chain,
+            handle: journal_chain_handle,
+            journal_sender,
+        } = build_journal_chain(config.journal())?;
+        let journal_task = journal_chain.run();
+
         let this = Self {
             config: config.into(),
             notifier,
@@ -123,6 +173,10 @@ where
             client,
             serve_config,
             rpc_config,
+            journal_chain_handle,
+            journal_sender,
+            journal_previous_hash: Mutex::new(GENESIS_JOURNAL_HASH),
+            journal_task: Some(journal_task),
         };
         Ok((this, receiver))
     }
@@ -135,8 +189,7 @@ where
 
     /// Start the Signet instance, listening for host notifications. Trace any
     /// errors.
-    #[instrument(skip(self))]
-    pub async fn start(mut self) -> eyre::Result<()> {
+    pub async fn start(self) -> eyre::Result<()> {
         // Ensure hot and cold storage are at the same height. If either
         // is ahead, unwind to the minimum so the host re-delivers blocks.
         {
@@ -155,6 +208,8 @@ where
             }
         }
 
+        let storage = Arc::clone(&self.storage);
+
         // This exists only to bypass the `tracing::instrument(err)` macro to
         // ensure that full sources get reported.
         self.start_inner().await.inspect_err(|err| {
@@ -163,14 +218,14 @@ where
             let err = format!("{err:#}");
 
             let last_block =
-                self.storage.reader().ok().and_then(|r| r.last_block_number().ok().flatten());
+                storage.reader().ok().and_then(|r| r.last_block_number().ok().flatten());
 
-            tracing::error!(err, last_block, "Signet node crashed");
+            error!(err, last_block, "Signet node crashed");
         })
     }
 
     /// Start the Signet instance, listening for host notifications.
-    async fn start_inner(&mut self) -> eyre::Result<()> {
+    async fn start_inner(mut self) -> eyre::Result<()> {
         debug!(constants = ?self.constants, "signet starting");
 
         self.start_rpc().await?;
@@ -197,25 +252,64 @@ where
             "signet listening for notifications"
         );
 
-        // Handle incoming host notifications
-        while let Some(notification) = self.notifier.next_notification().await {
-            let notification = notification.wrap_err("error in host notifications stream")?;
-            let changed = self
-                .on_notification(&notification)
-                .await
-                .wrap_err("error while processing notification")?;
-            if changed {
-                let ru_height = self.last_rollup_block()?;
-                self.update_block_tags(
-                    ru_height,
-                    notification.safe_block_number,
-                    notification.finalized_block_number,
-                )?;
-            }
-        }
+        let mut journal_task = self
+            .journal_task
+            .take()
+            .expect("journal task should be set by new_unsafe and only taken here");
 
-        info!("signet shutting down");
-        Ok(())
+        // Handle incoming host notifications. Also observe the journal
+        // chain's ingestion task: an unexpected exit there means new
+        // journals cannot be emitted, so the node must shut down.
+        let main_result: eyre::Result<()> = loop {
+            tokio::select! {
+                biased;
+                result = &mut journal_task => {
+                    return journal_task_result(result, JournalExitKind::Unexpected);
+                },
+                notification = self.notifier.next_notification() => {
+                    let Some(notification) = notification else { break Ok(()) };
+                    match notification.wrap_err("error in host notifications stream") {
+                        Ok(notification) => {
+                            if let Err(error) = self.process_notification(&notification).await {
+                                break Err(error);
+                            }
+                        }
+                        Err(error) => break Err(error),
+                    }
+                }
+            }
+        };
+
+        info!("signet shutting down, awaiting journal chain");
+        // Always close the sender and await the chain task on the way out so
+        // its result is observed rather than dropped along with the join
+        // handle. The main-loop error takes precedence; the journal task's
+        // result only surfaces if the main loop succeeded.
+        drop(self.journal_sender);
+        let journal_result =
+            journal_task_result((&mut journal_task).await, JournalExitKind::Expected);
+        main_result.and(journal_result)
+    }
+
+    /// Run [`Self::on_notification`] and, if state changed, refresh the
+    /// block tags from the notification's safe / finalized heights.
+    async fn process_notification(
+        &self,
+        notification: &HostNotification<N::Chain>,
+    ) -> eyre::Result<()> {
+        let changed = self
+            .on_notification(notification)
+            .await
+            .wrap_err("error while processing notification")?;
+        if !changed {
+            return Ok(());
+        }
+        let ru_height = self.last_rollup_block()?;
+        self.update_block_tags(
+            ru_height,
+            notification.safe_block_number,
+            notification.finalized_block_number,
+        )
     }
 
     /// Runs on any notification received from the host.
@@ -281,15 +375,57 @@ where
                 self.blob_cacher.clone(),
             );
             let executed = processor.process_block(block_extracts).await?;
+            // TODO(ENG-2017): this encode → notify → append → emit ordering is
+            // not crash-safe: if `append_blocks` or `emit_journal` fails after
+            // `encode_journal` has advanced `journal_previous_hash` (and after
+            // `notify_new_block` has broadcast), the rolling hash will be
+            // ahead of what's persisted. The hash needs to be persisted
+            // alongside the block; see `journal_previous_hash`.
+            let journal_bytes = self.encode_journal(block_extracts.host_block.number(), &executed);
             self.notify_new_block(&executed);
             self.storage.append_blocks(vec![executed]).await?;
+            self.emit_journal(journal_bytes).await?;
             processed = true;
         }
         Ok(processed)
     }
 
+    /// Build the serialized journal for a freshly executed block and update
+    /// the rolling `previous_journal_hash` state. Returns the encoded wire
+    /// bytes ready to send into the journal chain.
+    ///
+    /// The hash that becomes the next block's `previous_journal_hash` is the
+    /// keccak256 of the full encoded `Journal::V1` (version tag included),
+    /// matching the hash the journal chain computes on ingest.
+    #[instrument(skip(self, executed), fields(ru_height = executed.header.number()))]
+    fn encode_journal(&self, host_height: u64, executed: &ExecutedBlock) -> Bytes {
+        let previous_hash =
+            *self.journal_previous_hash.lock().expect("journal previous hash lock poisoned");
+        let host_journal = HostJournal::new(
+            JournalMeta::new(host_height, previous_hash, Cow::Borrowed(executed.header.inner())),
+            BundleStateIndex::from(&executed.bundle),
+        );
+        let encoded: Bytes = Journal::V1(host_journal).encoded().into();
+        *self.journal_previous_hash.lock().expect("journal previous hash lock poisoned") =
+            keccak256(&encoded);
+        encoded
+    }
+
+    /// Push the encoded journal bytes into the journal chain. Awaits if
+    /// the chain's input channel is full so the producer naturally
+    /// backpressures during backfill rather than crashing the node. The
+    /// only failure mode is the receiver being closed, which means the
+    /// ingestion task has exited and the node cannot continue.
+    #[instrument(skip(self, bytes), fields(len = bytes.len()))]
+    async fn emit_journal(&self, bytes: Bytes) -> eyre::Result<()> {
+        self.journal_sender
+            .send(bytes)
+            .await
+            .map_err(|_| eyre!("journal chain ingestion task exited unexpectedly"))
+    }
+
     /// Send a new block notification on the broadcast channel.
-    fn notify_new_block(&self, block: &signet_storage::ExecutedBlock) {
+    fn notify_new_block(&self, block: &ExecutedBlock) {
         let notif = NewBlockNotification {
             header: block.header.inner().clone(),
             transactions: block.transactions.iter().map(|tx| tx.inner().clone()).collect(),
@@ -442,4 +578,54 @@ where
 
         Ok(true)
     }
+}
+
+/// Whether the journal chain ingestion task was expected to have exited at
+/// the point of awaiting its join handle.
+#[derive(Debug, Clone, Copy)]
+enum JournalExitKind {
+    /// Awaited during shutdown after closing the input channel; a clean
+    /// exit is success.
+    Expected,
+    /// Awaited while still expecting to feed journals; any exit, clean or
+    /// otherwise, is fatal.
+    Unexpected,
+}
+
+fn journal_task_result(
+    result: Result<Result<(), JournalChainError>, JoinError>,
+    kind: JournalExitKind,
+) -> eyre::Result<()> {
+    match result {
+        Ok(Ok(())) => match kind {
+            JournalExitKind::Expected => Ok(()),
+            JournalExitKind::Unexpected => {
+                Err(eyre!("journal chain ingestion task exited unexpectedly"))
+            }
+        },
+        Ok(Err(error)) => Err(Report::new(error).wrap_err("journal chain ingestion task failed")),
+        Err(error) => {
+            Err(Report::new(error).wrap_err("journal chain ingestion task panicked or was aborted"))
+        }
+    }
+}
+
+/// Build a store-less journal chain from the producer-side configuration.
+///
+/// [`extract_signet_metadata`] is the parser the chain calls on every
+/// incoming journal to pull out the version tag, previous-journal hash,
+/// and block height it needs to validate continuity and index the entry.
+fn build_journal_chain(config: &JournalConfig) -> eyre::Result<JournalChainParts> {
+    config.warn_on_misconfiguration();
+    let chain_config = JournalChainConfig {
+        ring_buffer: RingBufferConfig {
+            max_bytes: config.ring_buffer_max_bytes(),
+            max_count: config.ring_buffer_max_count(),
+        },
+        max_subscriber_lag: config.max_subscriber_lag(),
+    };
+
+    JournalChainBuilder::new(chain_config, extract_signet_metadata)
+        .build()
+        .wrap_err("failed to build journal chain")
 }
