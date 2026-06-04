@@ -39,18 +39,16 @@ async fn process_increment(ctx: &SignetTestContext, contract_address: Address) -
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_block_tags_reorg() {
     run_test(|ctx| async move {
-        // Process two blocks via enter events.
+        // Reorg to height 0 is unsupported (the journal chain's ring buffer never stores
+        // genesis); `on_host_revert` bails when storage would be wiped to 0, so this test
+        // only reverts down to height 1.
         let block1 = HostBlockSpec::new(ctx.constants()).enter_token(
             SOME_USER,
             1000,
             ctx.constants().host().tokens().usdc(),
         );
-        let block1_clone = block1.clone();
         ctx.process_block(block1).await.unwrap();
 
         let block2 = HostBlockSpec::new(ctx.constants()).enter_token(
@@ -61,35 +59,41 @@ async fn test_block_tags_reorg() {
         let block2_clone = block2.clone();
         ctx.process_block(block2).await.unwrap();
 
-        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 2);
+        let block3 = HostBlockSpec::new(ctx.constants()).enter_token(
+            SOME_USER,
+            3000,
+            ctx.constants().host().tokens().usdc(),
+        );
+        let block3_clone = block3.clone();
+        ctx.process_block(block3).await.unwrap();
 
-        // Revert block 2.
+        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 3);
+
+        // Revert block 3, then block 2; stop above height 1 (see comment above).
+        ctx.revert_block(block3_clone).await.unwrap();
+        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 2);
         ctx.revert_block(block2_clone).await.unwrap();
         assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 1);
 
-        // Revert block 1.
-        ctx.revert_block(block1_clone).await.unwrap();
-        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 0);
-
-        // Rebuild two new blocks.
-        let new_block1 = HostBlockSpec::new(ctx.constants()).enter_token(
-            SOME_USER,
-            500,
-            ctx.constants().host().tokens().usdc(),
-        );
-        ctx.process_block(new_block1).await.unwrap();
-        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 1);
-
+        // Rebuild two new blocks on top of the surviving block 1.
         let new_block2 = HostBlockSpec::new(ctx.constants()).enter_token(
             SOME_USER,
-            600,
+            500,
             ctx.constants().host().tokens().usdc(),
         );
         ctx.process_block(new_block2).await.unwrap();
         assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 2);
 
-        // Verify the new block 2 is accessible.
-        let block = ctx.alloy_provider.get_block_by_number(2.into()).await.unwrap();
+        let new_block3 = HostBlockSpec::new(ctx.constants()).enter_token(
+            SOME_USER,
+            600,
+            ctx.constants().host().tokens().usdc(),
+        );
+        ctx.process_block(new_block3).await.unwrap();
+        assert_eq!(ctx.alloy_provider.get_block_number().await.unwrap(), 3);
+
+        // Verify the new block 3 is accessible.
+        let block = ctx.alloy_provider.get_block_by_number(3.into()).await.unwrap();
         assert!(block.is_some());
     })
     .await;
@@ -101,9 +105,6 @@ async fn test_block_tags_reorg() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_block_filter_reorg() {
     rpc_test(|ctx, contract| async move {
         // Install a block filter (starts after block 1, where contract was deployed).
@@ -148,9 +149,6 @@ async fn test_block_filter_reorg() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_log_filter_reorg() {
     rpc_test(|ctx, contract| async move {
         // Install a log filter on the Counter address.
@@ -201,9 +199,6 @@ async fn test_log_filter_reorg() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_block_subscription_reorg() {
     rpc_test(|ctx, contract| async move {
         let mut sub = ctx.alloy_provider.subscribe_blocks().await.unwrap();
@@ -236,9 +231,6 @@ async fn test_block_subscription_reorg() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_log_subscription_reorg() {
     rpc_test(|ctx, contract| async move {
         let mut sub = ctx
@@ -405,9 +397,6 @@ async fn test_no_regression_filters_and_subscriptions() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_multi_block_reorg_log_filter() {
     rpc_test(|ctx, contract| async move {
         let addr = *contract.address();
@@ -463,9 +452,6 @@ async fn test_multi_block_reorg_log_filter() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_multi_block_reorg_log_subscription() {
     rpc_test(|ctx, contract| async move {
         let addr = *contract.address();
@@ -515,9 +501,6 @@ async fn test_multi_block_reorg_log_subscription() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_multiple_reorgs_between_polls() {
     rpc_test(|ctx, contract| async move {
         let addr = *contract.address();

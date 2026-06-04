@@ -9,10 +9,14 @@ use alloy::{
     rpc::types::eth::{AccessList, AccessListItem, TransactionRequest},
     signers::Signer,
 };
+use core::{sync::atomic::Ordering, time::Duration};
 use serial_test::serial;
 use signet_constants::{KnownChains, RollupPermitted};
 use signet_genesis::GenesisSpec;
-use signet_node_tests::{HostBlockSpec, run_test, utils::adjust_usd_decimals};
+use signet_node_tests::{
+    HostBlockSpec, NotificationWithSidecars, SignetTestContext, run_test,
+    utils::adjust_usd_decimals,
+};
 
 const SOME_USER: Address = Address::repeat_byte(0x39);
 
@@ -43,6 +47,17 @@ async fn test_simple_enter() {
 #[tokio::test]
 async fn test_basic_reorg() {
     run_test(|ctx| async move {
+        // Reorg to height 0 is unsupported (the journal chain's ring buffer never stores
+        // genesis); `on_host_revert` bails when storage would be wiped to 0. Process an
+        // unrelated warmup block at height 1 first so the revert only takes us back to
+        // height 1, not height 0.
+        let warmup = HostBlockSpec::new(ctx.constants()).enter_token(
+            Address::repeat_byte(0x40),
+            1,
+            ctx.constants().host().tokens().usdc(),
+        );
+        ctx.process_block(warmup).await.unwrap();
+
         let mut bal = ctx.track_balance(SOME_USER, Some("user"));
 
         let enter_amnt = 31999;
@@ -61,8 +76,58 @@ async fn test_basic_reorg() {
         ctx.revert_block(block).await.unwrap();
 
         bal.assert_decrease_exact(change);
+
+        // Process a fresh block on top of the surviving warmup. This exercises the post-revert
+        // journal-hash continuity path: `previous_journal_hash` must read the persisted hash
+        // from storage at height 1 so the chain can validate the replacement journal at
+        // height 2 as a `Reorg`. If persistence is broken, this would fail with
+        // `PreviousHashMismatch` or `ReorgParentEvicted`.
+        let replacement_amnt = 12345;
+        let replacement = HostBlockSpec::new(ctx.constants()).enter_token(
+            SOME_USER,
+            replacement_amnt,
+            ctx.constants().host().tokens().usdc(),
+        );
+        ctx.process_block(replacement).await.unwrap();
+        bal.assert_increase_exact(adjust_usd_decimals(replacement_amnt, 6));
     })
     .await;
+}
+
+// Run directly (not via `run_test`) because the node task is expected to terminate with an
+// error and `run_test`'s wrapper would convert that into a test failure. `ctx.revert_block`
+// also isn't usable here - it polls the RPC after the revert, but the bail tears the RPC
+// down before that poll can complete.
+#[serial]
+#[tokio::test]
+async fn test_revert_to_genesis_bails() {
+    let (ctx, signet) = SignetTestContext::new().await;
+
+    // Process a single block so the journal chain's ring buffer holds a tip but does not yet
+    // contain an anchor at height 0.
+    let block = HostBlockSpec::new(ctx.constants()).enter_token(
+        SOME_USER,
+        1,
+        ctx.constants().host().tokens().usdc(),
+    );
+    let for_revert = block.clone();
+    ctx.process_block(block).await.unwrap();
+
+    // Send the revert directly so we don't depend on RPC liveness after the bail. Storage
+    // drains to 0, tags rewind, reorg fires, then the node bails because the chain cannot
+    // anchor the next post-revert journal at `target == 0`. Mirror `revert_block`'s height
+    // bookkeeping: `fetch_sub` returns the pre-decrement height (= the block being reverted)
+    // and rewinds `ctx.height` so any post-bail inspection sees a consistent value.
+    for_revert.set_block_number(ctx.height.fetch_sub(1, Ordering::SeqCst));
+    ctx.send_notification(NotificationWithSidecars::revert_single_block(for_revert)).await;
+
+    let join_result = tokio::time::timeout(Duration::from_secs(10), signet)
+        .await
+        .expect("node did not bail within 10s")
+        .expect("node task panicked");
+    let error = join_result.expect_err("expected the node to bail after revert-to-genesis");
+    let rendered = format!("{error:#}");
+    assert!(rendered.contains("ring buffer no longer holds"), "unexpected error: {rendered}");
 }
 
 #[serial]

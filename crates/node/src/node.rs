@@ -20,18 +20,16 @@ use signet_rpc::{
     ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
     ServeConfig, StorageRpcConfig,
 };
-use signet_storage::{DrainedBlock, ExecutedBlock, HistoryRead, HotKv, HotKvRead, UnifiedStorage};
-use signet_types::{PairedHeights, constants::SignetSystemConstants};
-use std::{
-    borrow::Cow,
-    fmt,
-    sync::{Arc, Mutex},
+use signet_storage::{
+    DrainedBlock, ExecutedBlock, HistoryRead, HotDbRead, HotKv, HotKvRead, UnifiedStorage,
 };
+use signet_types::{PairedHeights, constants::SignetSystemConstants};
+use std::{borrow::Cow, fmt, sync::Arc};
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
 };
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use trevm::{
     journal::{BundleStateIndex, JournalEncode},
     revm::database::DBErrorMarker,
@@ -90,17 +88,6 @@ where
     /// is committed. It's dropped during shutdown; that closes the channel
     /// and lets the journal chain's ingestion task drain and exit cleanly.
     journal_sender: mpsc::Sender<Bytes>,
-
-    /// Hash of the previously emitted journal. Used as the `previous_hash`
-    /// field in the next block's `JournalMeta`. Seeded with
-    /// [`GENESIS_JOURNAL_HASH`] at startup.
-    // TODO(ENG-2017): persist this alongside the block in storage so it
-    // survives restarts, can be rewound on host revert, and is recoverable
-    // after mid-block failures between `encode_journal` and
-    // `emit_journal` / `append_blocks`. Until then the rolling hash is
-    // in-memory only and the chain will reject the first journal after
-    // any restart or revert with `PreviousHashMismatch`.
-    journal_previous_hash: Mutex<B256>,
 
     /// Join handle for the journal chain's ingestion task.
     journal_task: Option<JoinHandle<Result<(), JournalChainError>>>,
@@ -175,7 +162,6 @@ where
             rpc_config,
             journal_chain_handle,
             journal_sender,
-            journal_previous_hash: Mutex::new(GENESIS_JOURNAL_HASH),
             journal_task: Some(journal_task),
         };
         Ok((this, receiver))
@@ -270,7 +256,11 @@ where
                     let Some(notification) = notification else { break Ok(()) };
                     match notification.wrap_err("error in host notifications stream") {
                         Ok(notification) => {
-                            if let Err(error) = self.process_notification(&notification).await {
+                            if let Err(error) = self
+                                .on_notification(&notification)
+                                .await
+                                .wrap_err("error while processing notification")
+                            {
                                 break Err(error);
                             }
                         }
@@ -291,30 +281,15 @@ where
         main_result.and(journal_result)
     }
 
-    /// Run [`Self::on_notification`] and, if state changed, refresh the
-    /// block tags from the notification's safe / finalized heights.
-    async fn process_notification(
-        &self,
-        notification: &HostNotification<N::Chain>,
-    ) -> eyre::Result<()> {
-        let changed = self
-            .on_notification(notification)
-            .await
-            .wrap_err("error while processing notification")?;
-        if !changed {
-            return Ok(());
-        }
-        let ru_height = self.last_rollup_block()?;
-        self.update_block_tags(
-            ru_height,
-            notification.safe_block_number,
-            notification.finalized_block_number,
-        )
-    }
-
     /// Runs on any notification received from the host.
     ///
-    /// Returns `true` if any rollup state changed.
+    /// Drives the full per-notification pipeline: revert (if any), committed chain (if any),
+    /// status-channel refresh, and the safe / finalized tag and `FinishedHeight` update. When
+    /// the revert step requests a shutdown - e.g. because the journal chain's ring buffer no
+    /// longer holds the post-revert tip - the local tag refresh and the host-bound
+    /// `FinishedHeight` still run so reth can prune to the post-revert finalized height before
+    /// the bail error propagates out of the main loop. A tag-update failure on the shutdown
+    /// path is logged but does not override the shutdown error.
     #[instrument(parent = None, skip_all, fields(
         reverted = notification.revert_range().map(|r| r.len()).unwrap_or_default(),
         committed = notification.committed_chain().map(|c| c.len()).unwrap_or_default(),
@@ -322,18 +297,26 @@ where
     pub async fn on_notification(
         &self,
         notification: &HostNotification<N::Chain>,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<()> {
         metrics::record_notification_received(notification);
 
         let mut changed = false;
+        let mut shutdown: Option<Report> = None;
 
         // NB: REVERTS MUST RUN FIRST
         if let Some(range) = notification.revert_range() {
-            changed |=
+            let outcome =
                 self.on_host_revert(range).await.wrap_err("error encountered during revert")?;
+            changed |= outcome.changed;
+            shutdown = outcome.shutdown;
         }
 
-        if let Some(chain) = notification.committed_chain() {
+        // Skip committed-chain processing when a shutdown is pending: storage has been drained
+        // to a point the in-process journal chain can no longer anchor, so emitting a fresh
+        // journal would just fail validation downstream.
+        if shutdown.is_none()
+            && let Some(chain) = notification.committed_chain()
+        {
             changed |= self
                 .process_committed_chain(chain)
                 .await
@@ -341,11 +324,33 @@ where
         }
 
         if changed {
-            self.update_status_channel()?;
+            let tag_result = self
+                .update_status_channel()
+                .and_then(|()| self.last_rollup_block())
+                .and_then(|ru_height| {
+                    self.update_block_tags(
+                        ru_height,
+                        notification.safe_block_number,
+                        notification.finalized_block_number,
+                    )
+                });
+            match (tag_result, shutdown.is_some()) {
+                (Err(tag_error), true) => {
+                    // Shutdown error is the root cause; log the secondary failure so it's
+                    // not lost, then let the shutdown error propagate below.
+                    error!(error = ?tag_error, "tag refresh failed during shutdown bail");
+                }
+                (Err(tag_error), false) => return Err(tag_error),
+                (Ok(()), _) => {}
+            }
         }
 
         metrics::record_notification_processed(notification);
-        Ok(changed)
+
+        match shutdown {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     /// Process a committed chain by extracting and executing blocks.
@@ -375,40 +380,78 @@ where
                 self.blob_cacher.clone(),
             );
             let executed = processor.process_block(block_extracts).await?;
-            // TODO(ENG-2017): this encode → notify → append → emit ordering is
-            // not crash-safe: if `append_blocks` or `emit_journal` fails after
-            // `encode_journal` has advanced `journal_previous_hash` (and after
-            // `notify_new_block` has broadcast), the rolling hash will be
-            // ahead of what's persisted. The hash needs to be persisted
-            // alongside the block; see `journal_previous_hash`.
-            let journal_bytes = self.encode_journal(block_extracts.host_block.number(), &executed);
-            self.notify_new_block(&executed);
-            self.storage.append_blocks(vec![executed]).await?;
+            let previous_hash = self.previous_journal_hash()?;
+            let (executed, journal_bytes) =
+                encode_journal(previous_hash, block_extracts.host_block.number(), executed);
+            // Order: emit -> append -> notify.
+            //
+            // `emit` first so any post-emit failure (append error, hard crash) leaves storage
+            // at N-1; the host re-delivers N on restart and the producer re-emits
+            // deterministically against a freshly-built chain (`tip = None`), avoiding the
+            // permanent "block persisted, journal lost" gap that the reverse order leaves
+            // behind. `notify` last so `eth_subscribe("newHeads")` clients querying storage
+            // immediately after the broadcast see block N already indexed; `send_new_block`
+            // only errors when there are no subscribers, which is safe to ignore.
+            //
+            // `/journal` consumers may see the journal before storage has indexed the block,
+            // but they reconstruct state from the journal itself, not from storage RPC, so
+            // they are unaffected by that ordering.
+            //
+            // The broadcast payload is built before `append_blocks` consumes `executed`.
+            let notification = NewBlockNotification {
+                header: executed.header.inner().clone(),
+                transactions: executed.transactions.iter().map(|tx| tx.inner().clone()).collect(),
+                receipts: executed.receipts.clone(),
+            };
             self.emit_journal(journal_bytes).await?;
+            self.storage.append_blocks(vec![executed]).await?;
+            let _ = self.chain.send_new_block(notification);
             processed = true;
         }
         Ok(processed)
     }
 
-    /// Build the serialized journal for a freshly executed block and update
-    /// the rolling `previous_journal_hash` state. Returns the encoded wire
-    /// bytes ready to send into the journal chain.
+    /// Read the rolling `previous_journal_hash` for the next produced block from storage.
     ///
-    /// The hash that becomes the next block's `previous_journal_hash` is the
-    /// keccak256 of the full encoded `Journal::V1` (version tag included),
-    /// matching the hash the journal chain computes on ingest.
-    #[instrument(skip(self, executed), fields(ru_height = executed.header.number()))]
-    fn encode_journal(&self, host_height: u64, executed: &ExecutedBlock) -> Bytes {
-        let previous_hash =
-            *self.journal_previous_hash.lock().expect("journal previous hash lock poisoned");
-        let host_journal = HostJournal::new(
-            JournalMeta::new(host_height, previous_hash, Cow::Borrowed(executed.header.inner())),
-            BundleStateIndex::from(&executed.bundle),
+    /// Returns [`GENESIS_JOURNAL_HASH`] when the database is empty or only contains the genesis
+    /// block, and also when the storage tip has no recorded journal hash - the persistence-off
+    /// startup path of `DESIGN.md` §5.5, also covering an upgrade from a pre-`JournalHashes`
+    /// build. In that fallback the next emit presents as the initial journal of a fresh chain;
+    /// downstream `/journal` consumers with cached checkpoints will fail validation and must
+    /// re-bootstrap.
+    ///
+    /// The fallback is only sound while the in-process journal chain is itself fresh
+    /// (`tip = None`); if the chain already holds a tip, emitting with `previous_hash =
+    /// GENESIS_JOURNAL_HASH` would be rejected as `PreviousHashMismatch` and the journal task
+    /// would exit with a generic error. That combination indicates storage corruption or a
+    /// block appended without going through [`encode_journal`], so surface the real cause here.
+    fn previous_journal_hash(&self) -> eyre::Result<B256> {
+        let reader = self.storage.reader()?;
+        let storage_tip = reader.last_block_number()?.unwrap_or(0);
+
+        if storage_tip == 0 {
+            return Ok(GENESIS_JOURNAL_HASH);
+        }
+
+        if let Some(hash) = reader.get_journal_hash(storage_tip)? {
+            return Ok(hash);
+        }
+
+        if self.journal_chain_handle.tip().is_some() {
+            return Err(eyre!(
+                "storage tip {storage_tip} has no recorded journal hash but the in-process \
+                 journal chain already holds a tip; emitting a fresh-chain initial here would \
+                 be rejected as `PreviousHashMismatch`. This indicates storage corruption or a \
+                 block appended without going through `encode_journal`."
+            ));
+        }
+
+        warn!(
+            storage_tip,
+            "no journal hash recorded for storage tip; presenting next journal as a \
+             fresh-chain initial. Downstream `/journal` consumers must re-bootstrap."
         );
-        let encoded: Bytes = Journal::V1(host_journal).encoded().into();
-        *self.journal_previous_hash.lock().expect("journal previous hash lock poisoned") =
-            keccak256(&encoded);
-        encoded
+        Ok(GENESIS_JOURNAL_HASH)
     }
 
     /// Push the encoded journal bytes into the journal chain. Awaits if
@@ -422,17 +465,6 @@ where
             .send(bytes)
             .await
             .map_err(|_| eyre!("journal chain ingestion task exited unexpectedly"))
-    }
-
-    /// Send a new block notification on the broadcast channel.
-    fn notify_new_block(&self, block: &ExecutedBlock) {
-        let notif = NewBlockNotification {
-            header: block.header.inner().clone(),
-            transactions: block.transactions.iter().map(|tx| tx.inner().clone()).collect(),
-            receipts: block.receipts.clone(),
-        };
-        // Ignore send errors — no subscribers is fine.
-        let _ = self.chain.send_new_block(notif);
     }
 
     /// Send a reorg notification on the broadcast channel.
@@ -520,24 +552,22 @@ where
 
     /// Called when the host chain has reverted a block or set of blocks.
     ///
-    /// Returns `true` if any rollup state was unwound.
+    /// Returns a [`RevertOutcome`] describing whether any rollup state was unwound and whether
+    /// the caller must shut the node down after running its post-notification work.
     ///
     /// # Errors
     ///
     /// Returns an error if the revert range is inconsistent with stored
     /// state — i.e. the range tip does not cover the node's current
     /// rollup tip.
-    #[instrument(skip_all, fields(
-        first = range.first(),
-        tip = range.tip(),
-    ))]
-    pub async fn on_host_revert(&self, range: RevertRange) -> eyre::Result<bool> {
+    #[instrument(skip_all, fields(first = range.first(), tip = range.tip()))]
+    async fn on_host_revert(&self, range: RevertRange) -> eyre::Result<RevertOutcome> {
         let tip = range.tip();
         let first = range.first();
 
         // If the end is before the RU genesis, nothing to do.
         if tip <= self.constants.host_deploy_height() {
-            return Ok(false);
+            return Ok(RevertOutcome::unchanged());
         }
 
         // Validate that the revert range is consistent with our stored
@@ -561,6 +591,14 @@ where
             .unwrap_or_default()
             .saturating_sub(1);
 
+        let chain_tip = self.journal_chain_handle.tip();
+        let shutdown_for_chain_reset = revert_forces_shutdown(
+            target,
+            rollup_tip,
+            chain_tip.map(|checkpoint| checkpoint.height),
+            self.journal_chain_handle.contains(target),
+        );
+
         let drained = self.storage.drain_above(target).await?;
 
         // Immediately cap block tags to the common ancestor so that
@@ -576,7 +614,35 @@ where
             self.notify_reorg(drained, target);
         }
 
-        Ok(true)
+        let shutdown = shutdown_for_chain_reset.then(|| {
+            eyre!(
+                "rollup reverted to height {target} but the in-process journal chain's ring \
+                 buffer no longer holds that height (either it is genesis, or it has been \
+                 evicted by ring-buffer rotation); the chain cannot validate the post-revert \
+                 reorg replacement. Restart the node to rebuild the chain in lockstep with \
+                 storage."
+            )
+        });
+
+        Ok(RevertOutcome { changed: true, shutdown })
+    }
+}
+
+/// Outcome of [`SignetNode::on_host_revert`].
+#[derive(Debug)]
+struct RevertOutcome {
+    /// Whether any rollup state was unwound.
+    changed: bool,
+    /// Set when the in-process journal chain can no longer validate the post-revert tip and
+    /// the node must shut down. Storage and tags have already been drained; the caller is
+    /// responsible for running the per-notification tag refresh before propagating this.
+    shutdown: Option<Report>,
+}
+
+impl RevertOutcome {
+    /// A revert that performed no work and requires no shutdown.
+    const fn unchanged() -> Self {
+        Self { changed: false, shutdown: None }
     }
 }
 
@@ -628,4 +694,113 @@ fn build_journal_chain(config: &JournalConfig) -> eyre::Result<JournalChainParts
     JournalChainBuilder::new(chain_config, extract_signet_metadata)
         .build()
         .wrap_err("failed to build journal chain")
+}
+
+/// Build the serialized journal for a freshly executed block, stamping the resulting keccak256
+/// of the wire-encoded `Journal::V1` onto [`ExecutedBlock::journal_hash`] so `append_blocks`
+/// persists it into the `JournalHashes` table. Returns the modified block plus the encoded wire
+/// bytes; the hash on the block becomes the `previous_hash` for the next block.
+#[instrument(skip(executed), fields(ru_height = executed.header.number()))]
+fn encode_journal(
+    previous_hash: B256,
+    host_height: u64,
+    mut executed: ExecutedBlock,
+) -> (ExecutedBlock, Bytes) {
+    let host_journal = HostJournal::new(
+        JournalMeta::new(host_height, previous_hash, Cow::Borrowed(executed.header.inner())),
+        BundleStateIndex::from(&executed.bundle),
+    );
+    let encoded: Bytes = Journal::V1(host_journal).encoded().into();
+    executed.journal_hash = Some(keccak256(&encoded));
+    (executed, encoded)
+}
+
+/// Decide whether a host revert that rewinds the rollup to `target` must shut the node down
+/// because the in-process journal chain can no longer anchor the post-revert replacement at
+/// `target + 1`.
+///
+/// Inputs are the revert `target`, the node's current stored `rollup_tip`, the journal
+/// chain's tip height (`chain_tip_height`, `None` when the chain is fresh), and whether its
+/// ring buffer still holds `target` (`chain_contains_target`).
+///
+/// Two situations force a shutdown:
+///
+///   * `target == 0`: genesis is never stored in the ring buffer. The producer has already
+///     emitted journals for every block being reverted, so the chain holds - or, once it
+///     drains its queued journals, will hold - a tip `>= 1` that it cannot rewind past
+///     genesis. This is independent of how far the chain's asynchronous ingestion has
+///     progressed, so it must NOT be gated on the live tip: doing so races ingestion and
+///     makes the bail non-deterministic. The `rollup_tip > 0` guard keeps a no-op revert of
+///     a genesis-only chain (nothing emitted, tip never set) from spuriously bailing.
+///   * `target > 0` but the journal for `target` has been evicted by ring-buffer rotation
+///     (`chain_tip_height >= target && !chain_contains_target`).
+///
+/// A tip *behind* a non-zero `target` is fine: `emit` precedes `append`, so the missing
+/// journals are queued ahead of the chain and will be ingested before any replacement
+/// arrives.
+const fn revert_forces_shutdown(
+    target: u64,
+    rollup_tip: u64,
+    chain_tip_height: Option<u64>,
+    chain_contains_target: bool,
+) -> bool {
+    if target == 0 {
+        rollup_tip > 0
+    } else {
+        match chain_tip_height {
+            Some(tip_height) => tip_height >= target && !chain_contains_target,
+            None => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::revert_forces_shutdown;
+
+    // Revert-to-genesis of a non-empty chain must bail regardless of how far the journal
+    // chain's asynchronous ingestion has progressed. The `None` case is the exact boundary
+    // that previously raced ingestion and made `test_revert_to_genesis_bails` flaky: the
+    // revert arrived before the chain ingested the only block's journal, the bail was gated
+    // on the (still unset) live tip, and the node failed to shut down.
+    #[test]
+    fn revert_to_genesis_bails_independent_of_ingestion() {
+        // Chain has not yet ingested the journal (tip unset) - must still bail.
+        assert!(revert_forces_shutdown(0, 1, None, false));
+        // Chain has ingested the journal (tip set) - bails for the same reason. `contains` is
+        // irrelevant at genesis, so it must not change the outcome either way.
+        assert!(revert_forces_shutdown(0, 1, Some(1), false));
+        assert!(revert_forces_shutdown(0, 5, Some(5), true));
+    }
+
+    // A revert that targets genesis on a chain that only ever held genesis is a no-op: nothing
+    // was emitted, so there is no replacement to anchor and the node must not bail.
+    #[test]
+    fn revert_to_genesis_of_empty_chain_does_not_bail() {
+        assert!(!revert_forces_shutdown(0, 0, None, false));
+    }
+
+    // For `target > 0`, a chain that has not yet caught up to `target` (or sits below it) is
+    // fine: the missing journals are queued ahead of the chain and will be ingested before any
+    // replacement arrives.
+    #[test]
+    fn revert_above_genesis_with_chain_behind_does_not_bail() {
+        assert!(!revert_forces_shutdown(2, 3, None, false));
+        assert!(!revert_forces_shutdown(2, 3, Some(1), false));
+    }
+
+    // For `target > 0`, the chain can anchor the replacement as long as its ring buffer still
+    // holds `target`, even after it has advanced past it.
+    #[test]
+    fn revert_above_genesis_with_target_retained_does_not_bail() {
+        assert!(!revert_forces_shutdown(2, 3, Some(3), true));
+        assert!(!revert_forces_shutdown(2, 2, Some(2), true));
+    }
+
+    // For `target > 0`, only an evicted `target` (advanced past it, ring buffer no longer holds
+    // it) is fatal: the chain cannot anchor the replacement and the node must bail.
+    #[test]
+    fn revert_above_genesis_with_target_evicted_bails() {
+        assert!(revert_forces_shutdown(2, 3, Some(3), false));
+    }
 }

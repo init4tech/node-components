@@ -199,9 +199,6 @@ async fn test_write_account_histories_with_empty_block() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_write_account_histories_with_reorg_and_empty_blocks() {
     run_test(|ctx| async move {
         let ctx = setup_accounts_history(ctx).await;
@@ -415,9 +412,6 @@ async fn test_historical_state_provider_with_empty_blocks() {
 
 #[serial]
 #[tokio::test]
-#[ignore = "ENG-2017: needs producer-side journal-hash persistence to seed \
-            previous_journal_hash on revert; without it the chain rejects the \
-            first post-revert journal with PreviousHashMismatch."]
 async fn test_historical_state_provider_with_reorg() {
     run_test(|ctx| async move {
         let ctx = setup_accounts_history(ctx).await;
