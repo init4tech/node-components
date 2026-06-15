@@ -1,4 +1,12 @@
-use crate::{NodeStatus, metrics};
+use crate::{
+    NodeStatus,
+    journal_sync::{
+        JOURNAL_SYNC_BACKPRESSURE_CAPACITY, JournalExitKind, JournalIngestor, RunningJournalSync,
+        SyncOutcome, build_journal_client, collapse_sync_failure, is_caught_up_to_host,
+        journal_sync_loop, journal_task_result, seed_journal_checkpoints,
+    },
+    metrics,
+};
 use alloy::{
     consensus::BlockHeader,
     primitives::{B256, keccak256},
@@ -11,10 +19,10 @@ use signet_evm::EthereumHardfork;
 use signet_extract::{Extractable, Extractor};
 use signet_journal::{GENESIS_JOURNAL_HASH, HostJournal, Journal, JournalMeta};
 use signet_journal_chain::{
-    JournalChainBuilder, JournalChainConfig, JournalChainError, JournalChainHandle,
-    JournalChainParts, RingBufferConfig, extract_signet_metadata,
+    JournalChainBuilder, JournalChainConfig, JournalChainError, JournalChainEvent,
+    JournalChainHandle, JournalChainParts, RingBufferConfig, extract_signet_metadata,
 };
-use signet_node_config::{JournalConfig, SignetNodeConfig};
+use signet_node_config::{JournalConfig, SignetNodeConfig, SyncStrategy};
 use signet_node_types::{HostNotification, HostNotifier, RevertRange};
 use signet_rpc::{
     ChainNotifier, NewBlockNotification, RemovedBlock, ReorgNotification, RpcServerGuard,
@@ -27,8 +35,9 @@ use signet_types::{PairedHeights, constants::SignetSystemConstants};
 use std::{borrow::Cow, fmt, sync::Arc};
 use tokio::{
     sync::{mpsc, watch},
-    task::{JoinError, JoinHandle},
+    task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 use trevm::{
     journal::{BundleStateIndex, JournalEncode},
@@ -91,6 +100,17 @@ where
 
     /// Join handle for the journal chain's ingestion task.
     journal_task: Option<JoinHandle<Result<(), JournalChainError>>>,
+
+    /// The configured sync strategy. Selects the startup path in
+    /// [`Self::start_inner`]: block execution or journal application.
+    sync_strategy: SyncStrategy,
+
+    /// Receiver end of the journal chain's backpressured event channel, present only under
+    /// [`SyncStrategy::Journals`].
+    backpressured_receiver: Option<mpsc::Receiver<JournalChainEvent>>,
+
+    /// Cancellation token for graceful shutdown.
+    cancellation_token: CancellationToken,
 }
 
 impl<N, H, AliasOracle> fmt::Debug for SignetNode<N, H, AliasOracle>
@@ -124,7 +144,7 @@ where
     /// [`SignetNodeBuilder`]: crate::builder::SignetNodeBuilder
     #[doc(hidden)]
     #[allow(clippy::too_many_arguments)]
-    pub fn new_unsafe(
+    pub(crate) fn new_unsafe(
         notifier: N,
         config: SignetNodeConfig,
         storage: Arc<UnifiedStorage<H>>,
@@ -133,18 +153,35 @@ where
         blob_cacher: CacheHandle,
         serve_config: ServeConfig,
         rpc_config: StorageRpcConfig,
+        cancellation_token: CancellationToken,
     ) -> eyre::Result<(Self, watch::Receiver<NodeStatus>)> {
         let constants =
             config.constants().wrap_err("failed to load signet constants from genesis")?;
 
+        let sync_strategy = config.journal().sync_strategy();
+        config.journal().warn_on_misconfiguration();
+        config.journal().validate().wrap_err("invalid journal configuration")?;
+
         let (status, receiver) = watch::channel(NodeStatus::Booting);
         let chain = ChainNotifier::new(128);
+
+        // Under the journals strategy the journal chain feeds an ingestor through a backpressured
+        // sender; under the blocks strategy there is no such consumer and the producer drives the
+        // chain.
+        let backpressured = match sync_strategy {
+            SyncStrategy::Journals => Some(mpsc::channel(JOURNAL_SYNC_BACKPRESSURE_CAPACITY)),
+            SyncStrategy::Blocks => None,
+        };
+        let (backpressured_sender, backpressured_receiver) = match backpressured {
+            Some((sender, receiver)) => (Some(sender), Some(receiver)),
+            None => (None, None),
+        };
 
         let JournalChainParts {
             chain: journal_chain,
             handle: journal_chain_handle,
             journal_sender,
-        } = build_journal_chain(config.journal())?;
+        } = build_journal_chain(config.journal(), backpressured_sender)?;
         let journal_task = journal_chain.run();
 
         let this = Self {
@@ -163,6 +200,9 @@ where
             journal_chain_handle,
             journal_sender,
             journal_task: Some(journal_task),
+            sync_strategy,
+            backpressured_receiver,
+            cancellation_token,
         };
         Ok((this, receiver))
     }
@@ -224,6 +264,14 @@ where
         // Update the node status channel with last block height
         self.status.send_modify(|s| *s = NodeStatus::AtHeight(last_rollup_block));
 
+        match self.sync_strategy {
+            SyncStrategy::Journals => self.run_journal_sync().await,
+            SyncStrategy::Blocks => self.run_block_sync(last_rollup_block).await,
+        }
+    }
+
+    /// Drive the node by executing host blocks (the `blocks` strategy).
+    async fn run_block_sync(mut self, last_rollup_block: u64) -> eyre::Result<()> {
         // Set the head position and backfill thresholds on the notifier
         let host_height = match last_rollup_block {
             0 => self.constants.host_deploy_height(),
@@ -249,6 +297,10 @@ where
         let main_result: eyre::Result<()> = loop {
             tokio::select! {
                 biased;
+                () = self.cancellation_token.cancelled() => {
+                    info!("cancellation requested, shutting down block sync");
+                    break Ok(());
+                }
                 result = &mut journal_task => {
                     return journal_task_result(result, JournalExitKind::Unexpected);
                 },
@@ -279,6 +331,110 @@ where
         let journal_result =
             journal_task_result((&mut journal_task).await, JournalExitKind::Expected);
         main_result.and(journal_result)
+    }
+
+    /// Drive the node by applying journals from upstream sources (the `journals` strategy): spawn
+    /// the client and ingestor alongside the chain task, then either hand off to block execution
+    /// once the applied state reaches the host tip or wind down on shutdown. A node that boots
+    /// already at the host tip short-circuits straight to block execution without connecting
+    /// upstream.
+    ///
+    /// Application failures are fatal - the node bails, with no source failover. A bad-content
+    /// fault (undecodable journal, unsupported version, or a header that does not chain onto
+    /// storage) recurs against any honest source since journals are deterministic; a local storage
+    /// fault (database/IO error) may clear on restart, which re-seeds the client checkpoint from
+    /// the persisted `JournalHashes` tip (see [`seed_journal_checkpoints`]) and resubscribes.
+    async fn run_journal_sync(mut self) -> eyre::Result<()> {
+        let mut journal_task = self
+            .journal_task
+            .take()
+            .expect("journal task should be set by new_unsafe and only taken here");
+
+        let event_rx = self
+            .backpressured_receiver
+            .take()
+            .expect("backpressured receiver must be set under the journals strategy");
+
+        // Read the tip after `start()`'s hot/cold reconciliation, so the catch-up decision and the
+        // client checkpoint reflect the reconciled tip rather than the pre-reconciliation one seen
+        // when the node was built (an unwind there can move it).
+        let startup_tip = self.last_rollup_block()?;
+        if is_caught_up_to_host(&self.notifier, startup_tip, &self.constants).await {
+            info!("already caught up to host tip at startup, starting block execution");
+            // Release the receiver before block execution: with it dropped the journal chain's
+            // first post-handoff `blocking_send` fails and the chain clears its sender, so a
+            // producing chain never stalls on a full, unconsumed channel.
+            drop(event_rx);
+            self.journal_task = Some(journal_task);
+            return self.run_block_sync(startup_tip).await;
+        }
+
+        // Seed the client checkpoint from the reconciled storage tip and assemble the sync
+        // machinery (deliberately deferred from `new_unsafe`; see `backpressured_receiver`).
+        let checkpoints = seed_journal_checkpoints(self.storage.as_ref())?;
+        let client = build_journal_client(self.config.journal(), checkpoints)?;
+        let sync_token = self.cancellation_token.child_token();
+        // Seed the progress channel with the storage tip; the ingestor overwrites it after every
+        // applied event.
+        let (height_tx, applied_rollup_height) = watch::channel(checkpoints.primary.height);
+        let ingestor = JournalIngestor::new(
+            Arc::clone(&self.storage),
+            self.chain.clone(),
+            self.status.clone(),
+            event_rx,
+            sync_token.clone(),
+            height_tx,
+        );
+
+        let mut sync = RunningJournalSync::start(
+            client,
+            self.journal_sender.clone(),
+            ingestor,
+            sync_token,
+            applied_rollup_height,
+        );
+        info!("journal sync started");
+
+        let outcome = journal_sync_loop(
+            &mut self.notifier,
+            &self.constants,
+            &self.cancellation_token,
+            &mut journal_task,
+            &mut sync,
+        )
+        .await;
+
+        match outcome {
+            SyncOutcome::CaughtUp => {
+                info!("journal sync caught up to host tip, transitioning to block execution");
+                // Stop the client and ingestor cooperatively; keep the journal chain alive so the
+                // producer path can keep pushing through `self.journal_sender` after the handoff.
+                // `cancel_and_drain` lets the ingestor apply any in-flight journals first, so
+                // storage catches up to the chain's tip. Any residual lead the chain still holds
+                // (from input buffered beyond what the ingestor drained, bounded by how far the
+                // upstream ran past storage at catch-up - at most the transition margin) is
+                // reconciled when block execution re-derives those heights: the chain sees
+                // identical journals and treats them as duplicates.
+                sync.cancel_and_drain().await;
+                let rollup_tip = self.last_rollup_block()?;
+                self.journal_task = Some(journal_task);
+                self.run_block_sync(rollup_tip).await
+            }
+            SyncOutcome::Shutdown => {
+                info!("cancellation requested, shutting down journal sync");
+                // Closing the journal chain input lets the chain finish; `cancel_and_drain`
+                // finishes off the sync tasks. The parent token already cascaded, so the cancel
+                // inside the drain is just defensive.
+                drop(self.journal_sender);
+                sync.cancel_and_drain().await;
+                journal_task_result(journal_task.await, JournalExitKind::Expected)
+            }
+            SyncOutcome::Failure(failure) => {
+                drop(self.journal_sender);
+                sync.cancel_and_drain().await;
+                collapse_sync_failure(failure, journal_task).await
+            }
+        }
     }
 
     /// Runs on any notification received from the host.
@@ -415,10 +571,9 @@ where
     ///
     /// Returns [`GENESIS_JOURNAL_HASH`] when the database is empty or only contains the genesis
     /// block, and also when the storage tip has no recorded journal hash - the persistence-off
-    /// startup path of `DESIGN.md` §5.5, also covering an upgrade from a pre-`JournalHashes`
-    /// build. In that fallback the next emit presents as the initial journal of a fresh chain;
-    /// downstream `/journal` consumers with cached checkpoints will fail validation and must
-    /// re-bootstrap.
+    /// startup path, also covering an upgrade from a pre-`JournalHashes` build. In that fallback
+    /// the next emit presents as the initial journal of a fresh chain; downstream `/journal`
+    /// consumers with cached checkpoints will fail validation and must re-bootstrap.
     ///
     /// The fallback is only sound while the in-process journal chain is itself fresh
     /// (`tip = None`); if the chain already holds a tip, emitting with `previous_hash =
@@ -646,43 +801,19 @@ impl RevertOutcome {
     }
 }
 
-/// Whether the journal chain ingestion task was expected to have exited at
-/// the point of awaiting its join handle.
-#[derive(Debug, Clone, Copy)]
-enum JournalExitKind {
-    /// Awaited during shutdown after closing the input channel; a clean
-    /// exit is success.
-    Expected,
-    /// Awaited while still expecting to feed journals; any exit, clean or
-    /// otherwise, is fatal.
-    Unexpected,
-}
-
-fn journal_task_result(
-    result: Result<Result<(), JournalChainError>, JoinError>,
-    kind: JournalExitKind,
-) -> eyre::Result<()> {
-    match result {
-        Ok(Ok(())) => match kind {
-            JournalExitKind::Expected => Ok(()),
-            JournalExitKind::Unexpected => {
-                Err(eyre!("journal chain ingestion task exited unexpectedly"))
-            }
-        },
-        Ok(Err(error)) => Err(Report::new(error).wrap_err("journal chain ingestion task failed")),
-        Err(error) => {
-            Err(Report::new(error).wrap_err("journal chain ingestion task panicked or was aborted"))
-        }
-    }
-}
-
-/// Build a store-less journal chain from the producer-side configuration.
+/// Build a store-less journal chain.
 ///
 /// [`extract_signet_metadata`] is the parser the chain calls on every
 /// incoming journal to pull out the version tag, previous-journal hash,
 /// and block height it needs to validate continuity and index the entry.
-fn build_journal_chain(config: &JournalConfig) -> eyre::Result<JournalChainParts> {
-    config.warn_on_misconfiguration();
+///
+/// `backpressured_sender` is supplied only by a syncing node, so the chain
+/// throttles ingestion to the ingestor's pace; a producing node leaves it
+/// `None` and the chain drives only the broadcast channel.
+fn build_journal_chain(
+    config: &JournalConfig,
+    backpressured_sender: Option<mpsc::Sender<JournalChainEvent>>,
+) -> eyre::Result<JournalChainParts> {
     let chain_config = JournalChainConfig {
         ring_buffer: RingBufferConfig {
             max_bytes: config.ring_buffer_max_bytes(),
@@ -691,9 +822,11 @@ fn build_journal_chain(config: &JournalConfig) -> eyre::Result<JournalChainParts
         max_subscriber_lag: config.max_subscriber_lag(),
     };
 
-    JournalChainBuilder::new(chain_config, extract_signet_metadata)
-        .build()
-        .wrap_err("failed to build journal chain")
+    let mut builder = JournalChainBuilder::new(chain_config, extract_signet_metadata);
+    if let Some(sender) = backpressured_sender {
+        builder = builder.with_backpressured_sender(sender);
+    }
+    builder.build().wrap_err("failed to build journal chain")
 }
 
 /// Build the serialized journal for a freshly executed block, stamping the resulting keccak256

@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use reth::{
     chainspec::EthChainSpec,
     primitives::{EthPrimitives, Receipt},
-    providers::{BlockIdReader, BlockReader, HeaderProvider, ReceiptProvider},
+    providers::{BlockIdReader, BlockNumReader, BlockReader, HeaderProvider, ReceiptProvider},
 };
 use reth_exex::{ExExContext, ExExEvent, ExExNotifications, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodeTypes};
@@ -179,7 +179,9 @@ where
             }
         }
 
-        // Phase 2: live ExEx notifications.
+        // Phase 2: live ExEx notifications. A journal-syncing node drains here in `WithoutHead`
+        // mode (set_head not called yet); the handoff relies on reth tolerating a later
+        // `set_with_head`, and on `DbBackfill` re-reading the never-acked (retained) blocks.
         let notification = self.notifications.next().await?;
         let notification = match notification {
             Ok(n) => n,
@@ -260,5 +262,15 @@ where
         let hash = header.hash();
         self.events.send(ExExEvent::FinishedHeight(BlockNumHash { number: block_number, hash }))?;
         Ok(())
+    }
+
+    async fn host_tip(&self) -> Result<u64, Self::Error> {
+        Ok(self.provider.best_block_number()?)
+    }
+
+    // A reth ExEx shares the host's notification pipeline; unconsumed notifications fill reth's
+    // buffer and stall its pipeline, so a journal-syncing node must drain them.
+    fn backpressures_host(&self) -> bool {
+        true
     }
 }

@@ -11,6 +11,7 @@ use signet_node_types::HostNotifier;
 use signet_rpc::{ServeConfig, StorageRpcConfig};
 use signet_storage::{HistoryRead, HistoryWrite, HotKv, HotKvRead, UnifiedStorage};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use trevm::revm::database::DBErrorMarker;
 
@@ -65,6 +66,7 @@ pub struct SignetNodeBuilder<Notifier = (), Storage = NotAStorage, Aof = NotAnAo
     blob_cacher: Option<CacheHandle>,
     serve_config: Option<ServeConfig>,
     rpc_config: Option<StorageRpcConfig>,
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl<Notifier, Storage, Aof> core::fmt::Debug for SignetNodeBuilder<Notifier, Storage, Aof> {
@@ -85,6 +87,7 @@ impl SignetNodeBuilder {
             blob_cacher: None,
             serve_config: None,
             rpc_config: None,
+            cancellation_token: None,
         }
     }
 }
@@ -104,6 +107,7 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
+            cancellation_token: self.cancellation_token,
         }
     }
 
@@ -118,6 +122,7 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
+            cancellation_token: self.cancellation_token,
         }
     }
 
@@ -135,6 +140,7 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
             blob_cacher: self.blob_cacher,
             serve_config: self.serve_config,
             rpc_config: self.rpc_config,
+            cancellation_token: self.cancellation_token,
         }
     }
 
@@ -159,6 +165,13 @@ impl<Notifier, Storage, Aof> SignetNodeBuilder<Notifier, Storage, Aof> {
     /// Set the RPC behaviour configuration.
     pub const fn with_rpc_config(mut self, rpc_config: StorageRpcConfig) -> Self {
         self.rpc_config = Some(rpc_config);
+        self
+    }
+
+    /// Set the cancellation token used for graceful shutdown. Required - the
+    /// builder fails at `build()` if this is not set.
+    pub fn with_cancellation_token(mut self, cancellation_token: CancellationToken) -> Self {
+        self.cancellation_token = Some(cancellation_token);
         self
     }
 }
@@ -227,6 +240,7 @@ where
             self.blob_cacher.ok_or_eyre("blob cacher must be set")?,
             self.serve_config.ok_or_eyre("serve config must be set")?,
             self.rpc_config.ok_or_eyre("rpc config must be set")?,
+            self.cancellation_token.ok_or_eyre("cancellation token must be set")?,
         )
     }
 }

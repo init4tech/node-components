@@ -45,12 +45,37 @@ use tracing::instrument;
 /// to the signet node's main loop.
 pub struct TestHostNotifier {
     receiver: mpsc::UnboundedReceiver<HostNotification<Chain>>,
+    /// Shared host-tip counter. The harness updates it as it produces and
+    /// reverts blocks, so [`HostNotifier::host_tip`] reflects the test's view
+    /// of the host chain. Shared with [`SignetTestContext::height`].
+    host_tip: Arc<AtomicU64>,
+    /// Emulates a backend that backpressures the host (a reth ExEx): when set,
+    /// [`HostNotifier::backpressures_host`] returns `true` so a journal-syncing
+    /// node drains notifications, and every drained notification is tallied into
+    /// [`Self::drained`]. Used by journal-sync drain tests.
+    backpressures_host: bool,
+    /// Count of notifications consumed by [`HostNotifier::next_notification`],
+    /// observed by drain tests. `None` outside those tests.
+    drained: Option<Arc<AtomicU64>>,
 }
 
 impl TestHostNotifier {
-    /// Create a new test notifier from a receiver.
-    pub const fn new(receiver: mpsc::UnboundedReceiver<HostNotification<Chain>>) -> Self {
-        Self { receiver }
+    /// Create a new test notifier from a receiver and a shared host-tip counter.
+    pub const fn new(
+        receiver: mpsc::UnboundedReceiver<HostNotification<Chain>>,
+        host_tip: Arc<AtomicU64>,
+    ) -> Self {
+        Self { receiver, host_tip, backpressures_host: false, drained: None }
+    }
+
+    /// Emulate a host-backpressuring backend (a reth ExEx): report
+    /// [`HostNotifier::backpressures_host`] as `true` and tally each drained
+    /// notification into `drained`. Lets journal-sync tests exercise the
+    /// drain-and-discard path.
+    pub fn with_backpressure(mut self, drained: Arc<AtomicU64>) -> Self {
+        self.backpressures_host = true;
+        self.drained = Some(drained);
+        self
     }
 }
 
@@ -67,7 +92,13 @@ impl HostNotifier for TestHostNotifier {
     async fn next_notification(
         &mut self,
     ) -> Option<Result<HostNotification<Self::Chain>, Self::Error>> {
-        self.receiver.recv().await.map(Ok)
+        let notification = self.receiver.recv().await;
+        if notification.is_some()
+            && let Some(drained) = &self.drained
+        {
+            drained.fetch_add(1, Ordering::SeqCst);
+        }
+        notification.map(Ok)
     }
 
     fn set_head(&mut self, _block_number: u64) {}
@@ -76,6 +107,14 @@ impl HostNotifier for TestHostNotifier {
 
     fn send_finished_height(&self, _block_number: u64) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    async fn host_tip(&self) -> Result<u64, Self::Error> {
+        Ok(self.host_tip.load(Ordering::SeqCst))
+    }
+
+    fn backpressures_host(&self) -> bool {
+        self.backpressures_host
     }
 }
 
@@ -111,8 +150,9 @@ pub struct SignetTestContext {
     /// The system constants for the Signet Node instance.
     pub constants: SignetSystemConstants,
 
-    /// The current host block height
-    pub height: AtomicU64,
+    /// The current host block height. Shared with the [`TestHostNotifier`] so
+    /// its reported host tip tracks the blocks the harness has produced.
+    pub height: Arc<AtomicU64>,
 
     /// The alias oracle used by the Signet Node instance.
     pub alias_oracle: Arc<Mutex<HashSet<Address>>>,
@@ -194,9 +234,12 @@ impl SignetTestContext {
 
         let alias_oracle: Arc<Mutex<HashSet<Address>>> = Arc::new(Mutex::new(HashSet::default()));
 
+        // Shared host-tip counter, seeded at the host deploy height and shared with the notifier.
+        let height = Arc::new(AtomicU64::new(cfg.constants().unwrap().host_deploy_height()));
+
         // Create the test host notifier channel
         let (sender, receiver) = mpsc::unbounded_channel();
-        let notifier = TestHostNotifier { receiver };
+        let notifier = TestHostNotifier::new(receiver, Arc::clone(&height));
 
         // Build the blob cacher from the in-memory blob source
         let blob_cacher = signet_blobber::BlobFetcher::builder()
@@ -222,6 +265,7 @@ impl SignetTestContext {
             .with_blob_cacher(blob_cacher)
             .with_serve_config(serve_config)
             .with_rpc_config(StorageRpcConfig::default())
+            .with_cancellation_token(cancel_token.clone())
             .build()
             .await
             .unwrap();
@@ -255,7 +299,7 @@ impl SignetTestContext {
             storage,
             alloy_provider,
             constants,
-            height: AtomicU64::new(cfg.constants().unwrap().host_deploy_height()),
+            height,
             alias_oracle,
             addresses,
             cancel_token,

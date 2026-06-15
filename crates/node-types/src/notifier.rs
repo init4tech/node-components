@@ -59,4 +59,20 @@ pub trait HostNotifier: Send + Sync {
     /// Signal that processing is complete up to this host block number.
     /// The backend resolves the block number to a block hash internally.
     fn send_finished_height(&self, block_number: u64) -> Result<(), Self::Error>;
+
+    /// Query the current host-chain tip block number. Used by a syncing node to
+    /// decide when its applied state has caught up to the host and it can hand
+    /// off to live block execution.
+    fn host_tip(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
+
+    /// Whether leaving notifications unconsumed backpressures - and can stall - the host.
+    ///
+    /// A reth ExEx shares the host node's notification pipeline: if it stops consuming, reth's
+    /// notification buffer fills and reth's pipeline stalls. A journal-syncing node never
+    /// consumes host notifications (it derives state from the upstream journal feed), so for such
+    /// a backend it must drain and discard them to keep the host moving. Pull-based followers
+    /// that poll a remote host are unaffected and use the default `false`.
+    fn backpressures_host(&self) -> bool {
+        false
+    }
 }

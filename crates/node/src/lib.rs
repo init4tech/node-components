@@ -14,6 +14,8 @@
 mod builder;
 pub use builder::SignetNodeBuilder;
 
+mod journal_sync;
+
 mod metrics;
 
 mod node;

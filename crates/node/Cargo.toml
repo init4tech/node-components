@@ -19,6 +19,7 @@ signet-genesis.workspace = true
 signet-hot.workspace = true
 signet-journal.workspace = true
 signet-journal-chain = { workspace = true, features = ["serve", "signet-extract"] }
+signet-journal-client.workspace = true
 signet-node-config.workspace = true
 signet-node-types.workspace = true
 signet-rpc.workspace = true
@@ -34,4 +35,11 @@ eyre.workspace = true
 metrics.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+signet-cold = { workspace = true, features = ["in-memory"] }
+signet-hot = { workspace = true, features = ["in-memory"] }
+signet-node-config = { workspace = true, features = ["test_utils"] }

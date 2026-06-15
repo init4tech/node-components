@@ -28,7 +28,7 @@ pub use core::SignetNodeConfig;
 mod journal;
 pub use journal::{
     DEFAULT_MAX_SUBSCRIBER_LAG, DEFAULT_RING_BUFFER_MAX_BYTES, DEFAULT_RING_BUFFER_MAX_COUNT,
-    JournalConfig,
+    JournalConfig, JournalConfigError, ParseSyncStrategyError, SyncStrategy,
 };
 
 mod storage;

@@ -25,6 +25,7 @@ alloy.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 signet-genesis.workspace = true
