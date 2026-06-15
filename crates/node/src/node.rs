@@ -393,7 +393,14 @@ where
             sync_token,
             applied_rollup_height,
         );
-        info!("journal sync started");
+        info!(
+            primary_height = checkpoints.primary.height,
+            primary_hash = %checkpoints.primary.hash,
+            fallback_height = checkpoints.fallback.height,
+            fallback_hash = %checkpoints.fallback.hash,
+            sources = ?self.config.journal().sources(),
+            "journal sync started",
+        );
 
         let outcome = journal_sync_loop(
             &mut self.notifier,
@@ -559,7 +566,7 @@ where
                 transactions: executed.transactions.iter().map(|tx| tx.inner().clone()).collect(),
                 receipts: executed.receipts.clone(),
             };
-            self.emit_journal(journal_bytes).await?;
+            self.emit_journal(block_extracts.ru_height, journal_bytes).await?;
             self.storage.append_blocks(vec![executed]).await?;
             let _ = self.chain.send_new_block(notification);
             processed = true;
@@ -615,7 +622,7 @@ where
     /// only failure mode is the receiver being closed, which means the
     /// ingestion task has exited and the node cannot continue.
     #[instrument(skip(self, bytes), fields(len = bytes.len()))]
-    async fn emit_journal(&self, bytes: Bytes) -> eyre::Result<()> {
+    async fn emit_journal(&self, ru_height: u64, bytes: Bytes) -> eyre::Result<()> {
         self.journal_sender
             .send(bytes)
             .await
