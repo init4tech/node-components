@@ -160,9 +160,9 @@ where
         let bundle = BundleState::from(bundle_index);
 
         let executed = ExecutedBlockBuilder::new()
-            .header(header.seal_slow())
-            .bundle(bundle)
-            .journal_hash(journal_hash)
+            .with_header(header.seal_slow())
+            .with_bundle(bundle)
+            .with_journal_hash(journal_hash)
             .build()
             .wrap_err_with(|| {
                 format!("invalid upstream journal at height {height}: failed to build block")
